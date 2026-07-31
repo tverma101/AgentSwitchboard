@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
     build_claude_proxy_env,
+    resolved_model_id,
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
@@ -43,6 +44,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
             proxy_root_url=proxy_root_url,
             auth_token=settings.anthropic_auth_token,
             base_env=os.environ,
+            model_id=resolved_model_id(args, os.environ),
         ),
         binary_name=binary_name,
         display_name=_DISPLAY_NAME,

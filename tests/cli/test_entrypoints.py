@@ -490,6 +490,41 @@ def test_launch_claude_passes_args_and_child_env(
     unregister_pid.assert_called_once_with(12345)
 
 
+def test_launch_claude_applies_model_context_window_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Launch with a flash gateway model raises the auto-compact window."""
+    from free_claude_code.cli.launchers.claude import launch
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.claude.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.claude.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-claude.cmd",
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 7
+        launch(["--model", "anthropic/opencode/deepseek-v4-flash-free"])
+
+    assert exc_info.value.code == 7
+    child_env = popen.call_args.kwargs["env"]
+    assert child_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "400000"
+    assert child_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "400000"
+
+
 def test_launch_codex_passes_responses_config_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
