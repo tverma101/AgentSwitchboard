@@ -156,12 +156,12 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         _policy("CODESTRAL", ReasoningReplayMode.THINK_TAGS),
         NO_REASONING,
     ),
-    "opencode": OpenAIChatProfile(
-        _policy("OPENCODE", ReasoningReplayMode.THINK_TAGS),
+    "opencode_zen": OpenAIChatProfile(
+        _policy("OPENCODE_ZEN", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
     ),
     "opencode_go": OpenAIChatProfile(
-        _policy("OPENCODE_GO", ReasoningReplayMode.THINK_TAGS),
+        _policy("OPENCODE_GO", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
     ),
     "vercel": OpenAIChatProfile(
@@ -280,23 +280,6 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             enabled_value="medium",
         ),
         reasoning_delta_field="reasoning",
-    ),
-    "groq": OpenAIChatProfile(
-        _policy(
-            "GROQ",
-            ReasoningReplayMode.REASONING_CONTENT,
-            include_extra_body=True,
-            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
-            max_tokens_field="max_completion_tokens",
-            strip_message_names=True,
-            unsupported_body_keys=frozenset({"logprobs", "logit_bias", "top_logprobs"}),
-            normalize_n_to_one=True,
-        ),
-        NamedEffortReasoning(
-            _LOW_MEDIUM_HIGH,
-            disabled_value="none",
-            enabled_value="medium",
-        ),
     ),
     "sambanova": OpenAIChatProfile(
         _policy(

@@ -28,6 +28,7 @@ from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.github_models import GitHubModelsProvider
+from free_claude_code.providers.groq import GroqProvider
 from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from free_claude_code.providers.mistral import MistralProvider
@@ -86,7 +87,7 @@ def _make_settings(**overrides):
     mock.kimi_code_api_key = "test_kimi_code_key"
     mock.wafer_proxy = ""
     mock.minimax_proxy = ""
-    mock.opencode_proxy = ""
+    mock.opencode_zen_proxy = ""
     mock.opencode_go_proxy = ""
     mock.vercel_ai_gateway_proxy = ""
     mock.bedrock_proxy = ""
@@ -320,6 +321,16 @@ def test_create_cloudflare_provider_uses_account_scoped_base_url():
     )
 
 
+def test_opencode_zen_provider_config_uses_explicit_id_and_name():
+    with patch("httpx.AsyncClient"):
+        provider = create_provider("opencode_zen", _make_settings())
+
+    assert isinstance(provider, OpenAIChatProvider)
+    assert provider._base_url == "https://opencode.ai/zen/v1"
+    assert provider._provider_name == "OPENCODE_ZEN"
+    assert provider._api_key == "test_opencode_key"
+
+
 def test_opencode_go_provider_config_uses_correct_base_url_and_name():
     with patch("httpx.AsyncClient"):
         provider = create_provider("opencode_go", _make_settings())
@@ -476,7 +487,7 @@ def test_create_provider_instantiates_each_builtin():
         "ollama": OpenAIChatProvider,
         "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
-        "opencode": OpenAIChatProvider,
+        "opencode_zen": OpenAIChatProvider,
         "opencode_go": OpenAIChatProvider,
         "vercel": OpenAIChatProvider,
         "bedrock": OpenAIChatProvider,
@@ -486,7 +497,7 @@ def test_create_provider_instantiates_each_builtin():
         "zai": OpenAIChatProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
-        "groq": OpenAIChatProvider,
+        "groq": GroqProvider,
         "sambanova": OpenAIChatProvider,
         "kilo": KiloProvider,
         "cerebras": OpenAIChatProvider,
