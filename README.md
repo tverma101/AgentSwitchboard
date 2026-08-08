@@ -99,6 +99,11 @@ Use the port shown in your terminal if it differs from `8082`.
 4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or search the model dropdown and select another model.
 5. Click **Validate**, then **Apply**.
 
+To control the NVIDIA model picker, use **NVIDIA NIM Model Allowlist** in the
+Model Routing section. Leave it blank to hide discovered NIM models while
+keeping explicitly configured `MODEL` routes usable, or enter exact model ids
+separated by commas or new lines. Use `*` to show every discovered NIM model.
+
 <div align="center">
   <img src="assets/admin-page.png" alt="Free Claude Code Admin UI" width="700">
 </div>

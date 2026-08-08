@@ -12,6 +12,7 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.model_visibility import filter_discovered_model_infos
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.failures import ExecutionFailure
@@ -140,12 +141,16 @@ class ProviderModelDiscovery:
                     self._log_discovery_failure(provider_id, result)
                     failed_provider_ids.append(provider_id)
                     continue
-                self._model_cache.cache_model_infos(provider_id, result)
+                visible_result = filter_discovered_model_infos(
+                    self._settings, provider_id, result
+                )
+                self._model_cache.cache_model_infos(provider_id, visible_result)
                 refreshed_provider_ids.append(provider_id)
                 logger.info(
-                    "Provider model discovery cached: provider={} models={}",
+                    "Provider model discovery cached: provider={} models={} visible={}",
                     provider_id,
                     len(result),
+                    len(visible_result),
                 )
 
         return ProviderModelRefreshResult(

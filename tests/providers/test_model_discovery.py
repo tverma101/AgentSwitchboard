@@ -36,6 +36,7 @@ def _settings(
     model_sonnet: str | None = None,
     model_haiku: str | None = None,
     nvidia_nim_api_key: str = "",
+    nvidia_nim_model_allowlist: str = "*",
     open_router_api_key: str = "",
     deepseek_api_key: str = "",
     wafer_api_key: str = "",
@@ -50,6 +51,7 @@ def _settings(
         model_sonnet=model_sonnet,
         model_haiku=model_haiku,
         nvidia_nim_api_key=nvidia_nim_api_key,
+        nvidia_nim_model_allowlist=nvidia_nim_model_allowlist,
         open_router_api_key=open_router_api_key,
         deepseek_api_key=deepseek_api_key,
         wafer_api_key=wafer_api_key,
@@ -544,6 +546,40 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
         "lmstudio": frozenset({"local-qwen"}),
     }
     assert result.refreshed_provider_ids == ("open_router", "lmstudio")
+    assert result.failed_provider_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_applies_nim_allowlist() -> None:
+    settings = _settings(
+        model="nvidia_nim/nim-model",
+        nvidia_nim_api_key="nim-key",
+        nvidia_nim_model_allowlist="z-ai/glm-5.2, nvidia/nemotron-3-super-120b-a12b",
+    )
+    runtime = _manager(
+        settings,
+        {
+            "nvidia_nim": FakeProvider(
+                _infos(
+                    "z-ai/glm-5.2",
+                    "nvidia/nemotron-3-super-120b-a12b",
+                    "meta/llama-3.1-405b-instruct",
+                )
+            )
+        },
+    )
+
+    result = await runtime.refresh_model_list_cache()
+
+    assert runtime.cached_model_ids() == {
+        "nvidia_nim": frozenset(
+            {
+                "z-ai/glm-5.2",
+                "nvidia/nemotron-3-super-120b-a12b",
+            }
+        )
+    }
+    assert result.refreshed_provider_ids == ("nvidia_nim",)
     assert result.failed_provider_ids == ()
 
 

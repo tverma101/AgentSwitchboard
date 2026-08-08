@@ -129,6 +129,9 @@ class Settings(BaseSettings):
 
     # ==================== NVIDIA NIM Config ====================
     nvidia_nim_api_key: str = ""
+    nvidia_nim_model_allowlist: str = Field(
+        default="", validation_alias="NVIDIA_NIM_MODEL_ALLOWLIST"
+    )
 
     # ==================== LM Studio Config ====================
     lm_studio_base_url: str = Field(

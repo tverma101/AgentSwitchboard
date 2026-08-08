@@ -395,6 +395,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "TELEGRAM_PROXY_URL" in keys
     assert "CEREBRAS_API_KEY" in keys
     assert "OLLAMA_API_KEY" in keys
+    assert "NVIDIA_NIM_MODEL_ALLOWLIST" in keys
     assert "FCC_OPEN_BROWSER" in keys
     assert "ZAI_BASE_URL" not in keys
     assert "CLAUDE_WORKSPACE" not in keys
@@ -451,6 +452,13 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         {"value": "inherit", "label": "Inherit"},
         *reasoning_policy["options"],
     ]
+    nim_allowlist = next(
+        field
+        for field in body["fields"]
+        if field["key"] == "NVIDIA_NIM_MODEL_ALLOWLIST"
+    )
+    assert nim_allowlist["section"] == "models"
+    assert nim_allowlist["type"] == "textarea"
     restart_required = {
         field["key"] for field in body["fields"] if field["restart_required"] is True
     }

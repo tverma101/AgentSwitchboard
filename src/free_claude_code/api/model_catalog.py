@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.model_visibility import filter_cached_model_infos
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
@@ -95,7 +96,9 @@ def build_models_list_response(
             supports_thinking=supports_thinking,
         )
 
-    for model_info in runtime.cached_prefixed_model_infos():
+    for model_info in filter_cached_model_infos(
+        settings, runtime.cached_prefixed_model_infos()
+    ):
         _append_provider_model_variants(
             models,
             seen,

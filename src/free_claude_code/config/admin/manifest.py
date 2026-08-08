@@ -174,6 +174,18 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Select None to use the Default Model for Haiku requests.",
     ),
     ConfigFieldSpec(
+        "NVIDIA_NIM_MODEL_ALLOWLIST",
+        "NVIDIA NIM Model Allowlist",
+        "models",
+        "textarea",
+        settings_attr="nvidia_nim_model_allowlist",
+        description=(
+            "Optional comma- or newline-separated exact NVIDIA NIM model ids. "
+            "Leave blank to hide discovered NIM models; configured MODEL routes "
+            "remain usable. Use * to show every discovered NIM model."
+        ),
+    ),
+    ConfigFieldSpec(
         "REASONING_POLICY",
         "Reasoning Policy",
         "reasoning",

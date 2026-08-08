@@ -13,6 +13,7 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.application.ports import RequestRuntimePort
+from free_claude_code.config.model_visibility import filter_discovered_model_infos
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
@@ -156,7 +157,10 @@ class ProviderRuntimeManager:
         provider_id: str,
         model_infos: Iterable[ProviderModelInfo],
     ) -> None:
-        self._model_cache.cache_model_infos(provider_id, model_infos)
+        visible_model_infos = filter_discovered_model_infos(
+            self._current.settings, provider_id, model_infos
+        )
+        self._model_cache.cache_model_infos(provider_id, visible_model_infos)
         self._publish_model_catalog()
 
     async def warm_referenced_model_cache(self) -> ProviderModelRefreshResult:

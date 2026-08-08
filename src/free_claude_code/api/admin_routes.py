@@ -18,6 +18,7 @@ from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
 from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.model_visibility import filter_cached_model_infos
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
@@ -244,7 +245,11 @@ def _model_options(
         for ref in configured_chat_model_refs(services.requests.current_settings())
     }
     discovered = {
-        info.model_id for info in services.requests.cached_prefixed_model_infos()
+        info.model_id
+        for info in filter_cached_model_infos(
+            services.requests.current_settings(),
+            services.requests.cached_prefixed_model_infos(),
+        )
     }
     failed_provider_ids = (
         refresh_result.failed_provider_ids if refresh_result is not None else ()
