@@ -10,6 +10,7 @@ MESSAGING_STATE_DIRNAME = "agent_workspace"
 FCC_LOGS_DIRNAME = "logs"
 SERVER_LOG_FILENAME = "server.log"
 CODEX_MODEL_CATALOG_FILENAME = "codex-model-catalog.json"
+USAGE_DB_FILENAME = "usage.db"
 AUTH_DIRNAME = "auth"
 OPENAI_AUTH_FILENAME = "openai.json"
 OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
@@ -53,6 +54,12 @@ def codex_model_catalog_path() -> Path:
     """Return the generated Codex model catalog path."""
 
     return config_dir_path() / CODEX_MODEL_CATALOG_FILENAME
+
+
+def usage_db_path() -> Path:
+    """Return the durable local usage ledger path."""
+
+    return config_dir_path() / USAGE_DB_FILENAME
 
 
 def openai_auth_path() -> Path:

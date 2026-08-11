@@ -18,6 +18,7 @@ from free_claude_code.core.trace import (
     trace_event,
     traced_async_stream,
 )
+from free_claude_code.usage import UsageStore, UsageStreamObserver
 
 from .ports import ProviderResolver
 from .routing import RoutedMessagesRequest
@@ -39,11 +40,13 @@ class ProviderExecutor:
         token_counter: TokenCounter = get_token_count,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
+        usage_store: UsageStore | None = None,
     ) -> None:
         self._provider_resolver = provider_resolver
         self._token_counter = token_counter
         self._generation_id = generation_id
         self._log_raw_payloads = log_raw_payloads
+        self._usage_store = usage_store
 
     def stream(
         self,
@@ -108,6 +111,17 @@ class ProviderExecutor:
             routed.request.system,
             routed.request.tools,
         )
+        usage_observer = (
+            UsageStreamObserver(
+                self._usage_store,
+                request_id=request_id,
+                provider_id=routed.resolved.provider_id,
+                model=gateway_model,
+                wire_api=wire_api,
+            )
+            if self._usage_store is not None
+            else None
+        )
 
         async def provider_body() -> AsyncIterator[str]:
             provider_stream: AsyncIterator[str] | None = None
@@ -120,7 +134,16 @@ class ProviderExecutor:
                     reasoning=routed.reasoning,
                 )
                 async for chunk in provider_stream:
+                    if usage_observer is not None:
+                        usage_observer.feed(chunk)
                     yield chunk
+            except BaseException as exc:
+                if usage_observer is not None:
+                    usage_observer.finish(exc)
+                raise
+            else:
+                if usage_observer is not None:
+                    usage_observer.finish()
             finally:
                 if provider_stream is not None:
                     await close_stream_input(

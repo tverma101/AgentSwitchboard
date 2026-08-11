@@ -20,6 +20,7 @@ from free_claude_code.providers.openai_chat import (
 )
 from free_claude_code.providers.openai_chat.reasoning import NO_REASONING
 from free_claude_code.providers.openai_chat.usage import (
+    cache_usage_fields,
     clone_without_stream_usage,
     is_stream_usage_rejection,
     request_stream_usage,
@@ -143,6 +144,18 @@ def test_usage_int_reads_dict_object_and_model_extra():
     )
     assert usage_int(SimpleNamespace(prompt_tokens=None), "prompt_tokens") is None
     assert usage_int({"prompt_tokens": True}, "prompt_tokens") is None
+
+
+def test_cache_usage_fields_maps_opencode_counters_to_anthropic_usage():
+    usage = SimpleNamespace(
+        prompt_cache_hit_tokens=31,
+        prompt_cache_miss_tokens=9,
+    )
+
+    assert cache_usage_fields(usage) == {
+        "cache_read_input_tokens": 31,
+        "cache_creation_input_tokens": 9,
+    }
 
 
 def test_stream_usage_rejection_matches_usage_option_400():

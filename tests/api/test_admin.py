@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -17,6 +18,7 @@ from free_claude_code.application.model_metadata import (
 from free_claude_code.config.admin.values import MASKED_SECRET
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
+from free_claude_code.usage import UsageEvent, UsageStore
 from tests.api.support import create_test_app, provider_manager_for_app
 
 
@@ -497,8 +499,46 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
             "open_router/anthropic/configured-opus",
             "open_router/meta/llama-3.3",
         ],
+        "model_labels": {
+            "nvidia_nim/configured-model": "NVIDIA NIM · Configured Model",
+            "open_router/anthropic/configured-opus": "OpenRouter · Configured Opus",
+            "open_router/meta/llama-3.3": "OpenRouter · Llama 3.3",
+        },
         "failed_providers": [],
     }
+
+
+def test_admin_usage_returns_final_usage_ledger_summary(tmp_path):
+    store = UsageStore(tmp_path / "usage.db")
+    store.record(
+        UsageEvent(
+            request_id="admin-usage-1",
+            occurred_at=datetime.now().astimezone(),
+            provider_id="opencode_zen",
+            model="opencode_zen/deepseek-v4-flash-free",
+            wire_api="messages",
+            status="success",
+            duration_ms=42,
+            input_tokens=123,
+            output_tokens=17,
+            cache_read_input_tokens=91,
+        )
+    )
+    response = _local_client(create_test_app(usage_store=store)).get(
+        "/admin/api/usage?days=7"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["range_days"] == 7
+    assert body["totals"]["requests"] == 1
+    assert body["totals"]["input_tokens"] == 123
+    assert body["totals"]["cache_read_input_tokens"] == 91
+    assert body["models"][0]["model"] == "opencode_zen/deepseek-v4-flash-free"
+    assert (
+        body["model_labels"]["opencode_zen/deepseek-v4-flash-free"]
+        == "OpenCode Zen · DeepSeek V4 Flash Free"
+    )
 
 
 def test_admin_model_refresh_returns_the_updated_canonical_catalog():
@@ -522,6 +562,10 @@ def test_admin_model_refresh_returns_the_updated_canonical_catalog():
     assert response.status_code == 200
     assert response.json() == {
         "models": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"],
+        "model_labels": {
+            "deepseek/deepseek-chat": "DeepSeek · DeepSeek Chat",
+            "deepseek/deepseek-reasoner": "DeepSeek · DeepSeek Reasoner",
+        },
         "failed_providers": [],
     }
     runtime.refresh_models.assert_awaited_once_with()
@@ -544,6 +588,9 @@ def test_admin_model_refresh_reports_partial_provider_failures():
     assert response.status_code == 200
     assert response.json() == {
         "models": ["deepseek/deepseek-chat"],
+        "model_labels": {
+            "deepseek/deepseek-chat": "DeepSeek · DeepSeek Chat",
+        },
         "failed_providers": ["open_router"],
     }
 

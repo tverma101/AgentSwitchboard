@@ -73,6 +73,18 @@ def usage_int(usage_info: Any, key: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def cache_usage_fields(usage_info: Any) -> dict[str, int]:
+    """Map OpenAI-compatible cache counters to Anthropic usage fields."""
+    usage_fields: dict[str, int] = {}
+    cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")
+    if cache_hit_tokens is not None:
+        usage_fields["cache_read_input_tokens"] = cache_hit_tokens
+    cache_miss_tokens = usage_int(usage_info, "prompt_cache_miss_tokens")
+    if cache_miss_tokens is not None:
+        usage_fields["cache_creation_input_tokens"] = cache_miss_tokens
+    return usage_fields
+
+
 def _is_bad_request_like(error: Exception) -> bool:
     if isinstance(error, openai.BadRequestError):
         return True

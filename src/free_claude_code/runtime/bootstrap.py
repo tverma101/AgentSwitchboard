@@ -7,7 +7,7 @@ from pathlib import Path
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.config.logging_config import configure_logging
-from free_claude_code.config.paths import server_log_path
+from free_claude_code.config.paths import server_log_path, usage_db_path
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
@@ -20,6 +20,7 @@ from free_claude_code.providers.openai_codex import (
 )
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.factory import create_provider
+from free_claude_code.usage import UsageStore
 
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
@@ -64,6 +65,7 @@ def build_asgi_app(
         requests=provider_manager,
         admin=runtime,
         tasks=runtime,
+        usage=UsageStore(usage_db_path()),
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

@@ -136,6 +136,19 @@ fcc-codex exec "hello"
 
 `fcc-pi` registers FCC only for that Pi process; your existing Pi settings, sessions, credentials, and extensions remain unchanged.
 
+### Inspect usage and model labels
+
+Open **Admin UI → Usage** to see locally recorded requests, input/output
+tokens, cache reads, daily activity, failures, and model breakdowns over the
+last 7, 30, or 90 days. FCC records the final Anthropic-compatible usage event
+in <code>~/.fcc/usage.db</code>; prompt and response content is never stored.
+The graph starts recording after this version is installed, so older requests
+are not retroactively reconstructed.
+
+The Admin model picker shows a human-readable label plus the exact provider
+model id. Labels are cosmetic: the exact id remains the value sent to the
+router, and custom model ids remain supported.
+
 <a id="model-picker"></a>
 
 <div align="center">

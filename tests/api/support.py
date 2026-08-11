@@ -12,6 +12,7 @@ from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime, RestartCallback
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
+from free_claude_code.usage import UsageStore
 
 
 def create_test_app(
@@ -20,6 +21,7 @@ def create_test_app(
     providers: MutableMapping[str, BaseProvider] | None = None,
     restart_callback: RestartCallback | None = None,
     connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+    usage_store: UsageStore | None = None,
 ) -> FastAPI:
     """Build an API app with explicit in-memory runtime services."""
     settings = settings or Settings()
@@ -57,6 +59,7 @@ def create_test_app(
             requests=manager,
             admin=runtime,
             tasks=runtime,
+            usage=usage_store,
         )
     )
 

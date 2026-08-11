@@ -10,6 +10,7 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import RequestRuntimePort, TaskController
+from free_claude_code.usage import UsageStore
 
 
 class AdminRuntimePort(Protocol):
@@ -53,3 +54,4 @@ class ApiServices:
     requests: RequestRuntimePort
     admin: AdminRuntimePort
     tasks: TaskController
+    usage: UsageStore | None = None

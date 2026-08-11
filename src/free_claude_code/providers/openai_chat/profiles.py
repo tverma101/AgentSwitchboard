@@ -1,6 +1,6 @@
 """Declarative profiles for ordinary OpenAI-compatible providers."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -26,6 +26,7 @@ from .reasoning import (
     ThinkingObjectReasoning,
 )
 from .request_policy import OpenAIChatPostprocessor, OpenAIChatRequestPolicy
+from .usage import cache_usage_fields
 
 _ALL_EFFORTS = tuple((effort, effort.value) for effort in ReasoningEffort)
 _LOW_MEDIUM_HIGH = (
@@ -68,6 +69,7 @@ class OpenAIChatProfile:
     )
     structured_reasoning_details: bool = False
     user_agent: str | None = None
+    usage_fields: Callable[[Any], dict[str, int]] | None = None
 
     @property
     def provider_name(self) -> str:
@@ -159,10 +161,12 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
     "opencode_zen": OpenAIChatProfile(
         _policy("OPENCODE_ZEN", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
+        usage_fields=cache_usage_fields,
     ),
     "opencode_go": OpenAIChatProfile(
         _policy("OPENCODE_GO", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
+        usage_fields=cache_usage_fields,
     ),
     "vercel": OpenAIChatProfile(
         _policy(

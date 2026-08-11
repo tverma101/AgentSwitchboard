@@ -64,6 +64,26 @@
             ></div>
           </section>
 
+          <section id="view-usage" class="admin-view" data-view="usage" hidden>
+            <section class="usage-panel" aria-label="Token usage">
+              <div class="usage-toolbar">
+                <div>
+                  <h3>Token usage</h3>
+                  <p>Final usage delivered to Claude Code. Prompts and responses are never stored.</p>
+                </div>
+                <div class="usage-range" role="group" aria-label="Usage range">
+                  <button class="secondary-button usage-range-button" data-usage-days="7" type="button">7 days</button>
+                  <button class="secondary-button usage-range-button active" data-usage-days="30" type="button">30 days</button>
+                  <button class="secondary-button usage-range-button" data-usage-days="90" type="button">90 days</button>
+                  <button id="usageRefreshButton" class="secondary-button" type="button">Refresh</button>
+                </div>
+              </div>
+              <div id="usageStats" class="usage-stats"></div>
+              <div id="usageChart" class="usage-chart" aria-label="Daily token usage"></div>
+              <div id="usageModels" class="usage-models"></div>
+            </section>
+          </section>
+
           <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
             <div
               id="messagingSections"

@@ -3,9 +3,11 @@ const state = {
   fields: new Map(),
   localStatus: new Map(),
   modelOptions: [],
+  modelLabels: {},
   modelComboboxes: new Set(),
   authPollers: new Map(),
   activeView: "providers",
+  usageDays: 30,
 };
 
 const MASKED_SECRET = "********";
@@ -23,6 +25,13 @@ const VIEW_GROUPS = [
     title: "Model Config",
     sections: ["models", "reasoning", "web_tools"],
     containerId: "modelConfigSections",
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    title: "Usage",
+    sections: [],
+    containerId: null,
   },
   {
     id: "messaging",
@@ -96,6 +105,7 @@ async function load() {
   byId("configPath").textContent = config.paths.managed;
   await refreshConnectedAccounts();
   await hydrateModelOptions();
+  await loadUsage();
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
@@ -432,7 +442,7 @@ function updateProviderCard(providerId, status, label, metaText) {
 function renderSections(sections, fields) {
   state.modelComboboxes.clear();
   VIEW_GROUPS.forEach((view) => {
-    byId(view.containerId).innerHTML = "";
+    if (view.containerId) byId(view.containerId).innerHTML = "";
   });
 
   const sectionById = new Map(sections.map((section) => [section.id, section]));
@@ -444,6 +454,7 @@ function renderSections(sections, fields) {
   });
 
   VIEW_GROUPS.forEach((view) => {
+    if (!view.containerId) return;
     const container = byId(view.containerId);
     view.sections.forEach((sectionId) => {
       const section = sectionById.get(sectionId);
@@ -708,7 +719,13 @@ class ModelCombobox {
       optionEl.id = `${this.listbox.id}-option-${index}`;
       optionEl.dataset.value = value;
       optionEl.setAttribute("role", "option");
-      optionEl.textContent = value;
+      const label = document.createElement("strong");
+      label.className = "model-option-label";
+      label.textContent = state.modelLabels[value] || value;
+      const id = document.createElement("span");
+      id.className = "model-option-id";
+      id.textContent = value;
+      optionEl.append(label, id);
       this.listbox.appendChild(optionEl);
     });
     const selectedIndex = values.indexOf(this.input.value);
@@ -909,7 +926,7 @@ async function loadModelOptions(refresh = false) {
   const result = await api("/admin/api/models" + (refresh ? "/refresh" : ""), {
     method: refresh ? "POST" : "GET",
   });
-  setModelOptions(result.models);
+  setModelOptions(result.models, result.model_labels || {});
   return result;
 }
 
@@ -944,13 +961,126 @@ function providerDisplayName(providerId) {
   return provider?.display_name || providerId;
 }
 
-function setModelOptions(models) {
+function setModelOptions(models, labels = {}) {
+  state.modelLabels = { ...state.modelLabels, ...labels };
   state.modelOptions = Array.from(
     new Set(models.filter((model) => typeof model === "string" && model.trim())),
   ).sort((left, right) => left.localeCompare(right));
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen) combobox.render(combobox.query);
   });
+}
+
+function formatTokens(value) {
+  const number = Number(value || 0);
+  if (number < 1000) return String(number);
+  if (number < 1000000) return `${(number / 1000).toFixed(number < 10000 ? 1 : 0)}k`;
+  return `${(number / 1000000).toFixed(number < 10000000 ? 1 : 0)}M`;
+}
+
+function renderUsage(summary) {
+  const totals = summary.totals || {};
+  const stats = byId("usageStats");
+  stats.innerHTML = "";
+  [
+    ["Total tokens", Number(totals.input_tokens || 0) + Number(totals.output_tokens || 0)],
+    ["Input", totals.input_tokens],
+    ["Output", totals.output_tokens],
+    ["Requests", totals.requests],
+    ["Failed", totals.failed_requests],
+    ["Cache read", totals.cache_read_input_tokens],
+    ["Cache write", totals.cache_creation_input_tokens],
+  ].forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className = "usage-stat";
+    const title = document.createElement("span");
+    title.textContent = label;
+    const amount = document.createElement("strong");
+    amount.textContent = formatTokens(value);
+    card.append(title, amount);
+    stats.appendChild(card);
+  });
+
+  const chart = byId("usageChart");
+  chart.innerHTML = "";
+  const days = summary.daily || [];
+  const maxTokens = Math.max(
+    1,
+    ...days.map((day) => Number(day.input_tokens || 0) + Number(day.output_tokens || 0)),
+  );
+  if (!days.some((day) => Number(day.requests || 0))) {
+    chart.textContent = "No usage recorded in this range yet.";
+    chart.classList.add("empty");
+  } else {
+    chart.classList.remove("empty");
+    days.forEach((day) => {
+      const total = Number(day.input_tokens || 0) + Number(day.output_tokens || 0);
+      const column = document.createElement("div");
+      column.className = "usage-bar-column";
+      const bar = document.createElement("div");
+      bar.className = "usage-bar";
+      bar.style.height = `${Math.max(total ? 4 : 0, (total / maxTokens) * 100)}%`;
+      bar.title = `${day.date}: ${formatTokens(total)} tokens; ${day.requests || 0} requests; ${day.failed_requests || 0} failed`;
+      const label = document.createElement("span");
+      label.textContent = day.date.slice(5);
+      column.append(bar, label);
+      chart.appendChild(column);
+    });
+  }
+
+  const models = byId("usageModels");
+  models.innerHTML = "<h3>Models</h3>";
+  const rows = summary.models || [];
+  const usageLabels = summary.model_labels || {};
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "usage-empty";
+    empty.textContent = "No model usage recorded yet.";
+    models.appendChild(empty);
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "usage-table";
+  table.innerHTML = "<thead><tr><th>Model</th><th>Requests</th><th>Failed</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead>";
+  const body = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const modelCell = document.createElement("td");
+    const label = document.createElement("strong");
+    label.textContent =
+      usageLabels[row.model] || state.modelLabels[row.model] || row.model;
+    const id = document.createElement("small");
+    id.textContent = row.model;
+    modelCell.append(label, id);
+    tr.append(
+      modelCell,
+      usageCell(row.requests),
+      usageCell(row.failed_requests),
+      usageCell(formatTokens(row.input_tokens)),
+      usageCell(formatTokens(row.output_tokens)),
+      usageCell(formatTokens(row.cache_read_input_tokens)),
+      usageCell(formatTokens(row.cache_creation_input_tokens)),
+    );
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  models.appendChild(table);
+}
+
+function usageCell(value) {
+  const cell = document.createElement("td");
+  cell.textContent = String(value ?? 0);
+  return cell;
+}
+
+async function loadUsage(days = state.usageDays) {
+  state.usageDays = days;
+  try {
+    renderUsage(await api(`/admin/api/usage?days=${days}`));
+  } catch (error) {
+    byId("usageChart").textContent = `Could not load usage: ${error.message}`;
+    byId("usageChart").classList.add("empty");
+  }
 }
 
 function showMessage(message, kind = "") {
@@ -961,6 +1091,15 @@ function showMessage(message, kind = "") {
 
 byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
+byId("usageRefreshButton").addEventListener("click", () => loadUsage());
+document.querySelectorAll("[data-usage-days]").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("[data-usage-days]").forEach((candidate) => {
+      candidate.classList.toggle("active", candidate === button);
+    });
+    loadUsage(Number(button.dataset.usageDays));
+  });
+});
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();

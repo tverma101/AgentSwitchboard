@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,7 @@ from free_claude_code.application.model_metadata import ProviderModelRefreshResu
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
+from free_claude_code.config.model_labels import model_display_names
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.model_visibility import filter_cached_model_infos
 from free_claude_code.config.provider_catalog import (
@@ -235,11 +236,36 @@ async def refresh_models(
     return _model_options(services, refresh_result=result)
 
 
+@router.get("/admin/api/usage")
+async def usage(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=366),
+    services: ApiServices = Depends(get_services),
+):
+    """Return token usage buckets without exposing prompt or response content."""
+    require_loopback_admin(request)
+    if services.usage is None:
+        return {
+            "range_days": days,
+            "from": None,
+            "to": None,
+            "totals": {},
+            "daily": [],
+            "models": [],
+            "model_labels": {},
+        }
+    summary = services.usage.summary(days)
+    summary["model_labels"] = model_display_names(
+        [row["model"] for row in summary["models"]]
+    )
+    return summary
+
+
 def _model_options(
     services: ApiServices,
     *,
     refresh_result: ProviderModelRefreshResult | None = None,
-) -> dict[str, list[str]]:
+) -> dict[str, object]:
     configured = {
         ref.model_ref
         for ref in configured_chat_model_refs(services.requests.current_settings())
@@ -256,6 +282,7 @@ def _model_options(
     )
     return {
         "models": sorted(configured | discovered, key=str.casefold),
+        "model_labels": model_display_names(configured | discovered),
         "failed_providers": list(failed_provider_ids),
     }
 

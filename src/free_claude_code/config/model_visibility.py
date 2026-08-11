@@ -1,8 +1,7 @@
 """Visibility rules for provider-discovered model catalogs."""
 
 from collections.abc import Iterable
-
-from free_claude_code.application.model_metadata import ProviderModelInfo
+from typing import Any
 
 from .settings import Settings
 
@@ -40,8 +39,8 @@ def is_discovered_model_visible(
 def filter_discovered_model_infos(
     settings: Settings,
     provider_id: str,
-    model_infos: Iterable[ProviderModelInfo],
-) -> frozenset[ProviderModelInfo]:
+    model_infos: Iterable[Any],
+) -> frozenset[Any]:
     """Filter a provider response before it enters the shared model cache."""
     return frozenset(
         info
@@ -51,8 +50,8 @@ def filter_discovered_model_infos(
 
 
 def filter_cached_model_infos(
-    settings: Settings, model_infos: Iterable[ProviderModelInfo]
-) -> tuple[ProviderModelInfo, ...]:
+    settings: Settings, model_infos: Iterable[Any]
+) -> tuple[Any, ...]:
     """Filter cached prefixed model refs, including stale entries after config edits."""
     return tuple(
         info

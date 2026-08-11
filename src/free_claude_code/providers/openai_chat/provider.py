@@ -205,7 +205,8 @@ class OpenAIChatProvider(BaseProvider):
 
     def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
         """Return provider-specific Anthropic usage fields for final SSE usage."""
-        return {}
+        usage_fields = self._profile.usage_fields
+        return usage_fields(usage_info) if usage_fields is not None else {}
 
     async def _create_stream(
         self,
