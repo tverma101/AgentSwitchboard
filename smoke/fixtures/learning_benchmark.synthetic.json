@@ -36,7 +36,7 @@
       "passed": true
     }
   ],
-  "commit_sha": "7ba577cf65f74c8dec45659862e2680deb5ea12d",
+  "commit_sha": "96367ee34dd4414651866f174623455ae0a3fb5c",
   "fixture_version": "2026-08-23.1",
   "model_id": null,
   "model_route": "deterministic_local",
