@@ -10,7 +10,11 @@ from free_claude_code.core.fault_attribution import (
     FaultConfidence,
     FaultDomain,
 )
-from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.opencode_go import (
@@ -241,6 +245,56 @@ def test_muse_tool_aliases_cover_exact_limit_and_collision_shapes() -> None:
     assert all(len(alias) <= 64 for alias in aliases)
     assert len(set(aliases)) == len(originals)
     assert tuple(codec.decode(alias) for alias in aliases) == originals
+
+
+@pytest.mark.parametrize(
+    ("effort", "expected_reasoning"),
+    [
+        (ReasoningEffort.MINIMAL, {"effort": "minimal", "summary": "auto"}),
+        (ReasoningEffort.LOW, {"effort": "low", "summary": "auto"}),
+        (ReasoningEffort.MEDIUM, {"effort": "medium", "summary": "auto"}),
+        (ReasoningEffort.HIGH, {"effort": "high", "summary": "auto"}),
+        (ReasoningEffort.XHIGH, {"effort": "xhigh", "summary": "auto"}),
+        (ReasoningEffort.MAX, {"effort": "max", "summary": "auto"}),
+    ],
+)
+def test_muse_responses_body_carries_each_reasoning_effort(
+    effort: ReasoningEffort, expected_reasoning: dict[str, str]
+) -> None:
+    """The outgoing /responses body names the exact client-selected effort."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "reason about this"}],
+        }
+    )
+
+    body = OpenCodeGoProvider._build_responses_body(
+        request,
+        reasoning=ReasoningPolicy.on(effort=effort),
+    )
+
+    assert body["model"] == "muse-spark-1.2-contributor"
+    assert body["reasoning"] == expected_reasoning
+
+
+def test_muse_responses_body_omits_reasoning_when_off() -> None:
+    """Reasoning off must not name an effort in the outgoing body."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "no reasoning"}],
+        }
+    )
+
+    body = OpenCodeGoProvider._build_responses_body(
+        request,
+        reasoning=ReasoningPolicy.off(),
+    )
+
+    assert body["reasoning"] == {"effort": "none"}
 
 
 @pytest.mark.asyncio
