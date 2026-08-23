@@ -19,7 +19,7 @@ def _parser() -> argparse.ArgumentParser:
     subcommands.add_parser("status", help="show local learning state")
 
     hook = subcommands.add_parser("hook", help=argparse.SUPPRESS)
-    hook.add_argument("event", choices=("session-start", "user-prompt", "stop"))
+    hook.add_argument("event", choices=("session-start", "user-prompt"))
     return parser
 
 
@@ -35,26 +35,13 @@ def main() -> None:
         return
     if args.command == "status":
         store = LearningStore()
-        print(
-            json.dumps(
-                {
-                    "home": str(learning_home()),
-                    **store.counts(),
-                },
-                indent=2,
-            )
-        )
+        print(json.dumps({"home": str(learning_home()), **store.counts()}, indent=2))
         return
     if args.command == "hook":
         try:
             run_hook(args.event)
         except Exception as exc:
-            # Hooks must never take down Claude Code. Diagnostics stay terse so
-            # prompts, memory contents, and model responses are not leaked.
-            print(
-                f"FCC Learning hook failed: {type(exc).__name__}",
-                file=sys.stderr,
-            )
+            print(f"FCC Learning hook failed: {type(exc).__name__}", file=sys.stderr)
         return
 
 

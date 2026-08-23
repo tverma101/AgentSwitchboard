@@ -6,6 +6,7 @@ from pathlib import Path
 from free_claude_code.learning.engine import apply_learning_result
 from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
 from free_claude_code.learning.store import LearningStore, format_memory_context
+from free_claude_code.learning.stop_hook import handle_stop
 
 
 def test_store_deduplicates_and_scopes_memories(tmp_path: Path) -> None:
@@ -62,10 +63,7 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(tmp_path: Path)
                     "Stop": [
                         {
                             "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": "printf existing",
-                                }
+                                {"type": "command", "command": "printf existing"}
                             ]
                         }
                     ]
@@ -85,7 +83,7 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(tmp_path: Path)
         for hook in group["hooks"]
     ]
     assert "printf existing" in stop_commands
-    assert any(command.endswith(" hook stop") for command in stop_commands)
+    assert any("free_claude_code.learning.stop_hook" in command for command in stop_commands)
     assert (tmp_path / "settings.json.fcc-learning.bak").exists()
     assert (tmp_path / "skills").is_dir()
 
@@ -171,3 +169,16 @@ def test_apply_learning_result_rejects_secret_like_memory(
         "memories": 0,
         "skills": 0,
     }
+
+
+def test_stop_hook_ignores_missing_prompt_state(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    handle_stop(
+        {
+            "session_id": "unknown",
+            "cwd": str(tmp_path),
+            "last_assistant_message": "Completed successfully.",
+        },
+        store,
+    )
+    assert store.counts() == {"memories": 0, "skills": 0}

@@ -1,4 +1,4 @@
-"""Claude Code hook installation and event handlers for FCC Learning."""
+"""Claude Code hook installation and lightweight event handlers for FCC Learning."""
 
 import json
 import os
@@ -11,6 +11,7 @@ from typing import Any
 from .store import LearningStore, format_memory_context, project_identity
 
 _HOOK_MODULE = "free_claude_code.learning.cli"
+_STOP_HOOK_MODULE = "free_claude_code.learning.stop_hook"
 _HOOK_EVENTS: dict[str, tuple[str, int, bool]] = {
     "SessionStart": ("session-start", 10, False),
     "UserPromptSubmit": ("user-prompt", 10, False),
@@ -20,7 +21,10 @@ _HOOK_EVENTS: dict[str, tuple[str, int, bool]] = {
 
 def _hook_definition(event: str) -> dict[str, Any]:
     hook_name, timeout, asynchronous = _HOOK_EVENTS[event]
-    command = f"{shlex.quote(sys.executable)} -m {_HOOK_MODULE} hook {hook_name}"
+    if event == "Stop":
+        command = f"{shlex.quote(sys.executable)} -m {_STOP_HOOK_MODULE}"
+    else:
+        command = f"{shlex.quote(sys.executable)} -m {_HOOK_MODULE} hook {hook_name}"
     hook: dict[str, Any] = {
         "type": "command",
         "command": command,
@@ -62,11 +66,10 @@ def _load_settings(path: Path) -> dict[str, Any]:
 
 
 def _is_our_hook(hook: object) -> bool:
-    return (
-        isinstance(hook, dict)
-        and isinstance(hook.get("command"), str)
-        and f"-m {_HOOK_MODULE} hook " in hook["command"]
-    )
+    if not isinstance(hook, dict) or not isinstance(hook.get("command"), str):
+        return False
+    command = hook["command"]
+    return f"-m {_HOOK_MODULE} hook " in command or f"-m {_STOP_HOOK_MODULE}" in command
 
 
 def install_hooks(config_dir: Path | None = None) -> bool:
@@ -165,7 +168,7 @@ def uninstall_hooks(config_dir: Path | None = None) -> bool:
 
 
 def ensure_learning_hooks() -> None:
-    """Install hooks when learning is enabled; never called by the hooks themselves."""
+    """Install hooks when learning is enabled."""
 
     if learning_enabled():
         install_hooks()
@@ -180,11 +183,7 @@ def _read_hook_input() -> dict[str, Any]:
 
 
 def _emit_hook_context(event: str, context: str, *, reload_skills: bool = False) -> None:
-    output: dict[str, Any] = {
-        "hookSpecificOutput": {
-            "hookEventName": event,
-        }
-    }
+    output: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": event}}
     specific = output["hookSpecificOutput"]
     if context:
         specific["additionalContext"] = context
@@ -219,34 +218,8 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
     _emit_hook_context("UserPromptSubmit", format_memory_context(rows))
 
 
-def handle_stop(payload: dict[str, Any], store: LearningStore) -> None:
-    if payload.get("stop_hook_active"):
-        return
-    session_id = str(payload.get("session_id") or "")
-    assistant_message = payload.get("last_assistant_message")
-    if not isinstance(assistant_message, str) or not assistant_message.strip():
-        return
-    stored = store.prompt_for_session(session_id)
-    if stored is None:
-        return
-    cwd, prompt = stored
-    payload_cwd = payload.get("cwd")
-    if isinstance(payload_cwd, str) and payload_cwd:
-        cwd = payload_cwd
-
-    # Keep launch/session hooks tiny: load the HTTP distiller only for Stop.
-    from .engine import learn_from_turn
-
-    learn_from_turn(
-        cwd=cwd,
-        user_prompt=prompt,
-        assistant_message=assistant_message,
-        store=store,
-    )
-
-
 def run_hook(event: str) -> None:
-    """Run one hook event from Claude Code JSON stdin."""
+    """Run one lightweight hook event from Claude Code JSON stdin."""
 
     if not learning_enabled():
         return
@@ -256,7 +229,5 @@ def run_hook(event: str) -> None:
         handle_session_start(payload, store)
     elif event == "user-prompt":
         handle_user_prompt(payload, store)
-    elif event == "stop":
-        handle_stop(payload, store)
     else:
         raise ValueError(f"unknown FCC Learning hook: {event}")
