@@ -209,6 +209,8 @@ new places to add unrelated behavior:
   endpoint. Native clients disable ambient environment proxying and redirects,
   use bounded long-lived connection pools, and carry metadata-only attempt
   receipts with request-shape, stable-prefix, and tool-schema hashes.
+  Muse's documented Go capability policy rejects unsupported named, required,
+  or disabled tool choices locally; it never silently rewrites them to `auto`.
   Responses receipts record upstream event types, terminal and response IDs,
   usage/cache counters, tool-call completeness, and committed-output state.
   Invalid complete tool JSON, missing tool terminals, empty completed streams,

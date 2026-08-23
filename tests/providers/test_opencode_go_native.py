@@ -5,6 +5,11 @@ import pytest
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
+from free_claude_code.core.fault_attribution import (
+    AttemptEvidence,
+    FaultConfidence,
+    FaultDomain,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -15,7 +20,10 @@ from free_claude_code.providers.opencode_go import (
     build_native_messages_body,
     protocol_for_model,
 )
-from free_claude_code.providers.opencode_go.provider import _sse_event_types
+from free_claude_code.providers.opencode_go.provider import (
+    _record_failure,
+    _sse_event_types,
+)
 
 
 def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
@@ -70,6 +78,29 @@ def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
 def test_unknown_go_model_fails_closed_without_protocol_probe() -> None:
     with pytest.raises(InvalidRequestError, match="protocol is unknown"):
         protocol_for_model("future-model-not-in-manifest")
+
+
+def test_explicit_provider_http_status_is_classified_without_guessing_transport() -> (
+    None
+):
+    class AuthenticationProbeError(Exception):
+        status_code = 401
+
+    evidence = AttemptEvidence(
+        turn_id="turn_auth",
+        request_id="req_auth",
+        protocol="responses",
+        provider="OPENCODE_GO",
+        model="muse-spark-1.2-contributor",
+        attempt_number=1,
+    )
+
+    _record_failure(evidence, AuthenticationProbeError())
+
+    assert evidence.http_status == 401
+    assert evidence.fault_domain is FaultDomain.OPENCODE_GATEWAY
+    assert evidence.confidence is FaultConfidence.HIGH
+    assert evidence.evidence_codes == ["upstream_error:http_401"]
 
 
 def test_native_messages_preserve_anthropic_cache_control_and_images() -> None:
@@ -162,6 +193,39 @@ def test_responses_conversion_shortens_long_tool_names_for_muse() -> None:
     wire_name = body["tools"][0]["name"]
     assert wire_name != long_name
     assert len(wire_name) <= 64
+
+
+@pytest.mark.parametrize(
+    "tool_choice",
+    [
+        {"type": "tool", "name": "Read"},
+        {"type": "any"},
+        {"type": "none"},
+    ],
+)
+def test_muse_rejects_unsupported_tool_choice_before_provider_call(
+    tool_choice: dict[str, str],
+) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "messages": [{"role": "user", "content": "use a tool"}],
+            "tools": [
+                {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "tool_choice": tool_choice,
+        }
+    )
+
+    with pytest.raises(InvalidRequestError, match=r"accepts only.*auto"):
+        OpenCodeGoProvider._build_responses_body(
+            request,
+            reasoning=DEFAULT_REASONING_POLICY,
+        )
 
 
 def test_muse_tool_aliases_cover_exact_limit_and_collision_shapes() -> None:

@@ -47,6 +47,7 @@ from free_claude_code.providers.openai_chat import (
 _GO_DOCS_SOURCE = "https://dev.opencode.ai/docs/go/"
 _GO_DOCS_DATE = "2026-08-23"
 _ERROR_BODY_LIMIT = 65_536
+_MUSE_MODEL = "muse-spark-1.2-contributor"
 
 
 def _payload_size(payload: object) -> int:
@@ -76,6 +77,10 @@ def _record_failure(
 ) -> None:
     code = getattr(error, "code", None)
     error_code = code if isinstance(code, str) else None
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int) and 100 <= status_code <= 599:
+        evidence.http_status = status_code
+        error_code = f"http_{status_code}"
     invalid_tool_json = error_code == "invalid_tool_arguments"
     missing_terminal = error_code in {"missing_terminal", "missing_tool_terminal"}
     complete_tool_call = evidence.complete_tool_calls is True or (
@@ -83,6 +88,7 @@ def _record_failure(
     )
     if isinstance(error, httpx.HTTPStatusError):
         error_code = f"http_{error.response.status_code}"
+        evidence.http_status = error.response.status_code
     domain, confidence, codes = classify_failure(
         error_code=error_code,
         transport=_is_transport_error(error),
@@ -328,6 +334,14 @@ class OpenCodeGoProvider(BaseProvider):
         reasoning: ReasoningPolicy,
     ) -> dict[str, Any]:
         try:
+            if request.model == _MUSE_MODEL and request.tool_choice is not None:
+                choice_type = request.tool_choice.get("type")
+                if choice_type != "auto":
+                    raise InvalidRequestError(
+                        "OpenCode Go Muse Responses accepts only "
+                        "tool_choice.type='auto'; named and forced tool choices "
+                        "are unsupported and were rejected locally."
+                    )
             return build_responses_provider_request(request, reasoning=reasoning)
         except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
