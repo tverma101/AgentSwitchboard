@@ -84,13 +84,17 @@ def cache_usage_fields(usage_info: Any) -> dict[str, int]:
     nested OpenAI ``prompt_tokens_details.cached_tokens`` value from the total.
 
     A cache miss is uncached input, not a cache creation/write. We therefore do
-    not manufacture ``cache_creation_input_tokens`` from miss counters.
+    not manufacture ``cache_creation_input_tokens`` from miss counters. When a
+    provider reports an explicit write/creation counter, preserve it as the
+    corresponding Anthropic cache-creation bucket.
     """
 
     usage_fields: dict[str, int] = {}
-    cache_read = usage_int(usage_info, "prompt_cache_hit_tokens")
+    cache_read = _first_usage_int(
+        usage_info, "prompt_cache_hit_tokens", "cache_read_input_tokens"
+    )
     if cache_read is None:
-        cache_read = usage_nested_int(
+        cache_read = _first_nested_usage_int(
             usage_info,
             "prompt_tokens_details",
             "cached_tokens",
@@ -98,7 +102,7 @@ def cache_usage_fields(usage_info: Any) -> dict[str, int]:
     if cache_read is not None:
         usage_fields["cache_read_input_tokens"] = cache_read
 
-    uncached = usage_int(usage_info, "prompt_cache_miss_tokens")
+    uncached = _first_usage_int(usage_info, "prompt_cache_miss_tokens")
     if uncached is None and cache_read is not None:
         prompt_total = usage_int(usage_info, "prompt_tokens")
         if prompt_total is not None and prompt_total >= cache_read:
@@ -107,7 +111,41 @@ def cache_usage_fields(usage_info: Any) -> dict[str, int]:
         # ``AnthropicStreamLedger.message_delta`` merges provider fields last,
         # so this intentionally replaces the OpenAI total prompt count.
         usage_fields["input_tokens"] = uncached
+
+    cache_write = _first_usage_int(
+        usage_info,
+        "prompt_cache_write_tokens",
+        "prompt_cache_creation_tokens",
+        "cache_write_tokens",
+        "cache_creation_input_tokens",
+    )
+    if cache_write is None:
+        cache_write = _first_nested_usage_int(
+            usage_info,
+            "prompt_tokens_details",
+            "cache_write_tokens",
+            "cache_creation_tokens",
+            "cache_creation_input_tokens",
+        )
+    if cache_write is not None:
+        usage_fields["cache_creation_input_tokens"] = cache_write
     return usage_fields
+
+
+def _first_usage_int(usage_info: Any, *keys: str) -> int | None:
+    for key in keys:
+        value = usage_int(usage_info, key)
+        if value is not None:
+            return value
+    return None
+
+
+def _first_nested_usage_int(usage_info: Any, parent: str, *keys: str) -> int | None:
+    for key in keys:
+        value = usage_nested_int(usage_info, parent, key)
+        if value is not None:
+            return value
+    return None
 
 
 def _usage_value(value: Any, key: str) -> Any:

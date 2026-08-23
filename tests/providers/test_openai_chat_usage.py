@@ -159,9 +159,7 @@ def test_usage_nested_int_reads_sdk_and_mapping_shapes():
     )
     assert (
         usage_nested_int(
-            SimpleNamespace(
-                prompt_tokens_details=SimpleNamespace(cached_tokens=29)
-            ),
+            SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=29)),
             "prompt_tokens_details",
             "cached_tokens",
         )
@@ -179,6 +177,21 @@ def test_cache_usage_fields_maps_hit_and_miss_to_disjoint_anthropic_usage():
     assert cache_usage_fields(usage) == {
         "cache_read_input_tokens": 31,
         "input_tokens": 9,
+    }
+
+
+def test_cache_usage_fields_preserves_explicit_cache_write_counter():
+    usage = {
+        "prompt_tokens": 40,
+        "prompt_cache_hit_tokens": 31,
+        "prompt_cache_miss_tokens": 9,
+        "prompt_cache_write_tokens": 3,
+    }
+
+    assert cache_usage_fields(usage) == {
+        "cache_read_input_tokens": 31,
+        "input_tokens": 9,
+        "cache_creation_input_tokens": 3,
     }
 
 
@@ -291,10 +304,45 @@ async def test_openai_chat_stream_does_not_double_count_cached_prompt_tokens():
         "output_tokens": 4,
         "cache_read_input_tokens": 31,
     }
-    assert (
-        final_usage["input_tokens"] + final_usage["cache_read_input_tokens"] == 40
-    )
+    assert final_usage["input_tokens"] + final_usage["cache_read_input_tokens"] == 40
     assert "cache_creation_input_tokens" not in final_usage
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_stream_reports_explicit_cache_write_separately():
+    provider = _UsageTestProvider()
+    request = make_messages_request(model="m")
+    usage = SimpleNamespace(
+        prompt_tokens=40,
+        completion_tokens=4,
+        prompt_cache_hit_tokens=31,
+        prompt_cache_miss_tokens=9,
+        prompt_cache_write_tokens=3,
+    )
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [event async for event in provider.stream_response(request)]
+
+    final_usage = next(
+        event.data["usage"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "message_delta"
+    )
+    assert final_usage == {
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 31,
+        "cache_creation_input_tokens": 3,
+    }
 
 
 @pytest.mark.asyncio
