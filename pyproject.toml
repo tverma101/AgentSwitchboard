@@ -34,6 +34,7 @@ fcc-server = "free_claude_code.cli.entrypoints:serve"
 fcc-claude = "free_claude_code.cli.launchers.claude:launch"
 fcc-codex = "free_claude_code.cli.launchers.codex:launch"
 fcc-pi = "free_claude_code.cli.launchers.pi:launch"
+fcc-learning = "free_claude_code.learning.cli:main"
 
 [project.gui-scripts]
 fcc-desktop = "free_claude_code.cli.desktop_entrypoint:launch"
