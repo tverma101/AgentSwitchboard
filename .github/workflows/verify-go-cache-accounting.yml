@@ -30,15 +30,15 @@ jobs:
       - name: Verify cache accounting and regenerate lock
         run: |
           uv lock
-          uv run ruff format src/free_claude_code/providers/openai_chat/usage.py tests/providers/test_openai_chat_usage.py
-          uv run ruff check --fix src/free_claude_code/providers/openai_chat/usage.py tests/providers/test_openai_chat_usage.py
+          uv run ruff format src/free_claude_code/providers/openai_chat/usage.py src/free_claude_code/core/openai_responses/provider_stream.py tests/providers/test_openai_chat_usage.py tests/core/openai_responses/test_provider_stream.py
+          uv run ruff check --fix src/free_claude_code/providers/openai_chat/usage.py src/free_claude_code/core/openai_responses/provider_stream.py tests/providers/test_openai_chat_usage.py tests/core/openai_responses/test_provider_stream.py
           uv run ty check
-          uv run pytest -q tests/providers/test_openai_chat_usage.py tests/providers/test_opencode.py
+          uv run pytest -q tests/providers/test_openai_chat_usage.py tests/providers/test_opencode.py tests/core/openai_responses/test_provider_stream.py
       - name: Commit verified generated changes and remove verifier
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add uv.lock src/free_claude_code/providers/openai_chat/usage.py tests/providers/test_openai_chat_usage.py
+          git add uv.lock src/free_claude_code/providers/openai_chat/usage.py src/free_claude_code/core/openai_responses/provider_stream.py tests/providers/test_openai_chat_usage.py tests/core/openai_responses/test_provider_stream.py
           git rm .github/workflows/verify-go-cache-accounting.yml
           git commit -m "chore: verify Go cache accounting"
           git push origin HEAD:fix/go-cache-usage-accounting
