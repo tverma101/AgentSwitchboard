@@ -1,9 +1,8 @@
-"""Tests for FCC's Claude gateway context-window policy."""
+"""Tests for FCC's bounded Claude gateway context policy."""
 
 import json
 
 from free_claude_code.cli.claude_env import (
-    CLAUDE_CONTEXT_CAP_DEFAULT,
     build_claude_proxy_env,
     context_cap_tokens,
     effective_context_window,
@@ -13,27 +12,31 @@ from free_claude_code.cli.claude_env import (
 
 
 def test_default_context_cap_is_256k() -> None:
-    assert CLAUDE_CONTEXT_CAP_DEFAULT == 256000
-    assert context_cap_tokens({}) == 256000
+    assert context_cap_tokens({}) == 256_000
+    assert effective_context_window("some-1m-model", {}) == 256_000
 
 
-def test_large_upstream_model_does_not_raise_default_cap() -> None:
-    model_id = "anthropic/opencode_go/deepseek-v4-flash"
-    assert model_context_window(model_id) is None
-    assert effective_context_window(model_id, {}) == 256000
+def test_explicit_context_override_is_bounded() -> None:
+    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "128000"}) == 128_000
+    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "1000000"}) == 1_000_000
+    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "31999"}) == 256_000
+    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "1000001"}) == 256_000
+    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "garbage"}) == 256_000
 
 
-def test_explicit_context_override_allows_bounded_opt_in() -> None:
-    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "128000"}) == 128000
-    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "1000000"}) == 1000000
+def test_model_context_window_has_no_large_window_auto_raise() -> None:
+    for model_id in [
+        "anthropic/opencode/deepseek-v4-flash-free",
+        "anthropic/opencode_go/deepseek-v4-flash",
+        "DeepSeek-V4-Flash",
+        "some-1m-model",
+        "",
+        None,
+    ]:
+        assert model_context_window(model_id) is None
 
 
-def test_invalid_context_overrides_fail_safe_to_256k() -> None:
-    for value in ["garbage", "0", "31999", "1000001", "-1"]:
-        assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": value}) == 256000
-
-
-def test_build_claude_proxy_env_pins_default_gateway_window() -> None:
+def test_build_claude_proxy_env_always_sets_default_256k() -> None:
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:8082",
         auth_token="token",
@@ -45,22 +48,12 @@ def test_build_claude_proxy_env_pins_default_gateway_window() -> None:
     assert env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] == "1"
 
 
-def test_build_claude_proxy_env_uses_same_default_without_resolved_model() -> None:
-    env = build_claude_proxy_env(
-        proxy_root_url="http://127.0.0.1:8082",
-        auth_token="token",
-        base_env={},
-    )
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
-    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
-
-
-def test_build_claude_proxy_env_honors_explicit_context_override() -> None:
+def test_build_claude_proxy_env_uses_explicit_override() -> None:
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:8082",
         auth_token="token",
         base_env={"FCC_CLAUDE_CONTEXT_TOKENS": "192000"},
-        model_id="anthropic/opencode_go/deepseek-v4-flash",
+        model_id="some-1m-model",
     )
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "192000"
     assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "192000"
