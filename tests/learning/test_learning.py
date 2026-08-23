@@ -297,9 +297,9 @@ def test_learning_actions_require_explicit_safe_evidence(tmp_path: Path) -> None
         cwd=str(tmp_path),
         store=store,
     ) == {"memories": 1, "skills": 0}
-    assert store.get_memory(memory_id, project_key=str(tmp_path))["text"] == (
-        "Preference B is current."
-    )
+    replaced_memory = store.get_memory(memory_id, project_key=str(tmp_path))
+    assert replaced_memory is not None
+    assert replaced_memory["text"] == "Preference B is current."
 
 
 def test_skill_revisions_preserve_previous_bytes_and_rollback(

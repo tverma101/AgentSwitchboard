@@ -71,7 +71,9 @@ def _load_settings(path: Path) -> dict[str, Any]:
 def _is_our_hook(hook: object) -> bool:
     if not isinstance(hook, dict) or not isinstance(hook.get("command"), str):
         return False
-    command = hook["command"]
+    command = hook.get("command")
+    if not isinstance(command, str):
+        return False
     return f"-m {_HOOK_MODULE} hook " in command or f"-m {_STOP_HOOK_MODULE}" in command
 
 
@@ -189,7 +191,7 @@ def _emit_hook_context(
     event: str, context: str, *, reload_skills: bool = False
 ) -> None:
     output: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": event}}
-    specific = output["hookSpecificOutput"]
+    specific: dict[str, Any] = output["hookSpecificOutput"]
     if context:
         specific["additionalContext"] = context
     if reload_skills:

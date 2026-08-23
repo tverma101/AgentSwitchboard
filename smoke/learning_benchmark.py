@@ -71,12 +71,14 @@ def run(*, commit_sha: str | None = None) -> dict[str, Any]:
             reason="user correction",
             evidence="user_explicit",
         )
+        replaced_memory = store.get_memory(memory_id, project_key=str(project))
         checks.append(
             _check(
                 _case("memory-preference-replacement", cases)["id"],
                 inserted
                 and replaced
-                and store.get_memory(memory_id, project_key=str(project))["text"]
+                and replaced_memory is not None
+                and replaced_memory["text"]
                 == "Prefer concise release notes with test evidence.",
                 "replacement is visible under the original memory id",
             )

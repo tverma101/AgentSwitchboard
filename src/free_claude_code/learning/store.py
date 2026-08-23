@@ -312,6 +312,8 @@ class LearningStore:
                     pinned,
                 ),
             )
+            if cursor.lastrowid is None:
+                raise RuntimeError("memory insert did not return an id")
             memory_id = int(cursor.lastrowid)
             self._record_memory_event(
                 connection,

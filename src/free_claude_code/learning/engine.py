@@ -195,8 +195,8 @@ def request_learning_analysis(
     user_prompt: str,
     assistant_message: str,
     cwd: str,
-    existing_memories: Iterable[Mapping[str, Any]] = (),
-    existing_skills: Iterable[Mapping[str, str]] = (),
+    existing_memories: Iterable[Any] = (),
+    existing_skills: Iterable[Any] = (),
     attribution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Ask the local FCC proxy for a conservative learning decision."""
