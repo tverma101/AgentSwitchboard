@@ -6,7 +6,7 @@
     "rss_growth_after_1000_target_bytes": 10485760
   },
   "command": "uv run python scripts/benchmark_opencode_go_transport.py --mode synthetic --model qwen3.7-plus --samples 1,100,1000 --output benchmarks/opencode_go_transport.synthetic.json",
-  "commit_sha": "0b68904807822bdb018106b63ee80b297b1c0094",
+  "commit_sha": "a68405ba41ea48fe0cd784b439622a423c98e961",
   "environment": {
     "cpu": "arm",
     "os": "macOS-26.6-arm64-arm-64bit-Mach-O",
