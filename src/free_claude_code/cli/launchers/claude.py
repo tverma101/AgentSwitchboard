@@ -11,6 +11,7 @@ from free_claude_code.cli.claude_env import (
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
+from free_claude_code.learning.hooks import ensure_learning_hooks
 
 from .common import preflight_proxy, resolve_client_binary, run_client_process
 
@@ -30,6 +31,14 @@ def launch(argv: Sequence[str] | None = None) -> None:
         )
         print("Start it in another terminal with: fcc-server", file=sys.stderr)
         raise SystemExit(1)
+
+    try:
+        ensure_learning_hooks()
+    except (OSError, ValueError) as exc:
+        print(
+            f"FCC Learning hooks were not installed: {type(exc).__name__}",
+            file=sys.stderr,
+        )
 
     binary_name = claude_binary_name()
     binary_path = resolve_client_binary(
