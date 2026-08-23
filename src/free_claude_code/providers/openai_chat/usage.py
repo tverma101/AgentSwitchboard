@@ -83,6 +83,7 @@ def cache_usage_fields(usage_info: Any) -> dict[str, int]:
     cached prefix. Prefer an explicit cache-miss counter; otherwise subtract a
     nested OpenAI ``prompt_tokens_details.cached_tokens`` value from the total.
 
+    A cache miss is uncached input, not a cache creation/write. We therefore do
     not manufacture ``cache_creation_input_tokens`` from miss counters. When a
     provider reports an explicit write/creation counter, preserve it as the
     corresponding Anthropic cache-creation bucket.

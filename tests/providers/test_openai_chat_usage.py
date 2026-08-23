@@ -159,9 +159,7 @@ def test_usage_nested_int_reads_sdk_and_mapping_shapes():
     )
     assert (
         usage_nested_int(
-            SimpleNamespace(
-                prompt_tokens_details=SimpleNamespace(cached_tokens=29)
-            ),
+            SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=29)),
             "prompt_tokens_details",
             "cached_tokens",
         )
@@ -306,9 +304,7 @@ async def test_openai_chat_stream_does_not_double_count_cached_prompt_tokens():
         "output_tokens": 4,
         "cache_read_input_tokens": 31,
     }
-    assert (
-        final_usage["input_tokens"] + final_usage["cache_read_input_tokens"] == 40
-    )
+    assert final_usage["input_tokens"] + final_usage["cache_read_input_tokens"] == 40
     assert "cache_creation_input_tokens" not in final_usage
 
 
