@@ -1,7 +1,5 @@
 """Small, durable memory store for FCC's Claude learning hooks."""
 
-from __future__ import annotations
-
 import hashlib
 import os
 import re
