@@ -228,14 +228,16 @@ def _write_skill(
     if scope == "project":
         project_slug = _safe_slug(Path(project_key).name, fallback="project")
         skill_key = f"fcc-auto-{project_slug}-{base_slug}"
-        scoped_description = f"For the {Path(project_key).name} project only: {description}"
-        scope_note = f"\n\n## Scope\nApply only while working in project `{project_key}`."
+        scoped_description = f"For this project only: {description}"
+        scope_note = "\n\n## Scope\nApply only within this repository."
+        skills_root = Path(project_key) / ".claude" / "skills"
     else:
         skill_key = f"fcc-auto-{base_slug}"
         scoped_description = description
         scope_note = ""
+        skills_root = _claude_config_dir() / "skills"
 
-    skill_dir = _claude_config_dir() / "skills" / skill_key
+    skill_dir = skills_root / skill_key
     skill_dir.mkdir(parents=True, exist_ok=True)
     destination = skill_dir / "SKILL.md"
     content = (
