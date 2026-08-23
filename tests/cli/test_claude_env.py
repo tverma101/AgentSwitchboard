@@ -1,67 +1,69 @@
-"""Tests for per-model context-window overrides in the Claude proxy env."""
+"""Tests for FCC's Claude gateway context-window policy."""
 
 import json
 
 from free_claude_code.cli.claude_env import (
+    CLAUDE_CONTEXT_CAP_DEFAULT,
     build_claude_proxy_env,
+    context_cap_tokens,
+    effective_context_window,
     model_context_window,
     resolved_model_id,
 )
 
 
-def test_model_context_window_matches_flash_model_ids() -> None:
-    for model_id in [
-        "anthropic/opencode/deepseek-v4-flash-free",
-        "anthropic/opencode_go/deepseek-v4-flash",
-        "anthropic/opencode/deepseek-v4-flash",
-        "DeepSeek-V4-Flash",
-    ]:
-        assert model_context_window(model_id) == 400000
+def test_default_context_cap_is_256k() -> None:
+    assert CLAUDE_CONTEXT_CAP_DEFAULT == 256000
+    assert context_cap_tokens({}) == 256000
 
 
-def test_model_context_window_returns_none_for_other_models() -> None:
-    for model_id in [
-        "sonnet",
-        "fable",
-        "nvidia_nim/z-ai/glm-5.2",
-        "anthropic/opencode_go/deepseek-v4-pro",
-        "anthropic/opencode/deepseek-v3",
-        "",
-        None,
-    ]:
-        assert model_context_window(model_id) is None
+def test_large_upstream_model_does_not_raise_default_cap() -> None:
+    model_id = "anthropic/opencode_go/deepseek-v4-flash"
+    assert model_context_window(model_id) is None
+    assert effective_context_window(model_id, {}) == 256000
 
 
-def test_build_claude_proxy_env_raises_window_for_flash() -> None:
+def test_explicit_context_override_allows_bounded_opt_in() -> None:
+    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "128000"}) == 128000
+    assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": "1000000"}) == 1000000
+
+
+def test_invalid_context_overrides_fail_safe_to_256k() -> None:
+    for value in ["garbage", "0", "31999", "1000001", "-1"]:
+        assert context_cap_tokens({"FCC_CLAUDE_CONTEXT_TOKENS": value}) == 256000
+
+
+def test_build_claude_proxy_env_pins_default_gateway_window() -> None:
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:8082",
         auth_token="token",
         base_env={},
-        model_id="anthropic/opencode/deepseek-v4-flash-free",
+        model_id="anthropic/opencode_go/deepseek-v4-flash",
     )
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "400000"
-    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "400000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
+    assert env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] == "1"
 
 
-def test_build_claude_proxy_env_keeps_default_for_other_model() -> None:
-    env = build_claude_proxy_env(
-        proxy_root_url="http://127.0.0.1:8082",
-        auth_token="token",
-        base_env={},
-        model_id="sonnet",
-    )
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
-    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in env
-
-
-def test_build_claude_proxy_env_defaults_when_no_model_resolved() -> None:
+def test_build_claude_proxy_env_uses_same_default_without_resolved_model() -> None:
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:8082",
         auth_token="token",
         base_env={},
     )
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
-    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in env
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
+
+
+def test_build_claude_proxy_env_honors_explicit_context_override() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={"FCC_CLAUDE_CONTEXT_TOKENS": "192000"},
+        model_id="anthropic/opencode_go/deepseek-v4-flash",
+    )
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "192000"
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "192000"
 
 
 def test_resolved_model_id_prefers_argv_over_env(tmp_path) -> None:
