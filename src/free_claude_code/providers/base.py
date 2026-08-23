@@ -13,6 +13,7 @@ from free_claude_code.core.diagnostics import (
     exception_cause_types,
     redacted_exception_traceback,
 )
+from free_claude_code.core.provider_policy import ProviderEgressGuard
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 
@@ -36,6 +37,8 @@ class ProviderConfig:
     proxy: str = ""
     log_raw_sse_events: bool = False
     log_api_error_tracebacks: bool = False
+    provider_family: str = ""
+    egress_guard: ProviderEgressGuard | None = None
 
 
 class BaseProvider(ABC):
@@ -97,6 +100,17 @@ class BaseProvider(ABC):
             type(error).__name__,
             http_status,
             ",".join(cause_types) if cause_types else None,
+        )
+
+    def _authorize_egress(self, url: str, *, category: str = "model") -> None:
+        """Enforce an optional launch-time egress policy before network I/O."""
+        guard = self._config.egress_guard
+        if guard is None:
+            return
+        guard.authorize_url(
+            url,
+            category=category,
+            provider_family=self._config.provider_family or None,
         )
 
     @abstractmethod

@@ -20,7 +20,8 @@ def _cwd(parser: argparse.ArgumentParser) -> None:
 
 def _row(row: Any) -> dict[str, Any]:
     if hasattr(row, "keys"):
-        return {str(key): row[key] for key in row}
+        keys = tuple(row.keys())
+        return {str(key): row[key] for key in keys}
     return dict(row)
 
 

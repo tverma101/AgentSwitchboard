@@ -91,6 +91,41 @@ def test_sanitize_masks_nested_api_key_strings() -> None:
     assert out["outer"]["text"] == "visible"
 
 
+def test_sanitize_masks_image_data_urls_and_base64_sources() -> None:
+    from free_claude_code.core.trace import (
+        provider_chat_body_snapshot,
+        sanitize_trace_value,
+    )
+
+    encoded = "A" * 64
+    out = sanitize_trace_value(
+        {
+            "url": f"data:image/png;base64,{encoded}",
+            "source": {"type": "base64", "data": encoded},
+        }
+    )
+
+    assert encoded not in str(out)
+    assert "redacted-image-data" in str(out)
+    snapshot = provider_chat_body_snapshot(
+        {
+            "model": "vision-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert encoded not in str(snapshot)
+
+
 @pytest.mark.asyncio
 async def test_traced_async_stream_logs_completion(tmp_path) -> None:
     log_file = str(tmp_path / "complete.log")

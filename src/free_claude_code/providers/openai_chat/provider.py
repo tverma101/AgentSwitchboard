@@ -140,6 +140,7 @@ class OpenAIChatProvider(BaseProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return model metadata from the OpenAI-compatible models endpoint."""
+        self._authorize_egress(self._base_url)
         payload = await self._list_models_payload()
         if not self._profile.model_ids_are_routable:
             return frozenset()
@@ -222,6 +223,7 @@ class OpenAIChatProvider(BaseProvider):
             stream: Any | None = None
             retain_attempt = False
             try:
+                self._authorize_egress(self._base_url)
                 create_body = self._prepare_create_body(body)
                 stream = await self._client.chat.completions.create(
                     **create_body,

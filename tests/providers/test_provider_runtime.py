@@ -339,6 +339,8 @@ def test_opencode_go_provider_config_uses_correct_base_url_and_name():
     assert isinstance(provider, OpenCodeGoProvider)
     assert provider._base_url == "https://opencode.ai/zen/go/v1"
     assert provider._config.api_key == "test_opencode_key"
+    assert provider._config.egress_guard is not None
+    assert provider._config.provider_family == "opencode_go"
 
 
 def test_opencode_go_catalog_uses_opencode_api_key() -> None:

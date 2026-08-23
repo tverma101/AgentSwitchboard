@@ -27,7 +27,7 @@ Local state lives under:
 
 SQLite runs in WAL mode. Memories are deduplicated by a stable fingerprint and scoped either globally or to the detected git project root. Replacements, removals, and retention evictions create audit rows in `memory_history`; removed memories are not injected again. Explicit user memories are pinned, while only unused, low-confidence stale memories are eligible for retention eviction.
 
-Queue rows contain a stable hash, redacted prompt/result text, attempt count, lease timestamp, status, and bounded error text. Completed and dead-letter rows are retained for a bounded period. A killed worker leaves its row recoverable; repeated failures move to `dead_letter` after the configured attempt limit.
+Queue rows contain a stable hash, redacted prompt/result text, attempt count, lease timestamp, status, and bounded error text. Image data URLs and base64 image sources are redacted before they enter the queue or learning context. Completed and dead-letter rows are retained for a bounded period. A killed worker leaves its row recoverable; repeated failures move to `dead_letter` after the configured attempt limit.
 
 Global learned skills use Claude Code's personal skills directory:
 

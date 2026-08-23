@@ -1,8 +1,11 @@
 """Tests for FCC Learning memory and Claude hook integration."""
 
 import json
+import sys
 from pathlib import Path
+from typing import Any
 
+from free_claude_code.learning import cli as learning_cli
 from free_claude_code.learning.engine import apply_learning_result
 from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
 from free_claude_code.learning.stop_hook import drain_queue, enqueue_stop, handle_stop
@@ -302,6 +305,61 @@ def test_learning_actions_require_explicit_safe_evidence(tmp_path: Path) -> None
     assert replaced_memory["text"] == "Preference B is current."
 
 
+def test_memory_scope_cannot_be_changed_or_read_without_project_context(
+    tmp_path: Path,
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    project = str(tmp_path / "repo")
+    memory_id, _ = store.add_memory(
+        scope="project",
+        project_key=project,
+        text="The project uses uv.",
+        confidence=0.96,
+        source="verified_fact",
+    )
+
+    assert store.get_memory(memory_id) is None
+    assert not store.replace_memory(
+        memory_id=memory_id,
+        project_key=project,
+        scope="global",
+        text="The project uses uv globally.",
+        confidence=0.98,
+        source="verified_fact",
+        reason="invalid scope transition",
+        evidence="verified_fact",
+    )
+    assert store.get_memory(memory_id, project_key=project) is not None
+
+
+def test_memory_cli_list_search_show_remove_and_history_are_deterministic(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "home"))
+    store = LearningStore(tmp_path / "home" / "learning.db")
+    memory_id, _ = store.add_memory(
+        scope="global",
+        project_key=str(tmp_path),
+        text="Prefer small verified changes.",
+        confidence=0.99,
+        source="user_explicit",
+    )
+
+    def run(*args: str) -> Any:
+        monkeypatch.setattr(sys, "argv", ["fcc-learning", *args])
+        learning_cli.main()
+        return json.loads(capsys.readouterr().out)
+
+    assert run("memory", "list", "--cwd", str(tmp_path))[0]["id"] == memory_id
+    assert run("memory", "search", "verified", "--cwd", str(tmp_path))[0]["id"] == memory_id
+    assert run("memory", "show", str(memory_id), "--cwd", str(tmp_path))["id"] == memory_id
+    assert run("memory", "remove", str(memory_id), "--cwd", str(tmp_path)) == {
+        "removed": memory_id
+    }
+    history = run("memory", "history", str(memory_id), "--cwd", str(tmp_path))
+    assert history[-1]["action"] == "remove"
+
+
 def test_skill_revisions_preserve_previous_bytes_and_rollback(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -409,6 +467,61 @@ def test_stop_enqueue_is_idempotent_redacted_and_recovered(
     )
     assert drain_queue(store, max_items=2) == 1
     assert store.queue_counts() == {"completed": 1}
+
+
+def test_learning_queue_redacts_image_payloads(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    store.record_prompt(session_id="session-image", cwd=str(tmp_path), prompt="Attach")
+    encoded = "A" * 64
+    queue_id = enqueue_stop(
+        {
+            "session_id": "session-image",
+            "last_assistant_message": f"data:image/png;base64,{encoded}",
+        },
+        store,
+    )
+    assert queue_id is not None
+    with store._connect() as connection:
+        row = connection.execute(
+            "SELECT assistant_message FROM learning_queue WHERE queue_id = ?",
+            (queue_id,),
+        ).fetchone()
+    assert row is not None
+    assert encoded not in str(row["assistant_message"])
+    assert "REDACTED_IMAGE_DATA" in str(row["assistant_message"])
+
+
+def test_queue_reclaims_abandoned_worker_and_dead_letters_after_bounded_retries(
+    tmp_path: Path,
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    store.record_prompt(session_id="session-1", cwd=str(tmp_path), prompt="Keep safe")
+    queue_id = enqueue_stop(
+        {
+            "session_id": "session-1",
+            "last_assistant_message": "done",
+            "fault_attribution": {"note": "token=secretvalue12345"},
+        },
+        store,
+    )
+    assert queue_id is not None
+    claimed = store.claim_learning(lease_seconds=0)
+    assert claimed is not None
+    assert store.queue_counts() == {"processing": 1}
+
+    # A new session can reclaim a row whose worker disappeared.
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE learning_queue SET leased_at = 0 WHERE queue_id = ?",
+            (queue_id,),
+        )
+    reclaimed = store.claim_learning(lease_seconds=0)
+    assert reclaimed is not None
+    assert reclaimed["queue_id"] == queue_id
+    assert "secretvalue12345" not in str(reclaimed["attribution_json"])
+
+    assert store.fail_learning(queue_id, error="permanent", max_attempts=1) == "dead_letter"
+    assert store.queue_counts() == {"dead_letter": 1}
 
 
 def test_fault_attribution_blocks_infrastructure_learning(tmp_path: Path) -> None:

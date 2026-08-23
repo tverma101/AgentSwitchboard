@@ -55,7 +55,7 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
                             "source": {
                                 "type": "base64",
                                 "media_type": "image/png",
-                                "data": "aGVsbG8=",
+                                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
                             },
                         },
                     ],
@@ -109,7 +109,7 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
     }
     assert body["input"][4]["content"][1] == {
         "type": "input_image",
-        "image_url": "data:image/png;base64,aGVsbG8=",
+        "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     }
 
 

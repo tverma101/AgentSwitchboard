@@ -10,6 +10,10 @@ from free_claude_code.core.anthropic.request_serialization import (
     serialize_tool_result_content,
 )
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
+from free_claude_code.core.visual_attachments import (
+    VisualAttachmentError,
+    validate_base64_source,
+)
 
 from .errors import ResponsesConversionError
 
@@ -291,6 +295,10 @@ def _image_part(block: Any) -> dict[str, Any]:
         data = get_block_attr(source, "data")
         if not isinstance(media_type, str) or not isinstance(data, str):
             raise ResponsesConversionError("Base64 images require media_type and data.")
+        try:
+            validate_base64_source(source)
+        except VisualAttachmentError as exc:
+            raise ResponsesConversionError(str(exc)) from exc
         url = f"data:{media_type};base64,{data}"
     else:
         raise ResponsesConversionError(

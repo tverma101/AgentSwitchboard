@@ -24,6 +24,20 @@ There are three runtime surfaces:
 - Messaging bridge: optional Discord or Telegram adapters turn chat messages
   into managed client CLI sessions.
 
+Local tool planes are provider-independent application capabilities. Computer
+use and browser/CDP adapters implement the typed contracts in
+`application.tool_planes`; they do not own model credentials or choose an
+upstream provider. A launch-time `core.provider_policy.ProviderPolicy` and
+`ProviderEgressGuard` authorize configured OpenCode Go requests before
+transport construction. Strict mode is the default and blocks
+Anthropic/OpenAI/Codex fallbacks; local tools are accounted for separately.
+
+Visual attachments are validated at the protocol boundary and represented in
+traces and learning state by redacted metadata only. `fcc-appshot` is a
+demand-only focused-window helper: it writes a session-scoped local image plus
+a metadata receipt for an explicit wrapper consumer and does not synthesize TUI
+keystrokes or choose an upstream model.
+
 ```mermaid
 flowchart LR
     ClaudeCode[Claude Code CLI and Extensions] --> ProxyAPI[FastAPI Proxy]

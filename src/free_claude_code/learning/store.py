@@ -19,6 +19,12 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}"),
     re.compile(r"\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{12,}\b"),
 )
+_IMAGE_DATA_URL_RE = re.compile(
+    r"(?i)data:(?:image/png|image/jpeg|image/webp);base64,[A-Za-z0-9+/=]+"
+)
+_IMAGE_SOURCE_DATA_RE = re.compile(
+    r'(?i)(["\']data["\']\s*:\s*["\'])[A-Za-z0-9+/=]{32,}(["\'])'
+)
 
 
 def learning_home() -> Path:
@@ -53,6 +59,8 @@ def redact_sensitive(text: str) -> str:
     value = text
     for pattern in _SECRET_PATTERNS:
         value = pattern.sub("[REDACTED_SECRET]", value)
+    value = _IMAGE_DATA_URL_RE.sub("[REDACTED_IMAGE_DATA]", value)
+    value = _IMAGE_SOURCE_DATA_RE.sub(r"\1[REDACTED_IMAGE_DATA]\2", value)
     return value
 
 
@@ -361,8 +369,7 @@ class LearningStore:
         ).fetchone()
         if row is None or (
             row["scope"] == "project"
-            and project_key is not None
-            and row["project_key"] != project_key
+            and (project_key is None or row["project_key"] != project_key)
         ):
             return None
         return row
@@ -430,6 +437,10 @@ class LearningStore:
         with self._connect() as connection:
             old = self._accessible_memory(connection, memory_id, project_key)
             if old is None:
+                return False
+            if old["scope"] != scope or (
+                scope == "project" and old["project_key"] != effective_project
+            ):
                 return False
             duplicate = connection.execute(
                 "SELECT id FROM memories WHERE fingerprint = ? AND id != ?",
@@ -794,10 +805,12 @@ class LearningStore:
         queue_id = hashlib.sha256(
             f"{session_id}\0{cwd}\0{clean_prompt}\0{clean_assistant}".encode()
         ).hexdigest()
-        attribution_json = json.dumps(
-            attribution if isinstance(attribution, dict) else {},
-            sort_keys=True,
-            separators=(",", ":"),
+        attribution_json = redact_sensitive(
+            json.dumps(
+                attribution if isinstance(attribution, dict) else {},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         )
         now = time.time()
         with self._connect() as connection:

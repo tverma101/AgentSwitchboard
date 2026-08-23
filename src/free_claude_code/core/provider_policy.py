@@ -1,0 +1,100 @@
+"""Immutable session policy and pre-network provider egress guard."""
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from urllib.parse import urlparse
+
+
+class ProviderPolicyError(PermissionError):
+    """Raised before a provider or helper request is allowed to start."""
+
+
+class ProviderPolicyMode(StrEnum):
+    STRICT = "strict"
+    ALLOW_LISTED = "allow-listed"
+    DIAGNOSTIC = "diagnostic"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderPolicy:
+    """Launch-time provider/tool permissions; never inferred from capabilities."""
+
+    primary_provider: str
+    primary_model: str
+    allowed_helpers: frozenset[str] = frozenset()
+    allowed_local_tools: frozenset[str] = frozenset({"computer", "browser"})
+    forbidden_provider_families: frozenset[str] = frozenset(
+        {"anthropic", "openai", "codex", "chatgpt"}
+    )
+    mode: ProviderPolicyMode = ProviderPolicyMode.STRICT
+    paid_fallback: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.primary_provider or not self.primary_model:
+            raise ValueError("primary provider and model are required")
+        if self.mode is ProviderPolicyMode.STRICT and self.paid_fallback:
+            raise ValueError("strict policy cannot permit paid fallback")
+
+
+@dataclass(slots=True)
+class ProviderEgressGuard:
+    """Authorize provider destinations before any HTTP client is invoked."""
+
+    policy: ProviderPolicy
+    _counts: dict[str, int] = field(default_factory=dict)
+
+    def authorize(self, provider_family: str, *, category: str = "model") -> bool:
+        family = provider_family.strip().lower()
+        allowed = family == self.policy.primary_provider.lower()
+        if category == "local_tool":
+            allowed = (
+                family == "local"
+                or family
+                in {tool.lower() for tool in self.policy.allowed_local_tools}
+            )
+        elif self.policy.mode is ProviderPolicyMode.ALLOW_LISTED:
+            allowed = allowed or family in {
+                helper.lower() for helper in self.policy.allowed_helpers
+            }
+        elif self.policy.mode is ProviderPolicyMode.DIAGNOSTIC:
+            return allowed
+        if family in {item.lower() for item in self.policy.forbidden_provider_families}:
+            allowed = False
+        if not allowed:
+            raise ProviderPolicyError(
+                f"provider egress blocked before network I/O: {provider_family} ({category})"
+            )
+        receipt_family = "local" if category == "local_tool" else family
+        self._counts[receipt_family] = self._counts.get(receipt_family, 0) + 1
+        return True
+
+    def authorize_url(
+        self,
+        url: str,
+        *,
+        category: str = "model",
+        provider_family: str | None = None,
+    ) -> bool:
+        """Reject malformed URLs before a transport is constructed."""
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ProviderPolicyError(
+                "provider egress URL must use http(s) and include a host"
+            )
+        if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+            if category != "local_tool":
+                raise ProviderPolicyError("local URL is only valid for local tools")
+            return self.authorize("local", category="local_tool")
+        return self.authorize(
+            provider_family or parsed.hostname,
+            category=category,
+        )
+
+    def receipt(self) -> dict[str, object]:
+        return {
+            "primary_provider": self.policy.primary_provider,
+            "primary_model": self.policy.primary_model,
+            "mode": self.policy.mode.value,
+            "paid_fallback": self.policy.paid_fallback,
+            "counts": dict(sorted(self._counts.items())),
+        }

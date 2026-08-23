@@ -287,6 +287,23 @@ Providers that do not support a selected control retain their own behavior.
 
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
 
+### Visual attachments and Appshots
+
+FCC validates PNG, JPEG, and WebP image bytes before forwarding them and exposes
+metadata-only attachment receipts (hash, dimensions, size, and media type). The
+terminal fallback is a compact `[img ... · attached]` card; Kitty and iTerm2
+capability detection is available to the wrapper without emitting escape codes
+to unsupported terminals. `fcc-appshot` exposes a demand-only macOS
+focused-window capture helper backed by
+`free_claude_code.cli.visuals.capture_focused_window`; it requires the user to
+grant Screen Recording/Accessibility permissions and never sends a model request
+itself.
+
+For an explicit session-scoped capture, use `fcc-appshot --session-id <id>` (or
+set `FCC_CLAUDE_SESSION_ID`). The helper writes the PNG and a metadata-only
+receipt to the local Appshot queue; a wrapper/session consumer can read that
+receipt and attach the image without injecting keystrokes into the Claude TUI.
+
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
 

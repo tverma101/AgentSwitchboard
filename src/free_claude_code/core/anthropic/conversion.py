@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from free_claude_code.core.visual_attachments import (
+    VisualAttachmentError,
+    validate_base64_source,
+)
+
 from .content import get_block_attr, get_block_type
 from .models import MessagesRequest
 from .request_serialization import serialize_tool_result_content
@@ -206,6 +211,10 @@ def _openai_user_image_part(block: Any) -> dict[str, Any]:
         data = get_block_attr(source, "data")
         if not isinstance(data, str) or not data.strip():
             raise OpenAIConversionError("Base64 image source requires non-empty data.")
+        try:
+            validate_base64_source(source)
+        except VisualAttachmentError as exc:
+            raise OpenAIConversionError(str(exc)) from exc
         url = f"data:{media_type};base64,{data}"
     elif source_type == "url":
         url = get_block_attr(source, "url")

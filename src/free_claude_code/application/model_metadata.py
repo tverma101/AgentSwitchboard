@@ -9,6 +9,8 @@ class ProviderModelInfo:
 
     model_id: str
     supports_thinking: bool | None = None
+    supports_vision: bool | None = None
+    accepted_image_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

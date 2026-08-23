@@ -23,6 +23,12 @@ def main() -> None:
     parser.add_argument("--mode", choices=("synthetic", "live"), default="synthetic")
     parser.add_argument("--model", default="qwen3.7-plus")
     parser.add_argument("--samples", default="1,100,1000")
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=4_096,
+        help="maximum output tokens per request; Muse needs a reasoning-safe budget",
+    )
     parser.add_argument("--response-bytes", type=int, default=65_536)
     parser.add_argument(
         "--output",
@@ -39,6 +45,7 @@ def main() -> None:
         mode=args.mode,
         model=args.model,
         samples=samples,
+        max_tokens=args.max_tokens,
         response_bytes=args.response_bytes,
         output_path=args.output,
         base_url=args.base_url or "https://opencode.ai/zen/go/v1",

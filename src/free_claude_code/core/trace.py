@@ -7,6 +7,7 @@ INFO log level excludes these detailed request traces.
 """
 
 import asyncio
+import re
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Any
@@ -32,6 +33,12 @@ _SECRET_VALUE_KEYS = frozenset(
         "nvidia-api-key",
     )
 )
+_IMAGE_DATA_URL_RE = re.compile(
+    r"(?i)data:(image/(?:png|jpeg|webp));base64,[A-Za-z0-9+/=]+"
+)
+_IMAGE_SOURCE_DATA_RE = re.compile(
+    r'(?i)(["\']data["\']\s*:\s*["\'])[A-Za-z0-9+/=]{32,}(["\'])'
+)
 
 
 def sanitize_trace_value(obj: Any) -> Any:
@@ -41,11 +48,22 @@ def sanitize_trace_value(obj: Any) -> Any:
         for k, v in obj.items():
             if str(k).lower() in _SECRET_VALUE_KEYS:
                 out[str(k)] = "<redacted>"
+            elif (
+                str(k).lower() == "data"
+                and isinstance(obj.get("type"), str)
+                and obj.get("type") == "base64"
+            ):
+                out[str(k)] = "<redacted-image-data>"
             else:
                 out[str(k)] = sanitize_trace_value(v)
         return out
     if isinstance(obj, tuple | list):
         return [sanitize_trace_value(x) for x in obj]
+    if isinstance(obj, str):
+        redacted = _IMAGE_DATA_URL_RE.sub(
+            r"data:\1;base64,<redacted-image-data>", obj
+        )
+        return _IMAGE_SOURCE_DATA_RE.sub(r"\1<redacted-image-data>\2", redacted)
     return obj
 
 
@@ -191,7 +209,7 @@ async def traced_async_stream(
 
 
 def provider_chat_body_snapshot(body: Mapping[str, Any]) -> dict[str, Any]:
-    """Sanitized OpenAI-compat chat body subset for traces (conversation text verbatim)."""
+    """Sanitized OpenAI-compat body subset with image payloads redacted."""
     keys = ("model", "messages", "tools", "tool_choice", "temperature", "max_tokens")
     snap = {k: body[k] for k in keys if k in body and body[k] is not None}
     return sanitize_trace_value(snap)

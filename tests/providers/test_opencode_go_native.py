@@ -124,7 +124,7 @@ def test_native_messages_preserve_anthropic_cache_control_and_images() -> None:
                             "source": {
                                 "type": "base64",
                                 "media_type": "image/png",
-                                "data": "aGVsbG8=",
+                                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
                             },
                         },
                         {
@@ -150,7 +150,7 @@ def test_native_messages_preserve_anthropic_cache_control_and_images() -> None:
 
     assert body["stream"] is True
     assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
-    assert body["messages"][0]["content"][0]["source"]["data"] == "aGVsbG8="
+    assert body["messages"][0]["content"][0]["source"]["data"] == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     assert body["messages"][0]["content"][1]["cache_control"] == {"type": "ephemeral"}
     assert body["tools"][0]["cache_control"] == {"type": "ephemeral"}
 

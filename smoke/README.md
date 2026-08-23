@@ -152,20 +152,23 @@ uv run pytest smoke/product -n 0 -s --tb=short
 The synthetic benchmark isolates FCC transport overhead with a local keep-alive
 SSE upstream and writes a metadata-only receipt containing raw latency/TTFT
 samples, RSS snapshots, CPU time, observed chunk size, connection reuse,
-request-body sizes, and retry amplification:
+request-body sizes, retry amplification, and the configured output-token budget.
 
 ```powershell
 uv run python scripts/benchmark_opencode_go_transport.py --mode synthetic --model qwen3.7-plus --samples 1,100,1000
 ```
 
 Use `--model muse-spark-1.2-contributor` or a Chat model to exercise the other
-native routes. The live mode is deliberately gated because it can consume Go
-quota and requires real credentials:
+native routes. The benchmark defaults to `--max-tokens 4096`, which gives Muse
+enough reasoning budget to emit visible output instead of manufacturing an
+`response.incomplete` terminal event. Override it explicitly for a different
+workload. Live mode is deliberately gated because it can consume Go quota and
+requires real credentials:
 
 ```powershell
 $env:FCC_OPENCODE_GO_BENCHMARK_LIVE = "1"
 $env:OPENCODE_API_KEY = "..."
-uv run python scripts/benchmark_opencode_go_transport.py --mode live --model muse-spark-1.2-contributor --samples 1,10,100
+uv run python scripts/benchmark_opencode_go_transport.py --mode live --model muse-spark-1.2-contributor --samples 1,10,100 --max-tokens 4096
 ```
 
 Live receipts prove the configured integration only; native OpenCode reference

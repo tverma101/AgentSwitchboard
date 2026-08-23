@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 
 from tests.api.support import create_test_app
 
-
 ADMIN_STATIC = Path("src/free_claude_code/api/admin_static")
 
 

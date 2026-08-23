@@ -76,6 +76,8 @@ class ProviderModelCache:
                 ProviderModelInfo(
                     model_id=f"{provider_id}/{info.model_id}",
                     supports_thinking=info.supports_thinking,
+                    supports_vision=info.supports_vision,
+                    accepted_image_types=info.accepted_image_types,
                 )
                 for info in sorted(
                     provider_infos.values(), key=lambda item: item.model_id

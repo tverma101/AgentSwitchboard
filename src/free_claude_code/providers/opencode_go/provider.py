@@ -32,6 +32,10 @@ from free_claude_code.core.openai_responses import (
 )
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
+from free_claude_code.core.visual_attachments import (
+    VisualAttachmentError,
+    validate_base64_source,
+)
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
 )
@@ -202,8 +206,31 @@ def build_native_messages_body(request: MessagesRequest) -> dict[str, Any]:
             "OpenCode Go native Messages requests do not accept FCC extra_body."
         )
     body = request.model_dump(mode="json", exclude_none=True)
+    try:
+        _validate_native_visual_sources(body)
+    except VisualAttachmentError as exc:
+        raise InvalidRequestError(str(exc)) from exc
     body["stream"] = True
     return body
+
+
+def _validate_native_visual_sources(value: object) -> None:
+    """Validate embedded base64 image blocks before a native Messages request."""
+    if isinstance(value, list):
+        for item in value:
+            _validate_native_visual_sources(item)
+        return
+    if not isinstance(value, dict):
+        return
+    if value.get("type") == "image":
+        source = value.get("source")
+        if isinstance(source, dict) and source.get("type") == "base64":
+            typed_source: dict[str, Any] = {
+                str(key): item for key, item in source.items()
+            }
+            validate_base64_source(typed_source)
+    for item in value.values():
+        _validate_native_visual_sources(item)
 
 
 class OpenCodeGoProvider(BaseProvider):
@@ -281,6 +308,7 @@ class OpenCodeGoProvider(BaseProvider):
         """Fetch Go's model catalog through the hardened native transport."""
 
         async def fetch() -> Any:
+            self._authorize_egress(f"{self._base_url}/models")
             response = await self._native_http.get(
                 f"{self._base_url}/models",
                 headers=self._auth_headers(),
@@ -396,6 +424,7 @@ class OpenCodeGoProvider(BaseProvider):
         upstream: Any | None = None
         receipt_emitted = False
         try:
+            self._authorize_egress(self._base_url)
             upstream = await self._responses.responses.create(**body, stream=True)
             for event in stream_view.start():
                 yield event
@@ -508,6 +537,7 @@ class OpenCodeGoProvider(BaseProvider):
         sse_buffer = ""
         receipt_emitted = False
         try:
+            self._authorize_egress(f"{self._base_url}/messages")
             response = await self._native_http.send(
                 self._native_http.build_request(
                     "POST",

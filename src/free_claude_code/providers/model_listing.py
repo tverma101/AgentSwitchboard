@@ -31,16 +31,23 @@ def extract_openai_model_infos(
     payload: Any, *, provider_name: str
 ) -> frozenset[_ProviderModelInfo]:
     """Extract model metadata from an OpenAI-compatible ``/models`` response."""
-    model_ids: set[str] = set()
+    model_infos: set[_ProviderModelInfo] = set()
     for item in model_list_items(payload, provider_name=provider_name):
         model_id = _field(item, "id")
         if not isinstance(model_id, str) or not model_id.strip():
             raise _malformed(provider_name, "expected every data item to include id")
-        model_ids.add(model_id)
+        supports_vision, accepted_image_types = _vision_metadata(item)
+        model_infos.add(
+            _ProviderModelInfo(
+                model_id=model_id,
+                supports_vision=supports_vision,
+                accepted_image_types=accepted_image_types,
+            )
+        )
 
-    if not model_ids:
+    if not model_infos:
         raise _malformed(provider_name, "response did not include any model ids")
-    return model_infos_from_ids(model_ids)
+    return frozenset(model_infos)
 
 
 def extract_tool_capable_model_infos(
@@ -85,6 +92,42 @@ def _field(item: Any, name: str) -> Any:
     if isinstance(item, Mapping):
         return item.get(name)
     return getattr(item, name, None)
+
+
+_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+
+
+def _vision_metadata(item: Any) -> tuple[bool | None, tuple[str, ...]]:
+    """Read optional model-list vision metadata without guessing from names."""
+    supports_vision = _field(item, "supports_vision")
+    accepted = _field(item, "accepted_image_types")
+    capabilities = _field(item, "capabilities")
+    if isinstance(capabilities, Mapping):
+        if isinstance(capabilities.get("vision"), bool):
+            supports_vision = capabilities["vision"]
+        if accepted is None:
+            accepted = capabilities.get("accepted_image_types")
+
+    modalities = _field(item, "input_modalities")
+    if isinstance(modalities, Sequence) and not isinstance(
+        modalities, str | bytes | bytearray
+    ):
+        normalized = {str(value).casefold() for value in modalities}
+        if normalized & {"image", "images", "vision"}:
+            supports_vision = True
+
+    accepted_types = (
+        tuple(sorted(value for value in accepted if value in _IMAGE_TYPES))
+        if isinstance(accepted, Sequence)
+        and not isinstance(accepted, str | bytes | bytearray)
+        else ()
+    )
+    if accepted_types:
+        supports_vision = True
+    return (
+        supports_vision if isinstance(supports_vision, bool) else None,
+        accepted_types,
+    )
 
 
 def _is_sequence(value: Any) -> bool:
