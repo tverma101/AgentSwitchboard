@@ -15,7 +15,7 @@ When `fcc-claude` starts successfully, FCC idempotently merges three hooks into 
 - **UserPromptSubmit**: save the current prompt and inject the most relevant memories using deterministic token overlap + recency scoring.
 - **Stop** *(async)*: pair the last user prompt with Claude's final assistant message and ask FCC's Haiku route for a conservative learning decision.
 
-The Stop hook is asynchronous so the learning pass does not hold up the interactive Claude Code response.
+The Stop hook is asynchronous so the learning pass does not hold up the interactive Claude Code response. The model client is isolated in the dedicated Stop-hook process; launch, session-start, and prompt-memory retrieval do not keep a learner process resident.
 
 ## Storage
 
@@ -27,17 +27,23 @@ Local state lives under:
 
 SQLite runs in WAL mode. Memories are deduplicated by a stable fingerprint and scoped either globally or to the detected git project root.
 
-Automatically learned skills are written under Claude's personal skill directory with an FCC-owned prefix:
+Global learned skills use Claude Code's personal skills directory:
 
 ```text
 ~/.claude/skills/fcc-auto-*/SKILL.md
 ```
 
-Project-scoped skills include the project name/path in their generated scope and description so they are not intended for unrelated repositories. FCC never overwrites skill directories that do not use the `fcc-auto-` prefix.
+Project-scoped learned skills use Claude Code's native repository scope:
+
+```text
+<repo>/.claude/skills/fcc-auto-*/SKILL.md
+```
+
+That means a project-specific learned procedure is visible as a normal working-tree change and can be reviewed or committed with the project. FCC does not embed the machine's absolute project path into the generated skill. It never intentionally writes outside an FCC-owned `fcc-auto-*` skill directory.
 
 ## Learning-model route
 
-The distiller sends a small Anthropic-compatible request back through the already-running local FCC proxy. Its default model name is `haiku`, which means normal FCC `MODEL_HAIKU` routing decides which provider/model performs the housekeeping pass.
+The distiller sends a small Anthropic-compatible request back through the already-running local FCC proxy. Its default model name is `haiku`, which means normal FCC `MODEL_HAIKU` routing decides which provider/model performs the housekeeping pass. If the Haiku route is unset, FCC's existing router falls back to the configured default model.
 
 For example, point the Haiku tier at a cheap OpenCode Go model in the existing Admin model-routing UI. No additional provider key or direct Anthropic call is required.
 
@@ -87,3 +93,5 @@ Environment overrides:
 ## Failure behavior
 
 Learning is non-critical. Invalid Claude settings are never overwritten; `fcc-claude` reports a terse warning and continues. Hook failures do not terminate Claude Code. The first settings modification creates `settings.json.fcc-learning.bak` next to the user's Claude settings as a one-time recovery copy.
+
+The async Stop pass is best-effort in this version: if Claude Code exits before the background hook finishes, that turn can be missed. Issue #8 tracks a local SQLite queue/retry design that closes this gap without adding a daemon.
