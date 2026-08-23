@@ -60,29 +60,68 @@ def is_stream_usage_rejection(error: Exception) -> bool:
 
 def usage_int(usage_info: Any, key: str) -> int | None:
     """Extract an integer usage field from OpenAI SDK objects or plain dicts."""
-    if usage_info is None:
-        return None
-    if isinstance(usage_info, Mapping):
-        value = usage_info.get(key)
-    else:
-        value = getattr(usage_info, key, None)
+    value = _usage_value(usage_info, key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def usage_nested_int(usage_info: Any, *keys: str) -> int | None:
+    """Extract a nested integer from dicts, SDK models, or model_extra mappings."""
+    value = usage_info
+    for key in keys:
+        value = _usage_value(value, key)
         if value is None:
-            extra = getattr(usage_info, "model_extra", None)
-            if isinstance(extra, Mapping):
-                value = extra.get(key)
+            return None
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def cache_usage_fields(usage_info: Any) -> dict[str, int]:
-    """Map OpenAI-compatible cache counters to Anthropic usage fields."""
+    """Map provider cache counters to disjoint Anthropic usage buckets.
+
+    Anthropic ``input_tokens`` excludes cache reads/writes. OpenAI-compatible
+    providers commonly report ``prompt_tokens`` as the total prompt, so passing
+    that total through alongside ``cache_read_input_tokens`` double-counts the
+    cached prefix. Prefer an explicit cache-miss counter; otherwise subtract a
+    nested OpenAI ``prompt_tokens_details.cached_tokens`` value from the total.
+
+    A cache miss is uncached input, not a cache creation/write. We therefore do
+    not manufacture ``cache_creation_input_tokens`` from miss counters.
+    """
+
     usage_fields: dict[str, int] = {}
-    cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")
-    if cache_hit_tokens is not None:
-        usage_fields["cache_read_input_tokens"] = cache_hit_tokens
-    cache_miss_tokens = usage_int(usage_info, "prompt_cache_miss_tokens")
-    if cache_miss_tokens is not None:
-        usage_fields["cache_creation_input_tokens"] = cache_miss_tokens
+    cache_read = usage_int(usage_info, "prompt_cache_hit_tokens")
+    if cache_read is None:
+        cache_read = usage_nested_int(
+            usage_info,
+            "prompt_tokens_details",
+            "cached_tokens",
+        )
+    if cache_read is not None:
+        usage_fields["cache_read_input_tokens"] = cache_read
+
+    uncached = usage_int(usage_info, "prompt_cache_miss_tokens")
+    if uncached is None and cache_read is not None:
+        prompt_total = usage_int(usage_info, "prompt_tokens")
+        if prompt_total is not None and prompt_total >= cache_read:
+            uncached = prompt_total - cache_read
+    if uncached is not None:
+        # ``AnthropicStreamLedger.message_delta`` merges provider fields last,
+        # so this intentionally replaces the OpenAI total prompt count.
+        usage_fields["input_tokens"] = uncached
     return usage_fields
+
+
+def _usage_value(value: Any, key: str) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return value.get(key)
+    direct = getattr(value, key, None)
+    if direct is not None:
+        return direct
+    extra = getattr(value, "model_extra", None)
+    if isinstance(extra, Mapping):
+        return extra.get(key)
+    return None
 
 
 def _is_bad_request_like(error: Exception) -> bool:
