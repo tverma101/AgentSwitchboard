@@ -127,10 +127,17 @@ class GoUsage:
             logical_request_id=logical_request_id,
             upstream_attempts=upstream_attempts,
             retry_reason=retry_reason,
-            **hashes,
-            **timings,
-            **byte_counts,
-            **counts,
+            stable_prefix_hash=hashes["stable_prefix_hash"],
+            request_shape_hash=hashes["request_shape_hash"],
+            tool_schema_hash=hashes["tool_schema_hash"],
+            ttft_ms=timings["ttft_ms"],
+            duration_ms=timings["duration_ms"],
+            bytes_in=byte_counts["bytes_in"],
+            bytes_out=byte_counts["bytes_out"],
+            uncached_input_tokens=counts["uncached_input_tokens"],
+            cache_read_tokens=counts["cache_read_tokens"],
+            cache_write_tokens=counts["cache_write_tokens"],
+            output_tokens=counts["output_tokens"],
         )
 
 
