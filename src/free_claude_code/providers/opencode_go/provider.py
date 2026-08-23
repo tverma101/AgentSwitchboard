@@ -141,7 +141,6 @@ class OpenCodeGoProvider(BaseProvider):
             max_retries=0,
             timeout=timeout,
             http_client=self._native_http,
-            default_headers={"x-api-key": config.api_key},
         )
 
     def preflight_stream(
@@ -215,11 +214,7 @@ class OpenCodeGoProvider(BaseProvider):
         )
 
     def _auth_headers(self) -> dict[str, str]:
-        key = self._config.api_key
-        return {
-            "Authorization": f"Bearer {key}",
-            "x-api-key": key,
-        }
+        return {"Authorization": f"Bearer {self._config.api_key}"}
 
     @staticmethod
     def _build_responses_body(
@@ -242,6 +237,7 @@ class OpenCodeGoProvider(BaseProvider):
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
         body = self._build_responses_body(request, reasoning=reasoning)
+        body.pop("stream", None)
         tool_names = OpenAIToolNameCodec.from_request(request)
         stream_view = ResponsesProviderStream(
             message_id=f"msg_{uuid.uuid4()}",
@@ -254,7 +250,7 @@ class OpenCodeGoProvider(BaseProvider):
         attempt = await self._admission.open_attempt(retry_session)
         upstream: Any | None = None
         try:
-            upstream = await self._responses.responses.create(**body)
+            upstream = await self._responses.responses.create(**body, stream=True)
             for event in stream_view.start():
                 yield event
             async for event in upstream:
