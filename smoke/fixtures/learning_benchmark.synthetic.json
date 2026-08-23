@@ -1,0 +1,80 @@
+{
+  "checks": [
+    {
+      "detail": "replacement is visible under the original memory id",
+      "id": "memory-preference-replacement",
+      "passed": true
+    },
+    {
+      "detail": "infrastructure-attributed failure produced no durable learning",
+      "id": "memory-contradiction-rejection",
+      "passed": true
+    },
+    {
+      "detail": "forget removes injection source and preserves audit history",
+      "id": "memory-explicit-forget",
+      "passed": true
+    },
+    {
+      "detail": "accepted skill revisions retain the prior version",
+      "id": "skill-create-update",
+      "passed": true
+    },
+    {
+      "detail": "dropped validation step is rejected without changing the file",
+      "id": "skill-poisoned-update",
+      "passed": true
+    },
+    {
+      "detail": "rollback restores revision bytes and digest metadata",
+      "id": "skill-rollback",
+      "passed": true
+    },
+    {
+      "detail": "duplicate enqueue is idempotent and stale processing is reclaimable",
+      "id": "queue-recovery",
+      "passed": true
+    }
+  ],
+  "commit_sha": "4893422",
+  "fixture_version": "2026-08-23.1",
+  "model_id": null,
+  "model_route": "deterministic_local",
+  "schema": "fcc.learning.benchmark.v1",
+  "skill_receipts": [
+    {
+      "case_id": "skill-create-update",
+      "checks": [
+        "frontmatter",
+        "validation_contract",
+        "revision_saved"
+      ],
+      "decision": "accepted",
+      "skill_diff": {
+        "added_lines": 1,
+        "removed_lines": 1
+      }
+    },
+    {
+      "case_id": "skill-poisoned-update",
+      "checks": [
+        "validation_contract"
+      ],
+      "decision": "rejected",
+      "skill_diff": {
+        "added_lines": 0,
+        "removed_lines": 0,
+        "unchanged_sha256": "137b2cb115ebed342fdf0e0b153f5ae37f8301157fcbe5f9e30a48133e9fe34b"
+      }
+    }
+  ],
+  "summary": {
+    "enqueue_ms": 0.443125,
+    "failed": 0,
+    "passed": 7,
+    "runtime_ms": 1031.571875,
+    "sqlite_bytes_after": 4096,
+    "sqlite_bytes_before": 4096
+  },
+  "token_usage": null
+}
