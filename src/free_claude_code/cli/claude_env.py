@@ -78,12 +78,10 @@ def resolved_model_id(
     model = base_env.get("CLAUDE_MODEL")
     if model:
         return model
-    config_dir = Path(
-        base_env.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")
-    )
+    config_dir = Path(base_env.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
     try:
         settings = json.loads((config_dir / "settings.json").read_text())
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     model = settings.get("model")
     return model if isinstance(model, str) else None

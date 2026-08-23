@@ -60,7 +60,9 @@ def test_build_claude_proxy_env_uses_explicit_override() -> None:
 
 
 def test_resolved_model_id_prefers_argv_over_env(tmp_path) -> None:
-    base_env = _settings_env(tmp_path, saved="anthropic/opencode/deepseek-v4-flash-free")
+    base_env = _settings_env(
+        tmp_path, saved="anthropic/opencode/deepseek-v4-flash-free"
+    )
     base_env["CLAUDE_MODEL"] = "sonnet"
     assert (
         resolved_model_id(["--model", "nvidia_nim/z-ai/glm-5.2"], base_env)
@@ -71,14 +73,20 @@ def test_resolved_model_id_prefers_argv_over_env(tmp_path) -> None:
 
 
 def test_resolved_model_id_prefers_env_over_saved_settings(tmp_path) -> None:
-    base_env = _settings_env(tmp_path, saved="anthropic/opencode/deepseek-v4-flash-free")
+    base_env = _settings_env(
+        tmp_path, saved="anthropic/opencode/deepseek-v4-flash-free"
+    )
     base_env["CLAUDE_MODEL"] = "sonnet"
     assert resolved_model_id([], base_env) == "sonnet"
 
 
 def test_resolved_model_id_falls_back_to_saved_settings(tmp_path) -> None:
-    base_env = _settings_env(tmp_path, saved="anthropic/opencode/deepseek-v4-flash-free")
-    assert resolved_model_id([], base_env) == "anthropic/opencode/deepseek-v4-flash-free"
+    base_env = _settings_env(
+        tmp_path, saved="anthropic/opencode/deepseek-v4-flash-free"
+    )
+    assert (
+        resolved_model_id([], base_env) == "anthropic/opencode/deepseek-v4-flash-free"
+    )
 
 
 def test_resolved_model_id_ignores_missing_settings(tmp_path) -> None:
