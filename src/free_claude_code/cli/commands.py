@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -26,6 +27,17 @@ from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.runtime.bootstrap import build_asgi_app
 
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
+ADMIN_OPEN_MODE_ENV = "FCC_ADMIN_OPEN_MODE"
+TERMINAL_BROWSER_COMMAND = "terminal-browser"
+TERMINAL_BROWSER_STARTUP_PROBE_SECONDS = 0.35
+
+
+class AdminOpenMode(StrEnum):
+    """Where FCC should present its local Admin surface."""
+
+    AUTO = "auto"
+    TERMINAL = "terminal"
+    BROWSER = "browser"
 
 
 def serve() -> None:
@@ -196,6 +208,69 @@ def load_server_settings() -> Settings:
     return get_settings()
 
 
+def _admin_open_mode(env: dict[str, str] | os._Environ[str] | None = None) -> AdminOpenMode:
+    """Resolve the presentation mode without making invalid values fatal."""
+
+    source = os.environ if env is None else env
+    raw = source.get(ADMIN_OPEN_MODE_ENV, AdminOpenMode.AUTO.value).strip().lower()
+    try:
+        return AdminOpenMode(raw)
+    except ValueError:
+        return AdminOpenMode.AUTO
+
+
+def _interactive_terminal_available() -> bool:
+    """Return whether inheriting stdio can safely host terminal-browser."""
+
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _try_terminal_browser(admin_url: str) -> bool:
+    """Launch Zenbu terminal-browser App Mode and detect immediate startup failures."""
+
+    executable = shutil.which(TERMINAL_BROWSER_COMMAND)
+    if executable is None:
+        return False
+    try:
+        process = subprocess.Popen(
+            [executable, "open", admin_url, "--app-mode"],
+        )
+    except OSError:
+        return False
+
+    try:
+        return process.wait(timeout=TERMINAL_BROWSER_STARTUP_PROBE_SECONDS) == 0
+    except subprocess.TimeoutExpired:
+        # A process that remains alive past the startup probe has taken ownership
+        # of the terminal/browser session successfully.
+        return True
+
+
+def open_admin_surface(admin_url: str) -> bool:
+    """Prefer terminal-browser for CLI sessions while retaining explicit fallback modes."""
+
+    mode = _admin_open_mode()
+    if mode is AdminOpenMode.BROWSER:
+        return webbrowser.open(admin_url)
+
+    should_try_terminal = (
+        mode is AdminOpenMode.TERMINAL or _interactive_terminal_available()
+    )
+    if should_try_terminal and _try_terminal_browser(admin_url):
+        return True
+
+    if mode is AdminOpenMode.TERMINAL:
+        print(
+            "FCC Admin is ready at "
+            f"{admin_url}, but terminal-browser could not be started. "
+            "The system browser was not opened because FCC_ADMIN_OPEN_MODE=terminal.",
+            file=sys.stderr,
+        )
+        return False
+
+    return webbrowser.open(admin_url)
+
+
 def open_admin_when_ready(settings: Settings) -> bool:
     """Wait briefly for /health, then open the current Admin UI."""
 
@@ -204,7 +279,7 @@ def open_admin_when_ready(settings: Settings) -> bool:
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
         if preflight_proxy(proxy_root_url) is None:
-            return webbrowser.open(admin_url)
+            return open_admin_surface(admin_url)
         time.sleep(0.15)
     return False
 
