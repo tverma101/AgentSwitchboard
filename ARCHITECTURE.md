@@ -197,6 +197,10 @@ new places to add unrelated behavior:
   behavior. It separates immutable vendor profiles from per-request stream
   execution, recovery, request policy, and tool-call assembly. Shared
   protocol rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
+  Its usage normalizer maps provider cache reads, uncached input, and explicit
+  cache-write counters into disjoint Anthropic usage buckets; a cache miss is
+  never treated as a cache write. The Responses adapter applies the same
+  normalization and preserves an explicit upstream cache-write counter.
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
@@ -1601,4 +1605,3 @@ Update this file when a change adds or meaningfully changes:
 Docs-only changes to this file do not require a semver bump. Production code
 changes still follow the versioning rules in [AGENTS.md](AGENTS.md) and
 [CLAUDE.md](CLAUDE.md).
-
