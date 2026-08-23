@@ -155,8 +155,7 @@ samples, RSS snapshots, CPU time, observed chunk size, connection reuse,
 request-body sizes, and retry amplification:
 
 ```powershell
-uv run python scripts/benchmark_opencode_go_transport.py \
-  --mode synthetic --model qwen3.7-plus --samples 1,100,1000
+uv run python scripts/benchmark_opencode_go_transport.py --mode synthetic --model qwen3.7-plus --samples 1,100,1000
 ```
 
 Use `--model muse-spark-1.2-contributor` or a Chat model to exercise the other
@@ -166,8 +165,7 @@ quota and requires real credentials:
 ```powershell
 $env:FCC_OPENCODE_GO_BENCHMARK_LIVE = "1"
 $env:OPENCODE_API_KEY = "..."
-uv run python scripts/benchmark_opencode_go_transport.py \
-  --mode live --model muse-spark-1.2-contributor --samples 1,10,100
+uv run python scripts/benchmark_opencode_go_transport.py --mode live --model muse-spark-1.2-contributor --samples 1,10,100
 ```
 
 Live receipts prove the configured integration only; native OpenCode reference

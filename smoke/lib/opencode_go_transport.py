@@ -110,8 +110,8 @@ class SyntheticUpstream:
                     b"connection: keep-alive\r\n\r\n"
                 )
                 await writer.drain()
-                for offset in range(0, len(response), 256):
-                    chunk = response[offset : offset + 256]
+                for offset in range(0, len(response), 16_384):
+                    chunk = response[offset : offset + 16_384]
                     writer.write(f"{len(chunk):x}\r\n".encode("ascii"))
                     writer.write(chunk)
                     writer.write(b"\r\n")
@@ -195,7 +195,7 @@ def _chat_frame(text: str, *, finish_reason: str | None = None) -> str:
     return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
 
 
-def _text_parts(text: str, size: int = 128) -> tuple[str, ...]:
+def _text_parts(text: str, size: int = 4_096) -> tuple[str, ...]:
     return tuple(text[offset : offset + size] for offset in range(0, len(text), size))
 
 
@@ -236,6 +236,8 @@ async def run_transport_benchmark(
         ),
         admission=ProviderAdmissionController(
             provider_name="OPENCODE_GO",
+            rate_limit=10_000,
+            rate_window=1.0,
             max_concurrency=2,
             base_delay=0.0,
             max_delay=0.0,
