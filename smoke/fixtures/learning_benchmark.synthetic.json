@@ -36,7 +36,7 @@
       "passed": true
     }
   ],
-  "commit_sha": "489342284fc4effee1844de9a69135e3f52324d5",
+  "commit_sha": "7ba577cf65f74c8dec45659862e2680deb5ea12d",
   "fixture_version": "2026-08-23.1",
   "model_id": null,
   "model_route": "deterministic_local",
@@ -69,10 +69,10 @@
     }
   ],
   "summary": {
-    "enqueue_ms": 0.453709,
+    "enqueue_ms": 0.550083,
     "failed": 0,
     "passed": 7,
-    "runtime_ms": 1030.099958,
+    "runtime_ms": 1027.877083,
     "sqlite_bytes_after": 4096,
     "sqlite_bytes_before": 4096
   },
