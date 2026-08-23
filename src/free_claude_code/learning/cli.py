@@ -1,7 +1,5 @@
 """Command-line entrypoint for FCC Learning."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys

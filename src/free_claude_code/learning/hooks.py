@@ -1,7 +1,5 @@
 """Claude Code hook installation and event handlers for FCC Learning."""
 
-from __future__ import annotations
-
 import json
 import os
 import shlex

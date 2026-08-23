@@ -1,7 +1,5 @@
 """Hermes-style automatic memory and skill learning for Claude Code."""
 
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -230,12 +228,8 @@ def _write_skill(
     if scope == "project":
         project_slug = _safe_slug(Path(project_key).name, fallback="project")
         skill_key = f"fcc-auto-{project_slug}-{base_slug}"
-        scoped_description = (
-            f"For the {Path(project_key).name} project only: {description}"
-        )
-        scope_note = (
-            f"\n\n## Scope\nApply only while working in project `{project_key}`."
-        )
+        scoped_description = f"For the {Path(project_key).name} project only: {description}"
+        scope_note = f"\n\n## Scope\nApply only while working in project `{project_key}`."
     else:
         skill_key = f"fcc-auto-{base_slug}"
         scoped_description = description
@@ -317,8 +311,7 @@ def apply_learning_result(
             evidence in _ALLOWED_SKILL_EVIDENCE
             and isinstance(confidence, (int, float))
             and confidence >= skill_threshold
-            and _write_skill(store=store, skill=skill, project_key=project_key)
-            is not None
+            and _write_skill(store=store, skill=skill, project_key=project_key) is not None
         ):
             learned_skills += 1
 
