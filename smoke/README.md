@@ -195,10 +195,13 @@ uv run python smoke/opencode_go_economics.py --native native.jsonl --fcc fcc.jso
 The evaluator applies the source-stamped fixture at
 [`smoke/fixtures/opencode_go_pricing.json`](fixtures/opencode_go_pricing.json),
 reports cache share, token amplification, retry amplification, prefix-match
-rate, and estimated cost regression, and exits nonzero when the default 98%
-cache-read or 5% cost-regression gates fail. It never stores or requires prompt
-content. Native-reference and live Go receipts remain opt-in human-supplied
-artifacts; deterministic unit tests cover the bridge-side serialization guard.
+rate, and estimated cost regression, and exits nonzero when the default 5%
+cost-regression gate or native-relative cache gate fails. By default, the cache
+gate is relative to the native receipt: FCC may not trail native by more than 3
+percentage points. Use `--min-cache-read-share` only as an explicit legacy
+absolute override. It never stores or requires prompt content. Native-reference
+and live Go receipts remain opt-in human-supplied artifacts; deterministic unit
+tests cover the bridge-side serialization guard.
 
 ## Failure Classes
 

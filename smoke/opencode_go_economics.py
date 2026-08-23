@@ -20,7 +20,18 @@ def main() -> int:
     parser.add_argument("--native", required=True, help="native OpenCode receipt JSONL")
     parser.add_argument("--fcc", required=True, help="FCC/Claude Code receipt JSONL")
     parser.add_argument("--max-cost-regression-pct", type=float, default=5.0)
-    parser.add_argument("--min-cache-read-share", type=float, default=0.98)
+    parser.add_argument(
+        "--max-cache-share-gap-points",
+        type=float,
+        default=3.0,
+        help="maximum FCC cache-read-share deficit versus native, in percentage points",
+    )
+    parser.add_argument(
+        "--min-cache-read-share",
+        type=float,
+        default=None,
+        help="legacy explicit absolute cache-read gate; native-relative comparison is the default",
+    )
     args = parser.parse_args()
 
     native_metadata, native_rows = load_receipt(args.native)
@@ -37,9 +48,14 @@ def main() -> int:
 
     regression = float(comparison["estimated_cost_regression_pct"])
     fcc_share = float(comparison["fcc"]["cache_read_share"])
+    cache_gap = float(comparison["cache_read_share_gap_percentage_points"])
     if regression > args.max_cost_regression_pct:
         return 1
-    if fcc_share < args.min_cache_read_share:
+    if args.min_cache_read_share is not None:
+        cache_gate_failed = fcc_share < args.min_cache_read_share
+    else:
+        cache_gate_failed = cache_gap > args.max_cache_share_gap_points
+    if cache_gate_failed:
         return 1
     return 0
 

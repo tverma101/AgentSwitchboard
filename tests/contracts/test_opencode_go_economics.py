@@ -39,6 +39,7 @@ def test_muse_cache_loss_materially_increases_estimated_cost() -> None:
     comparison = compare_receipts(native, fcc)
 
     assert comparison["fcc"]["cache_read_share"] < 0.98
+    assert comparison["cache_read_share_gap_percentage_points"] > 0.0
     assert comparison["estimated_cost_regression_pct"] > 5.0
 
 

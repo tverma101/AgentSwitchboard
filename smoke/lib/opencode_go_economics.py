@@ -380,10 +380,14 @@ def compare_receipts(
         regression_pct = 0.0 if fcc_cost == 0 else float("inf")
     else:
         regression_pct = ((fcc_cost / native_cost) - 1.0) * 100.0
+    cache_read_share_gap = (
+        float(native["cache_read_share"]) - float(fcc["cache_read_share"])
+    ) * 100.0
     return {
         "native": native,
         "fcc": fcc,
         "estimated_cost_regression_pct": regression_pct,
+        "cache_read_share_gap_percentage_points": cache_read_share_gap,
         "token_amplification": (
             fcc_uncached / native_uncached if native_uncached else float("inf")
         ),
