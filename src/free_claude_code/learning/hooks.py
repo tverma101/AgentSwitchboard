@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .engine import learn_from_turn
 from .store import LearningStore, format_memory_context, project_identity
 
 _HOOK_MODULE = "free_claude_code.learning.cli"
@@ -57,8 +56,8 @@ def _load_settings(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError):
-        raise ValueError(f"cannot safely update invalid Claude settings: {path}")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot safely update invalid Claude settings: {path}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"Claude settings root must be a JSON object: {path}")
     return payload
@@ -236,6 +235,10 @@ def handle_stop(payload: dict[str, Any], store: LearningStore) -> None:
     payload_cwd = payload.get("cwd")
     if isinstance(payload_cwd, str) and payload_cwd:
         cwd = payload_cwd
+
+    # Keep launch/session hooks tiny: load the HTTP distiller only for Stop.
+    from .engine import learn_from_turn
+
     learn_from_turn(
         cwd=cwd,
         user_prompt=prompt,
