@@ -13,6 +13,16 @@ CLAUDE_CONTEXT_CAP_MAX = 1_000_000
 CLAUDE_CONTEXT_CAP_ENV = "FCC_CLAUDE_CONTEXT_TOKENS"
 CLAUDE_BINARY_NAME = "claude"
 
+# Keys Claude Code applies from its settings.json ``env`` block over the
+# process environment. FCC's launcher owns these for a proxy session; when a
+# user settings file sets any of them, Claude Code would silently override the
+# launcher's routing/auth and bypass the FCC gateway. FCC fails closed instead.
+SETTINGS_ENV_ROUTING_KEYS = (
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+)
+
 # Optional hard native ceilings for models known to support less than the FCC
 # default. Do not put advertised large windows here: FCC intentionally treats a
 # 1M-capable gateway model as 256K unless the user explicitly opts higher.
@@ -85,6 +95,34 @@ def resolved_model_id(
         return None
     model = settings.get("model")
     return model if isinstance(model, str) else None
+
+
+def claude_settings_env(base_env: Mapping[str, str]) -> dict[str, str]:
+    """Return the env block Claude Code will apply from its settings.json.
+
+    Claude Code applies the ``env`` block of the resolved settings file over
+    the process environment, so any routing keys set there silently defeat the
+    launcher's own environment. Launchers must fail closed when this block
+    would override FCC-owned routing, rather than launch a session that
+    bypasses the local proxy.
+    """
+
+    config_dir = Path(base_env.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    try:
+        settings = json.loads((config_dir / "settings.json").read_text())
+    except OSError, ValueError:
+        return {}
+    env = settings.get("env")
+    if not isinstance(env, dict):
+        return {}
+    return {key: value for key, value in env.items() if isinstance(key, str)}
+
+
+def conflicting_settings_env_keys(base_env: Mapping[str, str]) -> tuple[str, ...]:
+    """Return FCC-routing keys that Claude settings.json would override."""
+
+    env = claude_settings_env(base_env)
+    return tuple(key for key in SETTINGS_ENV_ROUTING_KEYS if key in env)
 
 
 def build_claude_proxy_env(

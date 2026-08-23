@@ -94,6 +94,7 @@ def test_cli_scripts_are_registered() -> None:
         "fcc-codex": "free_claude_code.cli.launchers.codex:launch",
         "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
         "fcc-learning": "free_claude_code.learning.cli:main",
+        "fcc-appshot": "free_claude_code.cli.appshot:main",
     }
     assert pyproject["project"]["gui-scripts"] == {
         "fcc-desktop": "free_claude_code.cli.desktop_entrypoint:launch",
@@ -471,6 +472,87 @@ def test_claude_child_env_uses_sentinel_for_blank_configured_auth_token() -> Non
     assert "ANTHROPIC_API_KEY" not in env
 
 
+def test_launch_claude_refuses_settings_env_routing_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fail closed when Claude settings.json env would bypass the proxy."""
+    from free_claude_code.cli.launchers.claude import launch
+
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_AUTH_TOKEN": "first-party-token",
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(settings_dir))
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.claude.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.claude.preflight_proxy", return_value=None
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        launch(["--model", "sonnet"])
+
+    assert exc_info.value.code == 2
+    popen.assert_not_called()
+
+
+def test_launch_claude_allows_unrelated_settings_env_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Non-routing settings env keys do not block a proxy launch."""
+    from free_claude_code.cli.launchers.claude import launch
+
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps({"env": {"EDITOR": "code", "CLAUDE_MODEL": "sonnet"}})
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(settings_dir))
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.claude.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.claude.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-claude.cmd",
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid") as register_pid,
+        patch("free_claude_code.cli.launchers.common.unregister_pid") as unregister_pid,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(["--model", "sonnet"])
+
+    assert exc_info.value.code == 0
+    popen.assert_called_once()
+    child_env = popen.call_args.kwargs["env"]
+    assert child_env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:9191"
+    assert child_env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
+
+
 def test_launch_claude_passes_args_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,6 +561,7 @@ def test_launch_claude_passes_args_and_child_env(
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
     monkeypatch.setenv("KEEP_ME", "yes")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path("/nonexistent-fcc-test-config")))
     monkeypatch.delenv("DISABLE_TELEMETRY", raising=False)
     settings = _launcher_settings(port=9191, token="proxy-token")
 
@@ -529,6 +612,7 @@ def test_launch_claude_applies_model_context_window_override(
     """Launch with a flash gateway model raises the auto-compact window."""
     from free_claude_code.cli.launchers.claude import launch
 
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path("/nonexistent-fcc-test-config")))
     settings = _launcher_settings(port=9191, token="proxy-token")
 
     with (

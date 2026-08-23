@@ -4,6 +4,8 @@ import json
 
 from free_claude_code.cli.claude_env import (
     build_claude_proxy_env,
+    claude_settings_env,
+    conflicting_settings_env_keys,
     context_cap_tokens,
     effective_context_window,
     model_context_window,
@@ -99,3 +101,73 @@ def _settings_env(tmp_path, *, saved: str) -> dict[str, str]:
     settings_dir.mkdir()
     (settings_dir / "settings.json").write_text(json.dumps({"model": saved}))
     return {"CLAUDE_CONFIG_DIR": str(settings_dir)}
+
+
+def test_claude_settings_env_returns_empty_without_settings(tmp_path) -> None:
+    base_env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing")}
+    assert claude_settings_env(base_env) == {}
+
+
+def test_claude_settings_env_reads_env_block(tmp_path) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "model": "anthropic/opencode/deepseek-v4-flash-free",
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "CLAUDE_MODEL": "sonnet",
+                },
+            }
+        )
+    )
+    base_env = {"CLAUDE_CONFIG_DIR": str(settings_dir)}
+    assert claude_settings_env(base_env) == {
+        "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+        "CLAUDE_MODEL": "sonnet",
+    }
+
+
+def test_conflicting_settings_env_keys_detects_routing_overrides(tmp_path) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_AUTH_TOKEN": "leaked-token",
+                    "ANTHROPIC_API_KEY": "sk-ant-leaked",
+                    "CLAUDE_MODEL": "sonnet",
+                    "EDITOR": "code",
+                },
+            }
+        )
+    )
+    base_env = {"CLAUDE_CONFIG_DIR": str(settings_dir)}
+    conflicts = conflicting_settings_env_keys(base_env)
+    assert conflicts == (
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+    )
+    # Non-routing keys are never conflicts.
+    assert "CLAUDE_MODEL" not in conflicts
+    assert "EDITOR" not in conflicts
+
+
+def test_conflicting_settings_env_keys_ignores_invalid_settings(tmp_path) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text("not json{")
+    base_env = {"CLAUDE_CONFIG_DIR": str(settings_dir)}
+    assert conflicting_settings_env_keys(base_env) == ()
+
+    (settings_dir / "settings.json").write_text(json.dumps({"env": []}))
+    assert conflicting_settings_env_keys(base_env) == ()
+
+
+def test_conflicting_settings_env_keys_ignores_missing_settings(tmp_path) -> None:
+    base_env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing")}
+    assert conflicting_settings_env_keys(base_env) == ()
