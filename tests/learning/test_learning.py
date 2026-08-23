@@ -5,7 +5,7 @@ from pathlib import Path
 
 from free_claude_code.learning.engine import apply_learning_result
 from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
-from free_claude_code.learning.stop_hook import handle_stop
+from free_claude_code.learning.stop_hook import drain_queue, enqueue_stop, handle_stop
 from free_claude_code.learning.store import LearningStore, format_memory_context
 
 
@@ -53,7 +53,9 @@ def test_prompt_state_round_trip(tmp_path: Path) -> None:
     assert store.prompt_for_session("session-1") == ("/repo", "Fix the parser")
 
 
-def test_hook_install_is_idempotent_and_preserves_existing_hooks(tmp_path: Path) -> None:
+def test_hook_install_is_idempotent_and_preserves_existing_hooks(
+    tmp_path: Path,
+) -> None:
     settings = tmp_path / "settings.json"
     settings.write_text(
         json.dumps(
@@ -61,11 +63,7 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(tmp_path: Path)
                 "model": "haiku",
                 "hooks": {
                     "Stop": [
-                        {
-                            "hooks": [
-                                {"type": "command", "command": "printf existing"}
-                            ]
-                        }
+                        {"hooks": [{"type": "command", "command": "printf existing"}]}
                     ]
                 },
             }
@@ -78,12 +76,12 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(tmp_path: Path)
     payload = json.loads(settings.read_text())
     assert payload["model"] == "haiku"
     stop_commands = [
-        hook["command"]
-        for group in payload["hooks"]["Stop"]
-        for hook in group["hooks"]
+        hook["command"] for group in payload["hooks"]["Stop"] for hook in group["hooks"]
     ]
     assert "printf existing" in stop_commands
-    assert any("free_claude_code.learning.stop_hook" in command for command in stop_commands)
+    assert any(
+        "free_claude_code.learning.stop_hook" in command for command in stop_commands
+    )
     assert (tmp_path / "settings.json.fcc-learning.bak").exists()
     assert (tmp_path / "skills").is_dir()
 
@@ -214,4 +212,181 @@ def test_stop_hook_ignores_missing_prompt_state(tmp_path: Path) -> None:
         },
         store,
     )
+    assert store.counts() == {"memories": 0, "skills": 0}
+
+
+def test_memory_replace_remove_and_history_are_scoped_and_audited(
+    tmp_path: Path,
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    project = str(tmp_path / "repo")
+    memory_id, inserted = store.add_memory(
+        scope="project",
+        project_key=project,
+        text="The project uses uv.",
+        confidence=0.9,
+        source="verified_fact",
+    )
+    assert inserted
+    assert store.replace_memory(
+        memory_id=memory_id,
+        project_key=project,
+        scope="project",
+        text="The project uses uv and Python 3.14.",
+        confidence=0.98,
+        source="verified_fact",
+        reason="verified project inspection",
+        evidence="verified_fact",
+    )
+    assert store.get_memory(memory_id, project_key=str(tmp_path / "other")) is None
+    assert store.remove_memory(
+        memory_id,
+        project_key=project,
+        reason="user asked to forget it",
+        evidence="user_explicit",
+    )
+    assert store.get_memory(memory_id, project_key=project) is None
+    assert [
+        row["action"] for row in store.memory_history(memory_id, project_key=project)
+    ] == [
+        "add",
+        "replace",
+        "remove",
+    ]
+
+
+def test_learning_actions_require_explicit_safe_evidence(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    memory_id, _ = store.add_memory(
+        scope="global",
+        project_key=str(tmp_path),
+        text="Preference A is current.",
+        confidence=0.96,
+        source="user_explicit",
+    )
+    assert apply_learning_result(
+        result={
+            "memory_actions": [
+                {
+                    "action": "remove",
+                    "memory_id": memory_id,
+                    "evidence_kind": "verified_fact",
+                }
+            ],
+            "skill": None,
+        },
+        cwd=str(tmp_path),
+        store=store,
+    ) == {"memories": 0, "skills": 0}
+    assert store.get_memory(memory_id, project_key=str(tmp_path)) is not None
+    assert apply_learning_result(
+        result={
+            "memory_actions": [
+                {
+                    "action": "replace",
+                    "memory_id": memory_id,
+                    "scope": "global",
+                    "text": "Preference B is current.",
+                    "confidence": 0.99,
+                    "evidence_kind": "user_explicit",
+                    "reason": "user correction",
+                }
+            ],
+            "skill": None,
+        },
+        cwd=str(tmp_path),
+        store=store,
+    ) == {"memories": 1, "skills": 0}
+    assert store.get_memory(memory_id, project_key=str(tmp_path))["text"] == (
+        "Preference B is current."
+    )
+
+
+def test_skill_revisions_preserve_previous_bytes_and_rollback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    store = LearningStore(tmp_path / "learning.db")
+    first = {
+        "memory_actions": [],
+        "skill": {
+            "action": "create",
+            "name": "review-work",
+            "description": "Review the work before handing it off.",
+            "instructions": "Run the focused tests, verify the diff, and check the final status before handoff.",
+            "scope": "global",
+            "confidence": 0.98,
+            "evidence_kind": "successful_workflow",
+        },
+    }
+    assert apply_learning_result(result=first, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    path = tmp_path / "claude" / "skills" / "fcc-auto-review-work" / "SKILL.md"
+    old = path.read_text()
+    second = {
+        "memory_actions": [],
+        "skill": {
+            **first["skill"],
+            "action": "update",
+            "instructions": "Run focused tests, verify the diff, check the final status, and record the receipt before handoff.",
+        },
+    }
+    assert apply_learning_result(result=second, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    assert path.read_text() != old
+    assert len(store.skill_revisions("fcc-auto-review-work")) == 2
+    assert store.rollback_skill("fcc-auto-review-work", 1) == path
+    assert path.read_text() == old
+
+
+def test_stop_enqueue_is_idempotent_redacted_and_recovered(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    store.record_prompt(
+        session_id="session-1",
+        cwd=str(tmp_path),
+        prompt="Fix the parser API_KEY=secretvalue123",
+    )
+    payload = {
+        "session_id": "session-1",
+        "cwd": str(tmp_path),
+        "last_assistant_message": "Completed the parser. bearer abcdefghijklmnop",
+    }
+    first = enqueue_stop(payload, store)
+    second = enqueue_stop(payload, store)
+    assert first == second
+    assert store.queue_counts() == {"pending": 1}
+    monkeypatch.setattr(
+        "free_claude_code.learning.stop_hook.learn_from_turn", lambda **_: {}
+    )
+    assert drain_queue(store, max_items=2) == 1
+    assert store.queue_counts() == {"completed": 1}
+
+
+def test_fault_attribution_blocks_infrastructure_learning(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    result = {
+        "memory_actions": [
+            {
+                "action": "add",
+                "scope": "global",
+                "text": "Never use the provider after one timeout.",
+                "confidence": 0.99,
+                "evidence_kind": "successful_workflow",
+            }
+        ],
+        "skill": None,
+    }
+    assert apply_learning_result(
+        result=result,
+        cwd=str(tmp_path),
+        store=store,
+        attribution={"fault_domain": "opencode_gateway", "success": False},
+    ) == {"memories": 0, "skills": 0}
     assert store.counts() == {"memories": 0, "skills": 0}

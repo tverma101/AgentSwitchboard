@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .stop_hook import spawn_queue_worker
 from .store import LearningStore, format_memory_context, project_identity
 
 _HOOK_MODULE = "free_claude_code.learning.cli"
@@ -59,7 +60,9 @@ def _load_settings(path: Path) -> dict[str, Any]:
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"cannot safely update invalid Claude settings: {path}") from exc
+        raise ValueError(
+            f"cannot safely update invalid Claude settings: {path}"
+        ) from exc
     if not isinstance(payload, dict):
         raise ValueError(f"Claude settings root must be a JSON object: {path}")
     return payload
@@ -177,12 +180,14 @@ def ensure_learning_hooks() -> None:
 def _read_hook_input() -> dict[str, Any]:
     try:
         payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return {}
     return payload if isinstance(payload, dict) else {}
 
 
-def _emit_hook_context(event: str, context: str, *, reload_skills: bool = False) -> None:
+def _emit_hook_context(
+    event: str, context: str, *, reload_skills: bool = False
+) -> None:
     output: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": event}}
     specific = output["hookSpecificOutput"]
     if context:
@@ -201,6 +206,9 @@ def handle_session_start(payload: dict[str, Any], store: LearningStore) -> None:
         format_memory_context(rows),
         reload_skills=True,
     )
+    queue_counts = store.queue_counts()
+    if queue_counts.get("pending", 0) or queue_counts.get("processing", 0):
+        spawn_queue_worker()
 
 
 def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:

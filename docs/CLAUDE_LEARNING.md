@@ -13,9 +13,9 @@ When `fcc-claude` starts successfully, FCC idempotently merges three hooks into 
 
 - **SessionStart**: inject recent global + current-project memory and request a skill reload.
 - **UserPromptSubmit**: save the current prompt and inject the most relevant memories using deterministic token overlap + recency scoring.
-- **Stop** *(async)*: pair the last user prompt with Claude's final assistant message and ask FCC's Haiku route for a conservative learning decision.
+- **Stop** *(async)*: redact and enqueue the last user prompt plus Claude's final assistant message, then start one bounded worker to ask FCC's Haiku route for a conservative learning decision.
 
-The Stop hook is asynchronous so the learning pass does not hold up the interactive Claude Code response. The model client is isolated in the dedicated Stop-hook process; launch, session-start, and prompt-memory retrieval do not keep a learner process resident.
+The Stop hook is asynchronous so the learning pass does not hold up the interactive Claude Code response. The queue is SQLite-backed, deterministic, idempotent, retry-limited, and reclaimed after a crashed worker. A later SessionStart starts another bounded worker for stale work. There is no resident learner daemon; each worker exits after a small number of rows.
 
 ## Storage
 
@@ -25,7 +25,9 @@ Local state lives under:
 ~/.fcc/learning/learning.db
 ```
 
-SQLite runs in WAL mode. Memories are deduplicated by a stable fingerprint and scoped either globally or to the detected git project root.
+SQLite runs in WAL mode. Memories are deduplicated by a stable fingerprint and scoped either globally or to the detected git project root. Replacements, removals, and retention evictions create audit rows in `memory_history`; removed memories are not injected again. Explicit user memories are pinned, while only unused, low-confidence stale memories are eligible for retention eviction.
+
+Queue rows contain a stable hash, redacted prompt/result text, attempt count, lease timestamp, status, and bounded error text. Completed and dead-letter rows are retained for a bounded period. A killed worker leaves its row recoverable; repeated failures move to `dead_letter` after the configured attempt limit.
 
 Global learned skills use Claude Code's personal skills directory:
 
@@ -40,6 +42,8 @@ Project-scoped learned skills use Claude Code's native repository scope:
 ```
 
 That means a project-specific learned procedure is visible as a normal working-tree change and can be reviewed or committed with the project. FCC does not embed the machine's absolute project path into the generated skill. It never intentionally writes outside an FCC-owned `fcc-auto-*` skill directory.
+
+Every accepted skill revision is stored in the local `skill_revisions` table with a SHA-256 digest. Before an update, the previous bytes are retained. The current skill is provided to the distiller so an update must be a complete procedure; local validation requires frontmatter, bounded fields, no secrets or project-path leakage, and an explicit validation/check/test step. A prior revision can be restored byte-for-byte with `fcc-learning skill rollback <skill-key> <revision>`.
 
 ## Learning-model route
 
@@ -74,9 +78,21 @@ This is intentional: a one-time tool failure must not become permanent behavior.
 fcc-learning status
 fcc-learning install
 fcc-learning uninstall
+fcc-learning memory list
+fcc-learning memory search "terms"
+fcc-learning memory show <id>
+fcc-learning memory remove <id>
+fcc-learning memory history <id>
+fcc-learning skill list
+fcc-learning skill history <skill-key>
+fcc-learning skill rollback <skill-key> <revision>
+fcc-learning queue status
+fcc-learning queue drain
 ```
 
 `fcc-claude` normally installs/repairs the hooks automatically, so manual `install` is usually unnecessary.
+
+Memory replacement/removal is ID-based and scope-checked. The learner may only replace a project memory with a project memory, and only explicit user evidence can remove one. The CLI's `remove` command is an explicit user action and records a tombstone rather than silently deleting history.
 
 Environment overrides:
 
@@ -87,6 +103,8 @@ Environment overrides:
 | `FCC_LEARNING_MEMORY_CONFIDENCE` | `0.88` | Minimum model confidence before a memory can be saved. |
 | `FCC_LEARNING_SKILL_CONFIDENCE` | `0.92` | Minimum model confidence before a skill can be written. |
 | `FCC_LEARNING_TIMEOUT_SECONDS` | `45` | Distillation HTTP timeout. |
+| `FCC_LEARNING_DRAIN_LIMIT` | `2` | Maximum queue rows one short-lived worker drains. |
+| `FCC_LEARNING_MAX_ATTEMPTS` | `3` | Attempts before a permanently failing queue row enters `dead_letter`. |
 | `FCC_LEARNING_HOME` | `~/.fcc/learning` | Override SQLite/state location. |
 | `FCC_LEARNING_ALLOW_REMOTE` | `0` | Expert-only escape hatch permitting a non-loopback Anthropic base URL. |
 
@@ -94,4 +112,4 @@ Environment overrides:
 
 Learning is non-critical. Invalid Claude settings are never overwritten; `fcc-claude` reports a terse warning and continues. Hook failures do not terminate Claude Code. The first settings modification creates `settings.json.fcc-learning.bak` next to the user's Claude settings as a one-time recovery copy.
 
-The async Stop pass is best-effort in this version: if Claude Code exits before the background hook finishes, that turn can be missed. Issue #8 tracks a local SQLite queue/retry design that closes this gap without adding a daemon.
+Infrastructure-attributed failures (`opencode_gateway`, `harness_transport`, `upstream_cache`, and `unknown`) are passed to the learner as non-learning evidence and cannot create durable memories or skills. A one-off `model_output` failure is also rejected unless the receipt marks the workflow successful. This prevents a transient provider problem from teaching a permanent model/tool avoidance rule.
