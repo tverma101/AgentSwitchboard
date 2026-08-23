@@ -74,3 +74,20 @@ def test_attempt_receipt_is_metadata_only_and_serializable() -> None:
     assert receipt["bytes_received"] == 20
     assert "prompt" not in receipt
     assert "content" not in receipt
+
+
+def test_attempt_receipt_event_sequence_is_bounded() -> None:
+    evidence = AttemptEvidence(
+        turn_id="turn_1",
+        request_id=None,
+        protocol="responses",
+        provider="OPENCODE_GO",
+        model="muse-spark-1.2-contributor",
+        attempt_number=1,
+    )
+
+    for index in range(5_000):
+        evidence.add_event(f"event_{index}")
+
+    assert len(evidence.event_types) == 4_096
+    assert evidence.event_types[-1] == "event_sequence_truncated"

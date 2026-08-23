@@ -102,9 +102,10 @@ class AttemptEvidence:
 
     def add_event(self, event_type: str, *, byte_count: int = 0) -> None:
         if len(self.event_types) < _MAX_EVENT_TYPES:
-            self.event_types.append(event_type)
-        elif self.event_types[-1] != "event_sequence_truncated":
-            self.event_types.append("event_sequence_truncated")
+            if len(self.event_types) == _MAX_EVENT_TYPES - 1:
+                self.event_types.append("event_sequence_truncated")
+            else:
+                self.event_types.append(event_type)
         self.bytes_received += max(0, byte_count)
 
     def as_dict(self) -> dict[str, Any]:
