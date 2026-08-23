@@ -145,6 +145,16 @@ def _create_groq(
     return GroqProvider(config, admission=admission)
 
 
+def _create_opencode_go(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.opencode_go import OpenCodeGoProvider
+
+    return OpenCodeGoProvider(config, admission=admission)
+
+
 _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -157,14 +167,20 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "vertex": _create_vertex,
     "github_models": _create_github_models,
     "groq": _create_groq,
+    "opencode_go": _create_opencode_go,
 }
 _INJECTED_PROVIDER_IDS = {"openai"}
+# OpenCode Go remains in OPENAI_CHAT_PROFILES solely as the internal profile for
+# its chat/completions sub-adapter. Construction ownership belongs to the native
+# multi-protocol provider above.
+_PROFILE_SUBADAPTER_IDS = {"opencode_go"}
 
-_profiled_ids = set(OPENAI_CHAT_PROFILES)
+_profiled_ids = set(OPENAI_CHAT_PROFILES) - _PROFILE_SUBADAPTER_IDS
 _special_ids = set(_SPECIAL_PROVIDER_FACTORIES)
 _construction_ids = _profiled_ids | _special_ids | _INJECTED_PROVIDER_IDS
 if (
-    _profiled_ids & _special_ids
+    _PROFILE_SUBADAPTER_IDS - _special_ids
+    or _profiled_ids & _special_ids
     or _profiled_ids & _INJECTED_PROVIDER_IDS
     or _special_ids & _INJECTED_PROVIDER_IDS
     or _construction_ids != set(PROVIDER_CATALOG)
