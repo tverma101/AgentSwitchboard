@@ -154,6 +154,27 @@ processes use the **same Python interpreter** as the test runner, not nested
 `uv run`, so Windows does not try to replace `fcc-server.exe` while it is
 locked.
 
+## OpenCode Go economic receipts
+
+Use the evaluator for redacted JSONL receipts captured from the native OpenCode
+reference and FCC bridge. The first line of each receipt should contain
+`{"_receipt":{"commit_sha":"...","model":"...","protocol":"..."}}`;
+remaining rows contain disjoint `uncached_input_tokens`, `cache_read_tokens`,
+`cache_write_tokens`, and `output_tokens` plus optional attempt and stable-prefix
+hash fields:
+
+```powershell
+uv run python smoke/opencode_go_economics.py --native native.jsonl --fcc fcc.jsonl
+```
+
+The evaluator applies the source-stamped fixture at
+[`smoke/fixtures/opencode_go_pricing.json`](fixtures/opencode_go_pricing.json),
+reports cache share, token amplification, retry amplification, prefix-match
+rate, and estimated cost regression, and exits nonzero when the default 98%
+cache-read or 5% cost-regression gates fail. It never stores or requires prompt
+content. Native-reference and live Go receipts remain opt-in human-supplied
+artifacts; deterministic unit tests cover the bridge-side serialization guard.
+
 ## Failure Classes
 
 Smoke artifacts are written to `.smoke-results/` and redact env values whose

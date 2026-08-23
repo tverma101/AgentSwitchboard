@@ -1,0 +1,24 @@
+{
+  "source_date": "2026-08-23",
+  "source_url": "https://dev.opencode.ai/docs/go/",
+  "models": {
+    "grok-4.5": {"input": 2.0, "output": 6.0, "cache_read": 0.3, "cache_write": 0.0},
+    "glm-5.3": {"input": 1.4, "output": 4.4, "cache_read": 0.26, "cache_write": 0.0},
+    "glm-5.2": {"input": 1.4, "output": 4.4, "cache_read": 0.26, "cache_write": 0.0},
+    "glm-5.1": {"input": 1.4, "output": 4.4, "cache_read": 0.26, "cache_write": 0.0},
+    "kimi-k3": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 0.0},
+    "kimi-k2.7-code": {"input": 0.95, "output": 4.0, "cache_read": 0.19, "cache_write": 0.0},
+    "kimi-k2.6": {"input": 0.95, "output": 4.0, "cache_read": 0.16, "cache_write": 0.0},
+    "mimo-v2.5": {"input": 0.14, "output": 0.28, "cache_read": 0.0028, "cache_write": 0.0},
+    "mimo-v2.5-pro": {"input": 0.435, "output": 0.87, "cache_read": 0.003625, "cache_write": 0.0},
+    "minimax-m3": {"input": 0.3, "output": 1.2, "cache_read": 0.06, "cache_write": 0.0},
+    "minimax-m2.7": {"input": 0.3, "output": 1.2, "cache_read": 0.06, "cache_write": 0.375},
+    "minimax-m2.5": {"input": 0.3, "output": 1.2, "cache_read": 0.06, "cache_write": 0.375},
+    "muse-spark-1.2-contributor": {"input": 0.1, "output": 0.2, "cache_read": 0.002, "cache_write": 0.0},
+    "qwen3.8-max": {"input": 2.0, "output": 6.0, "cache_read": 0.25, "cache_write": 2.5},
+    "qwen3.7-max": {"input": 2.5, "output": 7.5, "cache_read": 0.5, "cache_write": 3.125},
+    "hy3": {"input": 0.14, "output": 0.58, "cache_read": 0.035, "cache_write": 0.0},
+    "ox-alpha-free": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0},
+    "x-preview-f-free": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0}
+  }
+}

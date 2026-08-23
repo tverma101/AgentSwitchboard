@@ -4,6 +4,7 @@ Pricing is intentionally source-stamped instead of fetched at benchmark time so 
 receipt remains reproducible after OpenCode changes prices.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,9 +35,20 @@ class GoUsage:
     output_tokens: int
     context_tokens: int | None = None
     price_variant: str | None = None
+    protocol: str | None = None
+    logical_request_id: str | None = None
+    upstream_attempts: int = 1
+    retry_reason: str | None = None
+    stable_prefix_hash: str | None = None
+    request_shape_hash: str | None = None
+    tool_schema_hash: str | None = None
+    ttft_ms: float | None = None
+    duration_ms: float | None = None
+    bytes_in: int | None = None
+    bytes_out: int | None = None
 
     @classmethod
-    def from_mapping(cls, value: dict[str, Any]) -> "GoUsage":
+    def from_mapping(cls, value: dict[str, Any]) -> GoUsage:
         required = (
             "model",
             "uncached_input_tokens",
@@ -66,15 +78,63 @@ class GoUsage:
         price_variant = value.get("price_variant")
         if price_variant is not None and not isinstance(price_variant, str):
             raise ValueError("price_variant must be a string")
+        protocol = value.get("protocol")
+        if protocol is not None and (
+            not isinstance(protocol, str)
+            or protocol not in {"responses", "messages", "chat_completions"}
+        ):
+            raise ValueError("protocol must be a supported protocol string")
+        logical_request_id = value.get("logical_request_id")
+        if logical_request_id is not None and not isinstance(logical_request_id, str):
+            raise ValueError("logical_request_id must be a string")
+        upstream_attempts = value.get("upstream_attempts", value.get("attempts", 1))
+        if (
+            not isinstance(upstream_attempts, int)
+            or isinstance(upstream_attempts, bool)
+            or upstream_attempts <= 0
+        ):
+            raise ValueError("upstream_attempts must be a positive integer")
+        retry_reason = value.get("retry_reason")
+        if retry_reason is not None and not isinstance(retry_reason, str):
+            raise ValueError("retry_reason must be a string")
+        hashes: dict[str, str | None] = {}
+        for key in ("stable_prefix_hash", "request_shape_hash", "tool_schema_hash"):
+            raw = value.get(key)
+            if raw is not None and not isinstance(raw, str):
+                raise ValueError(f"{key} must be a string")
+            hashes[key] = raw
+        timings: dict[str, float | None] = {}
+        for key in ("ttft_ms", "duration_ms"):
+            raw = value.get(key)
+            if raw is not None and (
+                not isinstance(raw, int | float) or isinstance(raw, bool) or raw < 0
+            ):
+                raise ValueError(f"{key} must be a non-negative number")
+            timings[key] = float(raw) if raw is not None else None
+        byte_counts: dict[str, int | None] = {}
+        for key in ("bytes_in", "bytes_out"):
+            raw = value.get(key)
+            if raw is not None and (
+                not isinstance(raw, int) or isinstance(raw, bool) or raw < 0
+            ):
+                raise ValueError(f"{key} must be a non-negative integer")
+            byte_counts[key] = raw
         return cls(
             model=model,
             context_tokens=context_tokens,
             price_variant=price_variant,
+            protocol=protocol,
+            logical_request_id=logical_request_id,
+            upstream_attempts=upstream_attempts,
+            retry_reason=retry_reason,
+            **hashes,
+            **timings,
+            **byte_counts,
             **counts,
         )
 
 
-_STATIC_PRICES: dict[str, GoPrice] = {
+_STATIC_PRICES_FALLBACK: dict[str, GoPrice] = {
     "grok-4.5": GoPrice(2.00, 6.00, 0.30),
     "glm-5.3": GoPrice(1.40, 4.40, 0.26),
     "glm-5.2": GoPrice(1.40, 4.40, 0.26),
@@ -94,6 +154,37 @@ _STATIC_PRICES: dict[str, GoPrice] = {
     "ox-alpha-free": GoPrice(0.0, 0.0, 0.0),
     "x-preview-f-free": GoPrice(0.0, 0.0, 0.0),
 }
+
+
+def _load_pricing_fixture() -> dict[str, GoPrice]:
+    fixture = Path(__file__).parents[1] / "fixtures" / "opencode_go_pricing.json"
+    try:
+        payload = json.loads(fixture.read_text("utf-8"))
+    except OSError, json.JSONDecodeError:
+        return _STATIC_PRICES_FALLBACK
+    models = payload.get("models")
+    if not isinstance(models, dict):
+        return _STATIC_PRICES_FALLBACK
+    prices: dict[str, GoPrice] = {}
+    for model, raw in models.items():
+        if not isinstance(model, str) or not isinstance(raw, dict):
+            return _STATIC_PRICES_FALLBACK
+        values = {
+            key: raw.get(key)
+            for key in ("input", "output", "cache_read", "cache_write")
+        }
+        if not all(isinstance(value, int | float) for value in values.values()):
+            return _STATIC_PRICES_FALLBACK
+        prices[model] = GoPrice(
+            float(values["input"]),
+            float(values["output"]),
+            float(values["cache_read"]),
+            float(values["cache_write"]),
+        )
+    return prices or _STATIC_PRICES_FALLBACK
+
+
+_STATIC_PRICES = _load_pricing_fixture()
 
 
 def pricing_for(usage: GoUsage) -> GoPrice:
@@ -148,14 +239,39 @@ def estimated_cost_usd(usage: GoUsage) -> float:
 
 
 def cache_read_share(usage: GoUsage) -> float:
-    """Return cached-read share of disjoint input-side token buckets."""
+    """Return cached-read share of uncached-plus-cached input tokens."""
 
-    total = (
-        usage.uncached_input_tokens
-        + usage.cache_read_tokens
-        + usage.cache_write_tokens
-    )
+    total = usage.uncached_input_tokens + usage.cache_read_tokens
     return usage.cache_read_tokens / total if total else 0.0
+
+
+def canonical_prefix_json(request: dict[str, Any]) -> str:
+    """Serialize only deterministic cache-prefix fields, excluding the suffix."""
+
+    prefix: dict[str, Any] = {}
+    for key in (
+        "model",
+        "instructions",
+        "system",
+        "tools",
+        "tool_choice",
+        "metadata",
+        "cache_prefix",
+    ):
+        if key in request:
+            prefix[key] = request[key]
+    if "cache_prefix" not in request:
+        for key in ("input", "messages"):
+            value = request.get(key)
+            if isinstance(value, list):
+                prefix[f"{key}_prefix"] = value[:-1] if value else []
+    return json.dumps(prefix, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def stable_prefix_hash(request: dict[str, Any]) -> str:
+    """Hash the canonical prefix without storing prompt content in a receipt."""
+
+    return hashlib.sha256(canonical_prefix_json(request).encode("utf-8")).hexdigest()
 
 
 def load_jsonl(path: str | Path) -> list[GoUsage]:
@@ -177,6 +293,37 @@ def load_jsonl(path: str | Path) -> list[GoUsage]:
     return rows
 
 
+def load_receipt(path: str | Path) -> tuple[dict[str, Any], list[GoUsage]]:
+    """Load optional metadata plus usage rows from one JSONL receipt."""
+
+    metadata: dict[str, Any] = {}
+    rows: list[GoUsage] = []
+    for line_number, raw in enumerate(Path(path).read_text("utf-8").splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON on line {line_number}") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"receipt line {line_number} must be an object")
+        if "_receipt" in value:
+            receipt = value["_receipt"]
+            if not isinstance(receipt, dict):
+                raise ValueError("_receipt metadata must be an object")
+            metadata.update(receipt)
+            continue
+        rows.append(GoUsage.from_mapping(value))
+    if not rows:
+        raise ValueError("receipt contains no usage rows")
+    commit_sha = metadata.get("commit_sha")
+    if commit_sha is not None and (
+        not isinstance(commit_sha, str) or len(commit_sha) not in {7, 40, 64}
+    ):
+        raise ValueError("receipt commit_sha must be a short or full SHA string")
+    return metadata, rows
+
+
 def summarize(rows: list[GoUsage]) -> dict[str, float | int | str]:
     """Return aggregate cache/cost metrics for a receipt."""
 
@@ -186,15 +333,23 @@ def summarize(rows: list[GoUsage]) -> dict[str, float | int | str]:
     cache_read = sum(row.cache_read_tokens for row in rows)
     cache_write = sum(row.cache_write_tokens for row in rows)
     output = sum(row.output_tokens for row in rows)
-    input_side = uncached + cache_read + cache_write
+    input_side = uncached + cache_read
+    attempts = sum(row.upstream_attempts for row in rows)
+    protocols = sorted({row.protocol for row in rows if row.protocol is not None})
+    prefix_hashes = [row.stable_prefix_hash for row in rows if row.stable_prefix_hash]
     return {
         "requests": len(rows),
+        "upstream_attempts": attempts,
+        "retry_amplification": attempts / len(rows),
+        "protocols": ",".join(protocols),
         "uncached_input_tokens": uncached,
         "cache_read_tokens": cache_read,
         "cache_write_tokens": cache_write,
         "output_tokens": output,
         "cache_read_share": cache_read / input_side if input_side else 0.0,
         "estimated_cost_usd": sum(estimated_cost_usd(row) for row in rows),
+        "stable_prefix_hash_count": len(prefix_hashes),
+        "stable_prefix_unique_count": len(set(prefix_hashes)),
         "pricing_source_date": PRICING_SOURCE_DATE,
         "pricing_source_url": PRICING_SOURCE_URL,
     }
@@ -210,6 +365,10 @@ def compare_receipts(
     fcc = summarize(fcc_rows)
     native_cost = float(native["estimated_cost_usd"])
     fcc_cost = float(fcc["estimated_cost_usd"])
+    native_uncached = int(native["uncached_input_tokens"])
+    fcc_uncached = int(fcc["uncached_input_tokens"])
+    native_attempts = int(native["upstream_attempts"])
+    fcc_attempts = int(fcc["upstream_attempts"])
     if native_cost == 0:
         regression_pct = 0.0 if fcc_cost == 0 else float("inf")
     else:
@@ -218,7 +377,27 @@ def compare_receipts(
         "native": native,
         "fcc": fcc,
         "estimated_cost_regression_pct": regression_pct,
+        "token_amplification": (
+            fcc_uncached / native_uncached if native_uncached else float("inf")
+        ),
+        "retry_amplification_delta": float(fcc["retry_amplification"])
+        - float(native["retry_amplification"]),
+        "attempt_delta": fcc_attempts - native_attempts,
+        "stable_prefix_match_rate": _prefix_match_rate(native_rows, fcc_rows),
     }
+
+
+def _prefix_match_rate(
+    native_rows: list[GoUsage], fcc_rows: list[GoUsage]
+) -> float | None:
+    pairs = [
+        (native.stable_prefix_hash, fcc.stable_prefix_hash)
+        for native, fcc in zip(native_rows, fcc_rows, strict=False)
+        if native.stable_prefix_hash and fcc.stable_prefix_hash
+    ]
+    if not pairs:
+        return None
+    return sum(native == fcc for native, fcc in pairs) / len(pairs)
 
 
 def _required_context(usage: GoUsage) -> int:
@@ -240,7 +419,5 @@ def _deepseek_price(usage: GoUsage) -> GoPrice:
             else GoPrice(0.66, 1.98, 0.022)
         )
     return (
-        GoPrice(0.44, 1.32, 0.014)
-        if variant == "peak"
-        else GoPrice(0.22, 0.66, 0.007)
+        GoPrice(0.44, 1.32, 0.014) if variant == "peak" else GoPrice(0.22, 0.66, 0.007)
     )
