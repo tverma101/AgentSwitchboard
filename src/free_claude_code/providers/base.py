@@ -76,6 +76,9 @@ class BaseProvider(ABC):
             exc_type=type(error).__name__,
             http_status=http_status,
             cause_types=cause_types,
+            fault_domain="harness_transport",
+            confidence="medium",
+            evidence_codes=["provider_transport_error"],
         )
 
         if self._config.log_api_error_tracebacks:

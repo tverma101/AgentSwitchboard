@@ -4,7 +4,10 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
+from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.opencode_go import (
     GO_MODEL_PROTOCOLS,
     GoProtocol,
@@ -12,17 +15,24 @@ from free_claude_code.providers.opencode_go import (
     build_native_messages_body,
     protocol_for_model,
 )
+from free_claude_code.providers.opencode_go.provider import _sse_event_types
 
 
 def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
     responses = {
-        model for model, protocol in GO_MODEL_PROTOCOLS.items() if protocol is GoProtocol.RESPONSES
+        model
+        for model, protocol in GO_MODEL_PROTOCOLS.items()
+        if protocol is GoProtocol.RESPONSES
     }
     messages = {
-        model for model, protocol in GO_MODEL_PROTOCOLS.items() if protocol is GoProtocol.MESSAGES
+        model
+        for model, protocol in GO_MODEL_PROTOCOLS.items()
+        if protocol is GoProtocol.MESSAGES
     }
     chat = {
-        model for model, protocol in GO_MODEL_PROTOCOLS.items() if protocol is GoProtocol.CHAT
+        model
+        for model, protocol in GO_MODEL_PROTOCOLS.items()
+        if protocol is GoProtocol.CHAT
     }
 
     assert responses == {
@@ -110,9 +120,7 @@ def test_native_messages_preserve_anthropic_cache_control_and_images() -> None:
     assert body["stream"] is True
     assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert body["messages"][0]["content"][0]["source"]["data"] == "aGVsbG8="
-    assert body["messages"][0]["content"][1]["cache_control"] == {
-        "type": "ephemeral"
-    }
+    assert body["messages"][0]["content"][1]["cache_control"] == {"type": "ephemeral"}
     assert body["tools"][0]["cache_control"] == {"type": "ephemeral"}
 
 
@@ -154,3 +162,49 @@ def test_responses_conversion_shortens_long_tool_names_for_muse() -> None:
     wire_name = body["tools"][0]["name"]
     assert wire_name != long_name
     assert len(wire_name) <= 64
+
+
+def test_muse_tool_aliases_cover_exact_limit_and_collision_shapes() -> None:
+    originals = (
+        "a" * 64,
+        "b" * 65,
+        "collision_prefix_" + "x" * 80 + "a",
+        "collision_prefix_" + "x" * 80 + "b",
+    )
+    codec = OpenAIToolNameCodec.from_names(originals)
+    aliases = tuple(codec.encode(name) for name in originals)
+
+    assert all(len(alias) <= 64 for alias in aliases)
+    assert len(set(aliases)) == len(originals)
+    assert tuple(codec.decode(alias) for alias in aliases) == originals
+
+
+@pytest.mark.asyncio
+async def test_native_protocols_share_one_hardened_transport_pool() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid",
+            max_concurrency=2,
+        ),
+        admission=ProviderAdmissionController(provider_name="OPENCODE_GO"),
+    )
+    try:
+        assert provider._native_http._trust_env is False
+        assert provider._native_http.follow_redirects is False
+        assert provider._responses._client is provider._native_http
+    finally:
+        await provider.cleanup()
+
+
+def test_messages_sse_receipt_extracts_types_without_data() -> None:
+    chunk = (
+        ": keep-alive\n\n"
+        "event: content_block_delta\n"
+        'data: {"delta":{"text":"secret"}}\n\n'
+        "event: message_stop\n"
+        "data: {}\n\n"
+    )
+
+    assert _sse_event_types(chunk) == ("content_block_delta", "message_stop")
+    assert "secret" not in _sse_event_types(chunk)

@@ -201,6 +201,19 @@ new places to add unrelated behavior:
   cache-write counters into disjoint Anthropic usage buckets; a cache miss is
   never treated as a cache write. The Responses adapter applies the same
   normalization and preserves an explicit upstream cache-write counter.
+- [providers/opencode_go/](src/free_claude_code/providers/opencode_go/) owns the
+  documented OpenCode Go protocol manifest and native transports. Responses
+  models use the protocol-neutral conversion and stream adapter; Messages
+  models preserve Anthropic fields; Chat models reuse the shared OpenAI-chat
+  adapter. Unknown model IDs fail closed instead of probing a different
+  endpoint. Native clients disable ambient environment proxying and redirects,
+  use bounded long-lived connection pools, and carry metadata-only attempt
+  receipts with request-shape, stable-prefix, and tool-schema hashes.
+  Responses receipts record upstream event types, terminal and response IDs,
+  usage/cache counters, tool-call completeness, and committed-output state.
+  Invalid complete tool JSON, missing tool terminals, empty completed streams,
+  conversion failures, and transport failures remain distinct evidence classes;
+  no prompt, tool arguments, or response content is stored in the receipt.
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new

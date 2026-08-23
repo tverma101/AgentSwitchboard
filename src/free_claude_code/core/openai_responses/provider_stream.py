@@ -1,5 +1,6 @@
 """Translate upstream OpenAI Responses events into Anthropic Messages SSE."""
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,13 @@ class _ToolState:
     started: bool = False
     received_delta: bool = False
     stopped: bool = False
+    argument_parts: list[str] | None = None
+    arguments_emitted: bool = False
+    arguments_complete: bool = False
+    valid_arguments: bool = False
+
+
+_MAX_TOOL_ARGUMENT_BYTES = 65_536
 
 
 class ResponsesProviderStream:
@@ -46,6 +54,12 @@ class ResponsesProviderStream:
         )
         self.completed = False
         self.generated_output = False
+        self.upstream_response_id: str | None = None
+        self.terminal_event: str | None = None
+        self.usage_input_tokens: int | None = None
+        self.usage_cache_read_tokens: int | None = None
+        self.usage_cache_write_tokens: int | None = None
+        self.usage_output_tokens: int | None = None
         self._tool_names = tool_names or OpenAIToolNameCodec.from_names(())
         self._tools: dict[str, _ToolState] = {}
         self._encrypted_reasoning: dict[str, str] = {}
@@ -71,10 +85,16 @@ class ResponsesProviderStream:
             return self._text_delta(data)
         if event_type == "response.function_call_arguments.delta":
             return self._tool_delta(data)
+        if event_type == "response.function_call_arguments.done":
+            return self._tool_arguments_done(data)
         if event_type == "response.output_item.done":
             return self._item_done(data)
         if event_type in {"response.completed", "response.incomplete"}:
-            return self._finish(data, incomplete=event_type == "response.incomplete")
+            return self._finish(
+                data,
+                incomplete=event_type == "response.incomplete",
+                terminal_event=event_type,
+            )
         if event_type in {"response.failed", "error", "response.error"}:
             raise _stream_failure(data)
         return []
@@ -127,12 +147,59 @@ class ResponsesProviderStream:
                 name="",
             )
             self._tools[item_id] = state
+        if state.argument_parts is None:
+            state.argument_parts = []
+        if delta:
+            next_size = sum(
+                len(part.encode("utf-8", errors="replace"))
+                for part in state.argument_parts
+            ) + len(delta.encode("utf-8", errors="replace"))
+            if next_size > _MAX_TOOL_ARGUMENT_BYTES:
+                raise ResponsesStreamFailure(
+                    "OpenAI function-call arguments exceeded the safety limit.",
+                    code="tool_arguments_too_large",
+                )
         events = list(self.ledger.close_content_blocks())
         events.extend(self._ensure_tool_started(state))
         if delta:
             events.append(self.ledger.emit_tool_delta(state.tool_index, delta))
+            state.argument_parts.append(delta)
             state.received_delta = True
             self.generated_output = True
+        return events
+
+    def _tool_arguments_done(self, data: dict[str, Any]) -> list[str]:
+        item_id = _string(data.get("item_id"))
+        arguments = data.get("arguments")
+        if not item_id or not isinstance(arguments, str):
+            return []
+        state = self._tools.get(item_id)
+        if state is None:
+            state = _ToolState(
+                tool_index=len(self._tools),
+                call_id=item_id,
+                name="",
+            )
+            self._tools[item_id] = state
+        if len(arguments.encode("utf-8", errors="replace")) > _MAX_TOOL_ARGUMENT_BYTES:
+            raise ResponsesStreamFailure(
+                "OpenAI function-call arguments exceeded the safety limit.",
+                code="tool_arguments_too_large",
+            )
+        if state.argument_parts is None:
+            state.argument_parts = []
+        if not state.received_delta:
+            state.argument_parts = [arguments]
+        state.arguments_complete = True
+        events: list[str] = []
+        if not state.arguments_emitted:
+            events.extend(self.ledger.close_content_blocks())
+            events.extend(self._ensure_tool_started(state))
+            if arguments and not state.received_delta:
+                events.append(self.ledger.emit_tool_delta(state.tool_index, arguments))
+                state.arguments_emitted = True
+                self.generated_output = True
+        self._validate_tool_arguments(state)
         return events
 
     def _item_done(self, data: dict[str, Any]) -> list[str]:
@@ -155,9 +222,26 @@ class ResponsesProviderStream:
             events = list(self.ledger.close_content_blocks())
             events.extend(self._ensure_tool_started(state))
             arguments = item.get("arguments")
-            if not state.received_delta and isinstance(arguments, str) and arguments:
+            if (
+                not state.received_delta
+                and not state.arguments_emitted
+                and isinstance(arguments, str)
+                and arguments
+            ):
+                if (
+                    len(arguments.encode("utf-8", errors="replace"))
+                    > _MAX_TOOL_ARGUMENT_BYTES
+                ):
+                    raise ResponsesStreamFailure(
+                        "OpenAI function-call arguments exceeded the safety limit.",
+                        code="tool_arguments_too_large",
+                    )
+                state.argument_parts = [arguments]
                 events.append(self.ledger.emit_tool_delta(state.tool_index, arguments))
+                state.arguments_emitted = True
                 self.generated_output = True
+            state.arguments_complete = True
+            self._validate_tool_arguments(state)
             if not state.stopped:
                 events.append(self.ledger.stop_tool_block(state.tool_index))
                 state.stopped = True
@@ -193,14 +277,52 @@ class ResponsesProviderStream:
             )
         ]
 
-    def _finish(self, data: dict[str, Any], *, incomplete: bool) -> list[str]:
+    def _validate_tool_arguments(self, state: _ToolState) -> None:
+        arguments = "".join(state.argument_parts or [])
+        if not arguments:
+            raise ResponsesStreamFailure(
+                "OpenAI function-call arguments were missing.",
+                code="invalid_tool_arguments",
+            )
+        try:
+            parsed = json.loads(arguments)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ResponsesStreamFailure(
+                "OpenAI function-call arguments were not valid JSON.",
+                code="invalid_tool_arguments",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ResponsesStreamFailure(
+                "OpenAI function-call arguments must be a JSON object.",
+                code="invalid_tool_arguments",
+            )
+        state.arguments_complete = True
+        state.valid_arguments = True
+
+    def _finish(
+        self,
+        data: dict[str, Any],
+        *,
+        incomplete: bool,
+        terminal_event: str,
+    ) -> list[str]:
         response = data.get("response")
         response = response if isinstance(response, dict) else {}
+        self.upstream_response_id = _string(response.get("id")) or None
+        self.terminal_event = terminal_event
+        for state in self._tools.values():
+            self._validate_tool_arguments(state)
+            if not state.stopped:
+                raise ResponsesStreamFailure(
+                    "OpenAI completed a function call without its output-item terminal.",
+                    code="missing_tool_terminal",
+                )
         events = list(self.ledger.close_all_blocks())
-        if not self.ledger.has_content_block():
-            events.extend(self.ledger.ensure_text_block())
-            events.append(self.ledger.emit_text_delta(" "))
-            events.append(self.ledger.stop_text_block())
+        if not self.generated_output or not self.ledger.has_content_block():
+            raise ResponsesStreamFailure(
+                "OpenAI completed a Responses stream without output.",
+                code="empty_completed_response",
+            )
         usage = response.get("usage")
         usage = usage if isinstance(usage, dict) else {}
         input_tokens = _integer(usage.get("input_tokens"))
@@ -208,19 +330,24 @@ class ResponsesProviderStream:
         details = usage.get("input_tokens_details")
         details = details if isinstance(details, dict) else {}
         cached_tokens = _integer(details.get("cached_tokens"))
-        cache_write_tokens = _integer(details.get("cache_write_tokens"))
-        if (
-            input_tokens is not None
-            and cached_tokens is not None
-            and cached_tokens <= input_tokens
-        ):
-            # OpenAI-style Responses counts cached reads inside input_tokens;
-            # Anthropic's input_tokens bucket is disjoint from cache reads.
-            input_tokens -= cached_tokens
-        elif cached_tokens is not None and input_tokens is not None:
-            # An impossible provider breakdown is less useful than omitting the
-            # suspect cache field and preserving the reported total.
-            cached_tokens = None
+        if cached_tokens is not None and input_tokens is not None:
+            if cached_tokens <= input_tokens:
+                # OpenAI-style Responses counts cached reads inside input_tokens;
+                # Anthropic's input_tokens bucket is disjoint from cache reads.
+                input_tokens -= cached_tokens
+            else:
+                # An impossible provider breakdown is less useful than omitting
+                # the suspect cache field and preserving the reported total.
+                cached_tokens = None
+        cache_write_tokens = _integer(
+            details.get("cache_write_tokens", usage.get("cache_write_tokens"))
+        )
+        if cache_write_tokens is None:
+            cache_write_tokens = _integer(usage.get("cache_creation_input_tokens"))
+        self.usage_input_tokens = input_tokens
+        self.usage_cache_read_tokens = cached_tokens
+        self.usage_cache_write_tokens = cache_write_tokens
+        self.usage_output_tokens = output_tokens
         usage_fields: dict[str, int] = {}
         if cached_tokens is not None:
             usage_fields["cache_read_input_tokens"] = cached_tokens
@@ -240,6 +367,24 @@ class ResponsesProviderStream:
         events.append(self.ledger.message_stop())
         self.completed = True
         return events
+
+    @property
+    def tool_call_count(self) -> int:
+        return len(self._tools)
+
+    @property
+    def complete_tool_calls(self) -> bool | None:
+        if not self._tools:
+            return None
+        return all(
+            state.arguments_complete and state.stopped for state in self._tools.values()
+        )
+
+    @property
+    def valid_tool_json(self) -> bool | None:
+        if not self._tools:
+            return None
+        return all(state.valid_arguments for state in self._tools.values())
 
 
 def _stream_failure(data: dict[str, Any]) -> ResponsesStreamFailure:
