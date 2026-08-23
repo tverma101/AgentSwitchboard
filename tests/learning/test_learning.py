@@ -5,8 +5,8 @@ from pathlib import Path
 
 from free_claude_code.learning.engine import apply_learning_result
 from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
-from free_claude_code.learning.store import LearningStore, format_memory_context
 from free_claude_code.learning.stop_hook import handle_stop
+from free_claude_code.learning.store import LearningStore, format_memory_context
 
 
 def test_store_deduplicates_and_scopes_memories(tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(tmp_path: Path)
     assert "UserPromptSubmit" not in restored["hooks"]
 
 
-def test_apply_learning_result_rejects_low_confidence_and_writes_skill(
+def test_apply_learning_result_rejects_low_confidence_and_writes_global_skill(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "fcc"))
@@ -147,6 +147,39 @@ def test_apply_learning_result_rejects_low_confidence_and_writes_skill(
     )
     assert skill.exists()
     assert "temporary failures" in skill.read_text()
+
+
+def test_project_skill_uses_repo_scope_without_leaking_local_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "personal-claude"))
+    store = LearningStore(tmp_path / "learning.db")
+    result = {
+        "memories": [],
+        "skill": {
+            "name": "project-bootstrap",
+            "description": "Reuse the verified project bootstrap procedure.",
+            "instructions": (
+                "Run the documented bootstrap command, verify dependencies resolve, "
+                "then execute the project's smallest smoke test before continuing."
+            ),
+            "scope": "project",
+            "confidence": 0.98,
+            "evidence_kind": "successful_workflow",
+        },
+    }
+
+    assert apply_learning_result(result=result, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    learned = list((tmp_path / ".claude" / "skills").glob("fcc-auto-*/SKILL.md"))
+    assert len(learned) == 1
+    skill_text = learned[0].read_text()
+    assert "Apply only within this repository." in skill_text
+    assert str(tmp_path) not in skill_text
+    assert not (tmp_path / "personal-claude" / "skills").exists()
 
 
 def test_apply_learning_result_rejects_secret_like_memory(
