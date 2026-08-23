@@ -42,7 +42,7 @@ fcc-desktop = "free_claude_code.cli.desktop_entrypoint:launch"
 [project.optional-dependencies]
 voice = [
     "grpcio>=1.82.1",
-    "grpcio-tools>=1.81.1",
+    "grpcio-tools>=1.81.0",
     "nvidia-riva-client>=2.26.0",
 ]
 voice_local = [
