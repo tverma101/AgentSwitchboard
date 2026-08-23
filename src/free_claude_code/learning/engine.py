@@ -22,6 +22,28 @@ _BLOCKED_FAULT_DOMAINS = {
     "unknown",
 }
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_VALIDATION_STEP_RE = re.compile(
+    r"(?i)\b(?:run|execute|check|test|validate|verify|assert|confirm|inspect)\w*\b"
+)
+_VALIDATION_STOPWORDS = frozenset(
+    {
+        "a",
+        "after",
+        "an",
+        "and",
+        "before",
+        "for",
+        "in",
+        "of",
+        "on",
+        "the",
+        "then",
+        "this",
+        "that",
+        "to",
+        "with",
+    }
+)
 
 _SYSTEM_PROMPT = """You are FCC Learning, a conservative post-task distiller.
 
@@ -311,6 +333,41 @@ def _validate_skill(
     return skill_key, str(scope), description, content, instructions
 
 
+def _validation_contract(text: str) -> tuple[str, ...]:
+    """Return normalized validation clauses a later skill must preserve."""
+
+    clauses: list[str] = []
+    for raw_clause in re.split(r"[.!?;,\n]+", text):
+        if not _VALIDATION_STEP_RE.search(raw_clause):
+            continue
+        words = [
+            word.casefold()
+            for word in re.findall(r"[a-zA-Z0-9]+", raw_clause)
+            if word.casefold() not in _VALIDATION_STOPWORDS
+        ]
+        clause = " ".join(words)
+        if len(clause) >= 8 and clause not in clauses:
+            clauses.append(clause)
+    return tuple(clauses)
+
+
+def _preserves_validation_contract(current: str, candidate: str) -> bool:
+    """Reject an update that drops a validation step from the current skill."""
+
+    candidate_tokens = re.findall(r"[a-zA-Z0-9]+", candidate.casefold())
+    for step in _validation_contract(current):
+        step_tokens = step.split()
+        position = 0
+        for token in candidate_tokens:
+            if token == step_tokens[position]:
+                position += 1
+                if position == len(step_tokens):
+                    break
+        if position != len(step_tokens):
+            return False
+    return True
+
+
 def _write_skill(
     *,
     store: LearningStore,
@@ -320,7 +377,7 @@ def _write_skill(
     validated = _validate_skill(skill=skill, project_key=project_key)
     if validated is None:
         return None
-    skill_key, scope, description, content, _ = validated
+    skill_key, scope, description, content, instructions = validated
     effective_project = project_key if scope == "project" else ""
     skills_root = (
         Path(project_key) / ".claude" / "skills"
@@ -335,6 +392,11 @@ def _write_skill(
     except OSError:
         return None
     if current == content:
+        return None
+
+    if current is not None and not _preserves_validation_contract(
+        current, instructions
+    ):
         return None
 
     if current is not None:

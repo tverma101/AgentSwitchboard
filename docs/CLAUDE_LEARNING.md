@@ -43,7 +43,7 @@ Project-scoped learned skills use Claude Code's native repository scope:
 
 That means a project-specific learned procedure is visible as a normal working-tree change and can be reviewed or committed with the project. FCC does not embed the machine's absolute project path into the generated skill. It never intentionally writes outside an FCC-owned `fcc-auto-*` skill directory.
 
-Every accepted skill revision is stored in the local `skill_revisions` table with a SHA-256 digest. Before an update, the previous bytes are retained. The current skill is provided to the distiller so an update must be a complete procedure; local validation requires frontmatter, bounded fields, no secrets or project-path leakage, and an explicit validation/check/test step. A prior revision can be restored byte-for-byte with `fcc-learning skill rollback <skill-key> <revision>`.
+Every accepted skill revision is stored in the local `skill_revisions` table with a SHA-256 digest. Before an update, the previous bytes are retained. The current skill is provided to the distiller so an update must be a complete procedure; local validation requires frontmatter, bounded fields, no secrets or project-path leakage, and an explicit validation/check/test step. An update is rejected if it drops a normalized validation clause from the current skill. A prior revision can be restored byte-for-byte with `fcc-learning skill rollback <skill-key> <revision>`.
 
 ## Learning-model route
 
@@ -113,3 +113,13 @@ Environment overrides:
 Learning is non-critical. Invalid Claude settings are never overwritten; `fcc-claude` reports a terse warning and continues. Hook failures do not terminate Claude Code. The first settings modification creates `settings.json.fcc-learning.bak` next to the user's Claude settings as a one-time recovery copy.
 
 Infrastructure-attributed failures (`opencode_gateway`, `harness_transport`, `upstream_cache`, and `unknown`) are passed to the learner as non-learning evidence and cannot create durable memories or skills. A one-off `model_output` failure is also rejected unless the receipt marks the workflow successful. This prevents a transient provider problem from teaching a permanent model/tool avoidance rule.
+
+## Deterministic evidence
+
+The bounded local learning benchmark is defined by `smoke/fixtures/learning_skill_corpus.json` and can be run with:
+
+```bash
+uv run python smoke/learning_benchmark.py --output /tmp/fcc-learning-receipt.json
+```
+
+It exercises duplicate-add, explicit replacement, scoped forget, contradictory-failure rejection, skill create/update/reject/rollback, and queue enqueue/recovery. The checked-in receipt records the fixture version, deterministic decision checks, model route (`deterministic_local`), skill diff/check receipts, runtime, enqueue latency, and SQLite size before/after. Runtime and size are measurements of the local machine, not product SLAs; live model token usage is `null` for this offline fixture.

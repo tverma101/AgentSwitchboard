@@ -1,0 +1,47 @@
+{
+  "fixture_version": "2026-08-23.1",
+  "cases": [
+    {
+      "id": "memory-preference-replacement",
+      "kind": "memory",
+      "expected": "accepted",
+      "description": "A user correction replaces the prior preference."
+    },
+    {
+      "id": "memory-contradiction-rejection",
+      "kind": "memory",
+      "expected": "rejected",
+      "description": "Infrastructure-attributed failure cannot teach a durable rule."
+    },
+    {
+      "id": "memory-explicit-forget",
+      "kind": "memory",
+      "expected": "removed",
+      "description": "Explicit forget removes the visible memory and keeps history."
+    },
+    {
+      "id": "skill-create-update",
+      "kind": "skill",
+      "expected": "accepted",
+      "description": "A successful procedure is revised without changing its validation contract."
+    },
+    {
+      "id": "skill-poisoned-update",
+      "kind": "skill",
+      "expected": "rejected",
+      "description": "A candidate that drops a prior validation step is rejected."
+    },
+    {
+      "id": "skill-rollback",
+      "kind": "skill",
+      "expected": "restored",
+      "description": "Rollback restores byte-identical previous skill content."
+    },
+    {
+      "id": "queue-recovery",
+      "kind": "queue",
+      "expected": "recovered",
+      "description": "Duplicate enqueue is idempotent and a claimed row is recoverable."
+    }
+  ]
+}

@@ -344,6 +344,48 @@ def test_skill_revisions_preserve_previous_bytes_and_rollback(
     assert path.read_text() == old
 
 
+def test_skill_update_rejects_dropped_validation_step(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    store = LearningStore(tmp_path / "learning.db")
+    first = {
+        "memory_actions": [],
+        "skill": {
+            "action": "create",
+            "name": "safe-release",
+            "description": "Release a change only after validation.",
+            "instructions": (
+                "Run the focused tests, verify the diff, and check the final status "
+                "before handoff."
+            ),
+            "scope": "global",
+            "confidence": 0.98,
+            "evidence_kind": "successful_workflow",
+        },
+    }
+    assert apply_learning_result(result=first, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    path = tmp_path / "claude" / "skills" / "fcc-auto-safe-release" / "SKILL.md"
+    original = path.read_text()
+
+    dropped_step = {
+        "memory_actions": [],
+        "skill": {
+            **first["skill"],
+            "action": "update",
+            "instructions": "Run focused tests and verify the diff before handoff.",
+        },
+    }
+    assert apply_learning_result(
+        result=dropped_step, cwd=str(tmp_path), store=store
+    ) == {"memories": 0, "skills": 0}
+    assert path.read_text() == original
+
+
 def test_stop_enqueue_is_idempotent_redacted_and_recovered(
     tmp_path: Path, monkeypatch
 ) -> None:
