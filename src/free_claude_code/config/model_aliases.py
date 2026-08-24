@@ -11,6 +11,12 @@ class ModelAliasError(ValueError):
     """Raised when alias configuration is malformed or cannot resolve."""
 
 
+def _is_reserved_claude_model_name(alias: str) -> bool:
+    """Keep Claude compatibility ids owned by the gateway, not aliases."""
+
+    return alias.casefold() == "claude" or alias.casefold().startswith("claude-")
+
+
 @dataclass(frozen=True, slots=True)
 class ModelAliasMap:
     """Validated logical names mapped to exact provider/model refs."""
@@ -52,6 +58,10 @@ def parse_model_aliases(value: str) -> ModelAliasMap:
             raise ModelAliasError(f"invalid alias entry: {entry}")
         if "/" in alias:
             raise ModelAliasError(f"alias must not contain '/': {alias}")
+        if _is_reserved_claude_model_name(alias):
+            raise ModelAliasError(
+                f"alias uses the reserved Claude model namespace: {alias}"
+            )
         if "/" not in target:
             raise ModelAliasError(
                 f"alias target must be an exact provider/model ref: {target}"

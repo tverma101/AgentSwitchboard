@@ -331,12 +331,9 @@ def classify_probe(
         and "run_in_background" in combined
         and "false" in lower
     )
-    compact_ok = not requires_compact or any(
-        (
-            "compact_boundary" in combined,
-            "compact_metadata" in combined,
-            bool(re.search(r'"compact_result"\s*:\s*"success"', combined)),
-        )
+    compact_ok = not requires_compact or (
+        bool(re.search(r'"compact_result"\s*:\s*"success"', combined))
+        and ("compact_boundary" in combined or "compact_metadata" in combined)
     )
     continuation_ok = not requires_continuation or marker in combined
     cli_ok = run.returncode == 0

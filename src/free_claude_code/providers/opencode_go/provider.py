@@ -38,6 +38,7 @@ from free_claude_code.core.visual_attachments import (
 )
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
+    ProviderAttempt,
 )
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import classify_provider_failure
@@ -408,7 +409,6 @@ class OpenCodeGoProvider(BaseProvider):
             tool_names=tool_names,
         )
         retry_session = self._admission.new_retry_session(request_id=request_id)
-        attempt = await self._admission.open_attempt(retry_session)
         evidence = AttemptEvidence(
             turn_id=turn_id,
             request_id=request_id,
@@ -421,11 +421,26 @@ class OpenCodeGoProvider(BaseProvider):
             stable_prefix_hash=stable_prefix_hash(body),
             tool_schema_hash=canonical_hash(body.get("tools", [])),
         )
+        attempt: ProviderAttempt | None = None
         upstream: Any | None = None
         receipt_emitted = False
         try:
-            self._authorize_egress(self._base_url)
-            upstream = await self._responses.responses.create(**body, stream=True)
+            while True:
+                attempt = await self._admission.open_attempt(retry_session)
+                evidence.attempt_number = retry_session.attempts_started
+                try:
+                    self._authorize_egress(self._base_url)
+                    upstream = await self._responses.responses.create(
+                        **body, stream=True
+                    )
+                except Exception as error:
+                    should_retry = await attempt.retry(error)
+                    await attempt.aclose()
+                    attempt = None
+                    if should_retry:
+                        continue
+                    raise
+                break
             for event in stream_view.start():
                 yield event
             async for event in upstream:
@@ -496,7 +511,8 @@ class OpenCodeGoProvider(BaseProvider):
                     RuntimeError("Responses stream closed before receipt emission."),
                 )
                 _trace_receipt(evidence, outcome="abandoned")
-            await attempt.aclose()
+            if attempt is not None:
+                await attempt.aclose()
 
     async def _stream_messages(
         self,
@@ -520,7 +536,6 @@ class OpenCodeGoProvider(BaseProvider):
             _trace_receipt(evidence, outcome="error", error=error)
             raise
         retry_session = self._admission.new_retry_session(request_id=request_id)
-        attempt = await self._admission.open_attempt(retry_session)
         evidence = AttemptEvidence(
             turn_id=turn_id,
             request_id=request_id,
@@ -532,34 +547,56 @@ class OpenCodeGoProvider(BaseProvider):
             stable_prefix_hash=stable_prefix_hash(body),
             tool_schema_hash=canonical_hash(body.get("tools", [])),
         )
+        attempt: ProviderAttempt | None = None
         response: httpx.Response | None = None
         saw_payload = False
         sse_buffer = ""
         receipt_emitted = False
         try:
-            self._authorize_egress(f"{self._base_url}/messages")
-            response = await self._native_http.send(
-                self._native_http.build_request(
-                    "POST",
-                    f"{self._base_url}/messages",
-                    json=body,
-                    headers={
-                        **self._auth_headers(),
-                        "anthropic-version": "2023-06-01",
-                        "accept": "text/event-stream",
-                    },
-                ),
-                stream=True,
-            )
-            evidence.http_status = response.status_code
-            if not response.is_success:
-                detail = await _bounded_error_text(response)
-                error = httpx.HTTPStatusError(
-                    f"OpenCode Go Messages error: {detail}",
-                    request=response.request,
-                    response=response,
-                )
-                raise error
+            while True:
+                attempt = await self._admission.open_attempt(retry_session)
+                evidence.attempt_number = retry_session.attempts_started
+                try:
+                    self._authorize_egress(f"{self._base_url}/messages")
+                    response = await self._native_http.send(
+                        self._native_http.build_request(
+                            "POST",
+                            f"{self._base_url}/messages",
+                            json=body,
+                            headers={
+                                **self._auth_headers(),
+                                "anthropic-version": "2023-06-01",
+                                "accept": "text/event-stream",
+                            },
+                        ),
+                        stream=True,
+                    )
+                    evidence.http_status = response.status_code
+                    if not response.is_success:
+                        detail = await _bounded_error_text(response)
+                        error = httpx.HTTPStatusError(
+                            f"OpenCode Go Messages error: {detail}",
+                            request=response.request,
+                            response=response,
+                        )
+                        await response.aclose()
+                        response = None
+                        should_retry = await attempt.retry(error)
+                        await attempt.aclose()
+                        attempt = None
+                        if should_retry:
+                            continue
+                        raise error
+                except Exception as error:
+                    if attempt is None:
+                        raise
+                    should_retry = await attempt.retry(error)
+                    await attempt.aclose()
+                    attempt = None
+                    if should_retry:
+                        continue
+                    raise
+                break
             content_type = response.headers.get("content-type", "")
             if content_type and "text/event-stream" not in content_type.lower():
                 raise RuntimeError(
@@ -646,7 +683,8 @@ class OpenCodeGoProvider(BaseProvider):
                     RuntimeError("Messages stream closed before receipt emission."),
                 )
                 _trace_receipt(evidence, outcome="abandoned")
-            await attempt.aclose()
+            if attempt is not None:
+                await attempt.aclose()
 
 
 def _sse_event_types(chunk: str) -> tuple[str, ...]:

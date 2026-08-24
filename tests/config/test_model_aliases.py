@@ -53,6 +53,11 @@ def test_alias_name_must_not_look_like_provider_ref() -> None:
         parse_model_aliases("opencode_go/default=opencode_go/minimax-m2.7")
 
 
+def test_alias_name_cannot_shadow_claude_compatibility_namespace() -> None:
+    with pytest.raises(ModelAliasError, match="reserved Claude"):
+        parse_model_aliases("claude-sonnet-4=opencode_go/minimax-m2.7")
+
+
 def test_duplicate_alias_is_rejected() -> None:
     with pytest.raises(ModelAliasError, match="duplicate model alias"):
         parse_model_aliases(

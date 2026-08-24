@@ -6,7 +6,11 @@ from pydantic import BaseModel
 
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.model_aliases import parse_model_aliases
-from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.model_refs import (
+    configured_chat_model_refs,
+    parse_model_name,
+    parse_provider_type,
+)
 from free_claude_code.config.model_visibility import filter_cached_model_infos
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
@@ -108,6 +112,9 @@ def build_models_list_response(
     for alias, target in parse_model_aliases(
         getattr(settings, "model_aliases", "")
     ).aliases.items():
+        target_info = runtime.cached_model_info(
+            parse_provider_type(target), parse_model_name(target)
+        )
         _append_unique_model(
             models,
             seen,
@@ -115,6 +122,12 @@ def build_models_list_response(
                 id=alias,
                 display_name=f"{alias} → {target}",
                 created_at=DISCOVERED_MODEL_CREATED_AT,
+                supports_vision=(
+                    target_info.supports_vision if target_info is not None else None
+                ),
+                accepted_image_types=(
+                    target_info.accepted_image_types if target_info is not None else ()
+                ),
             ),
         )
 

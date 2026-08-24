@@ -199,7 +199,7 @@ def test_nvidia_nim_cli_matrix_regression_detection(tmp_path: Path) -> None:
     ]
 
 
-def test_compact_probe_requires_boundary_event_and_continuation_marker(
+def test_compact_probe_requires_success_status_and_continuation_marker(
     tmp_path: Path,
 ) -> None:
     marker = "FCC_COMPACT_CONTINUED"
@@ -229,7 +229,7 @@ def test_compact_probe_requires_boundary_event_and_continuation_marker(
         requires_continuation=True,
     )
 
-    assert outcome.classification == "passed"
+    assert outcome.classification == "model_feature_failure"
     assert outcome.token_evidence["compact_boundary"] is True
     assert outcome.token_evidence["compact_metadata"] is True
     assert outcome.token_evidence["compact_result_success"] is False
@@ -284,7 +284,9 @@ def test_compact_probe_accepts_claude_cli_compact_success_status(
         feature="compact_resume",
         marker=marker,
         run=run,
-        log_delta='POST /v1/messages HTTP/1.1" 200 OK',
+        log_delta=(
+            'POST /v1/messages HTTP/1.1" 200 OK\ncompact_boundary compact_metadata'
+        ),
         log_path=tmp_path / "server.log",
         requires_compact=True,
         requires_continuation=True,

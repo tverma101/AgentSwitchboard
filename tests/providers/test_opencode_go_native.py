@@ -1,5 +1,9 @@
 """Contracts for OpenCode Go native protocol routing."""
 
+from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock
+
+import httpx
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
@@ -28,6 +32,46 @@ from free_claude_code.providers.opencode_go.provider import (
     _record_failure,
     _sse_event_types,
 )
+
+
+class _ResponsesEvent:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, object]:
+        del mode, exclude_none
+        return self._payload
+
+
+class _ResponsesStream:
+    def __init__(self, events: list[dict[str, object]]) -> None:
+        self._events = iter(_ResponsesEvent(event) for event in events)
+
+    def __aiter__(self) -> AsyncIterator[_ResponsesEvent]:
+        return self
+
+    async def __anext__(self) -> _ResponsesEvent:
+        try:
+            return next(self._events)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _provider_request(model: str) -> MessagesRequest:
+    return MessagesRequest.model_validate(
+        {
+            "model": model,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+
+def _upstream_request(url: str) -> httpx.Request:
+    return httpx.Request("POST", url)
 
 
 def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
@@ -316,6 +360,116 @@ async def test_native_protocols_share_one_hardened_transport_pool() -> None:
         assert provider._responses._client is provider._native_http
     finally:
         await provider.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_retries_pre_payload_transient_status() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=2,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("muse-spark-1.2-contributor")
+    upstream_request = _upstream_request("https://example.invalid/v1/responses")
+    retry_response = httpx.Response(
+        503,
+        request=upstream_request,
+        text="temporarily unavailable",
+    )
+    retry_error = httpx.HTTPStatusError(
+        "temporarily unavailable",
+        request=upstream_request,
+        response=retry_response,
+    )
+    provider._responses.responses.create = AsyncMock(
+        side_effect=[
+            retry_error,
+            _ResponsesStream(
+                [
+                    {"type": "response.output_text.delta", "delta": "ok"},
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp_1",
+                            "usage": {"input_tokens": 3, "output_tokens": 1},
+                        },
+                    },
+                ]
+            ),
+        ]
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_retry",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert provider._responses.responses.create.await_count == 2
+    assert any("ok" in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_messages_stream_retries_pre_payload_transient_status() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=2,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("minimax-m2.7")
+    upstream_request = _upstream_request("https://example.invalid/v1/messages")
+    retry_response = httpx.Response(
+        503,
+        request=upstream_request,
+        text="temporarily unavailable",
+    )
+    success_response = httpx.Response(
+        200,
+        request=upstream_request,
+        headers={"content-type": "text/event-stream"},
+        content=(
+            b"event: message_start\ndata: {}\n\n"
+            b"event: content_block_delta\ndata: {}\n\n"
+            b"event: message_stop\ndata: {}\n\n"
+        ),
+    )
+    provider._native_http.send = AsyncMock(
+        side_effect=[retry_response, success_response]
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_messages_retry",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert provider._native_http.send.await_count == 2
+    assert len(events) == 1
+    assert "message_stop" in events[0]
 
 
 def test_messages_sse_receipt_extracts_types_without_data() -> None:

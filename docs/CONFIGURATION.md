@@ -1,0 +1,94 @@
+# Harness configuration
+
+This is the configuration reference for the terminal-only personal Harness
+fork. The server reads the repository `.env` first, then the managed user file
+`~/.fcc/.env`, and finally an explicitly selected `FCC_ENV_FILE` when set.
+Later files override earlier files. Keep credentials in the managed file or an
+explicit private file; do not commit them.
+
+## Minimal OpenCode Go / Muse setup
+
+```dotenv
+OPENCODE_API_KEY=your-opencode-key
+MODEL=opencode_go/muse-spark-1.2-contributor
+ANTHROPIC_AUTH_TOKEN=freecc
+FCC_CLAUDE_CONTEXT_TOKENS=256000
+REASONING_POLICY=client
+```
+
+Start the server in a terminal:
+
+```bash
+fcc-server
+```
+
+Run the terminal client from another terminal:
+
+```bash
+fccdanger
+```
+
+`fccdanger` is a convenience launcher for `fcc-claude` that adds
+`--dangerously-skip-permissions` exactly once. It still targets the local FCC
+gateway. If the gateway is unavailable, it exits with a terminal instruction to
+start `fcc-server`; it does not open a browser.
+
+## Provider and model values
+
+`MODEL` and the optional tier overrides use the exact form
+`provider_id/model_id`. The provider catalog is the source of truth for
+provider IDs. Current OpenCode Go examples include:
+
+```dotenv
+MODEL=opencode_go/muse-spark-1.2-contributor
+MODEL_ALIASES=fast=opencode_go/minimax-m2.7
+MODEL_CATALOG_MODE=curated
+MODEL_CATALOG_ALLOWLIST=opencode_go/muse-spark-1.2-contributor,opencode_go/minimax-m2.7
+```
+
+Aliases are client-facing names only. Receipts, provider dispatch, and upstream
+requests retain the exact provider/model reference. `MODEL_CATALOG_MODE=all`
+exposes discovered models; `curated` applies the exact references and wildcard
+rules in [model_visibility.py](../src/free_claude_code/config/model_visibility.py).
+
+The provider table and credential names are maintained in
+`src/free_claude_code/config/provider_catalog.py` and `.env.example`. Do not
+copy a model name from an old screenshot or design document without checking
+that source.
+
+## Context and reasoning
+
+- `FCC_CLAUDE_CONTEXT_TOKENS` defaults to `256000` and accepts `32000` through
+  `1000000`.
+- `REASONING_POLICY=client` preserves the effort requested by the client.
+  `off`, `low`, `medium`, `high`, `xhigh`, and `max` are explicit overrides.
+- `fcc-learning context-policy install` adds advisory tool-output discipline to
+  the global Claude instructions. It does not replace the launcher context
+  cap or provide a hard runtime tool-result governor.
+
+## Routing isolation
+
+FCC owns the Claude gateway variables. Do not put
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` in active
+Claude `settings.json` environment blocks, project settings, local settings, or
+`--settings` overlays. The Claude launcher checks those sources and fails closed
+with the conflicting source/key names. Unrelated settings remain allowed.
+
+## Local state
+
+| Path | Purpose |
+| --- | --- |
+| `~/.fcc/.env` | Managed provider and server configuration |
+| `~/.fcc/logs/server.log` | FCC server log |
+| `~/.fcc/usage.db` | Metadata-only usage ledger |
+| `~/.fcc/codex-model-catalog.json` | Generated client-visible model catalog |
+| `~/.fcc/learning/` | Local memory, skill, and bounded learning queue state |
+| `~/.claude/CLAUDE.md` | Optional managed context-discipline block |
+
+## Terminal-only policy
+
+`fcc-server --terminal` and `fcc-server --no-browser` are accepted explicit
+terminal-only flags. Browser-opening flags and the retired presentation
+variables are rejected or ignored by design. The `/admin` URL printed at
+startup is not an instruction to open a browser; it is a local endpoint for an
+explicit client or API request.

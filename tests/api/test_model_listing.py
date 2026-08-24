@@ -225,6 +225,28 @@ def test_models_list_exposes_stable_aliases_without_replacing_exact_refs():
     assert aliases == {"muse": "muse → opencode_go/minimax-m2.7"}
 
 
+def test_models_list_propagates_alias_target_visual_metadata():
+    settings = _settings(model_opus=None, model_haiku=None)
+    settings.model_aliases = "muse=open_router/vision-model"
+    app = create_test_app(settings)
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "vision-model",
+                supports_vision=True,
+                accepted_image_types=("image/png",),
+            )
+        },
+    )
+
+    response = TestClient(app).get("/v1/models")
+
+    alias = next(item for item in response.json()["data"] if item["id"] == "muse")
+    assert alias["supports_vision"] is True
+    assert alias["accepted_image_types"] == ["image/png"]
+
+
 def test_known_nonvision_model_rejects_image_before_provider_resolution():
     app = create_test_app(_settings(model_opus=None, model_haiku=None))
     manager = provider_manager_for_app(app)

@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Python 3.14](https://img.shields.io/badge/python-3.14-3776ab.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json&style=for-the-badge)](https://github.com/astral-sh/uv)
-[![Testing: Pytest](https://img.shields.io/badge/Testing-Pytest-00c0ff.svg?style=for-the-badge)](https://github.com/Alishahryar1/free-claude-code/actions/workflows/tests.yml)
+[![Testing: Pytest](https://img.shields.io/badge/Testing-Pytest-00c0ff.svg?style=for-the-badge)](https://docs.pytest.org/)
 [![Type checking: Ty](https://img.shields.io/badge/type%20checking-ty-ffcc00.svg?style=for-the-badge)](https://pypi.org/project/ty/)
 [![Code style: Ruff](https://img.shields.io/badge/code%20formatting-ruff-f5a623.svg?style=for-the-badge)](https://github.com/astral-sh/ruff)
 [![Logging: Loguru](https://img.shields.io/badge/logging-loguru-4ecdc4.svg?style=for-the-badge)](https://github.com/Delgan/loguru)
@@ -19,14 +19,45 @@
 
 </div>
 
+## What Harness is
+
+Harness keeps the Claude Code client and terminal experience while routing its
+requests through a local FCC gateway:
+
+```text
+Claude Code / fccdanger -> FCC -> selected provider protocol -> model
+```
+
+The current personal release path is terminal-only. `fcc-server` reports local
+health and control endpoints but never opens a desktop browser or launches a
+terminal-browser presentation. The verified Muse path is
+`opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
+
+This repository is a personal Harness fork. The release head is version
+`4.28.1`; examples below describe this checkout, not every feature proposed in
+the open design backlog.
+
 ## What You Get
 
-- **Use your preferred coding agent.** Run Claude Code, Codex, or Pi with FCC.
-- **Choose your own models.** Connect free, paid, or local providers and search their models from one Admin UI.
-- **Route work your way.** Set one default model or map Fable, Opus, Sonnet, and Haiku separately.
+- **Use Claude Code in the terminal.** Run `fcc-claude` or the personal
+  `fccdanger` launcher through the local FCC gateway.
+- **Choose a configured model.** Set an exact `provider/model` reference or a
+  stable alias in FCC's managed environment file.
+- **Preserve coding-agent behavior.** The release path covers streaming text,
+  file tools, repeated tool calls, provider receipts, and one compact/resume
+  cycle with the literal Claude client.
 - **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider; optionally enable [RTK](https://github.com/rtk-ai/rtk) to filter noisy terminal output before it reaches the model.
-- **Keep coding-agent capabilities.** Use streaming, tools, reasoning, and image input with compatible models.
-- **Work where you want.** Launch from your desktop, connect supported IDEs, or use optional Discord and Telegram bots with voice notes.
+- **Keep provider boundaries visible.** FCC records metadata-only usage and
+  fault-attribution receipts; it does not silently select a different provider
+  when the configured native route is unsupported.
+
+## Release status
+
+| Status | Current scope |
+| --- | --- |
+| **Shipped and verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, provider-escape guard, bounded client context, global context-discipline policy, model catalog visibility, stable aliases, and compact/resume proof. |
+| **Implemented but boundary-specific** | Image metadata validation, focused-window Appshot capture, optional learning/memory/skills, Codex/Pi launchers, and messaging integrations. These require their own client/provider permissions and are not part of the minimal Muse release claim. |
+| **Planned or design-only** | Hard runtime tool-result governance, exhaustive reasoning presentation, full capability-aware fallback routing, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
 <div align="center">
   <img src="assets/pic.png" alt="Claude Code running with Free Claude Code" width="700">
@@ -37,35 +68,21 @@
 
 <a id="install"></a>
 
-### 1. Install Or Update
+### 1. Install or update
 
-macOS/Linux:
+From this checkout, install the current local code into uv's tool environment:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh
+uv tool install --editable . --force
 ```
 
-Windows PowerShell:
-
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1")))
-```
-
-Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
-
-The installer asks which coding agents to install or verify. Choose at least one; skipped agents are left unchanged. It can also install and configure RTK globally for the selected agents; RTK is off by default.
+The repository installers remain available for a full machine setup:
+[install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1). Review
+them before running. Re-run the editable uv command after local changes so the
+installed `fcc-server`, `fcc-claude`, and `fccdanger` commands use this release
+head.
 
 ### 2. Start FCC
-
-#### Windows
-
-Open **Free Claude Code** from your desktop or Start menu.
-
-#### macOS
-
-Open **Free Claude Code** from your desktop or Applications folder.
-
-#### Linux
 
 Run:
 
@@ -73,16 +90,16 @@ Run:
 fcc-server
 ```
 
-On Windows and macOS, FCC runs in the system tray or menu bar without opening a
-terminal. Use its menu to open Admin, check server status, restart, or quit. On
-Windows, left-clicking the tray icon opens Admin directly.
+Keep this terminal open. In this personal fork, use the terminal command as the
+canonical server lifecycle on macOS, Linux, and Windows. Desktop/tray support
+may exist in the package, but it is not the documented release path and does
+not change the terminal-only browser policy.
 
 To print the installed Free Claude Code version without starting the server,
 run `fcc-server --version`.
 
-When using `fcc-server`, keep the terminal open. This personal fork is
-terminal-only: startup never launches a desktop browser or a terminal-browser
-child. The server reports its local control endpoint for terminal clients:
+Startup never launches a desktop browser or a terminal-browser child. The server
+reports its local control endpoint for explicit local clients:
 
 ```text
 INFO:     FCC control endpoint: http://127.0.0.1:8082/admin (terminal-only; browser launch disabled)
@@ -98,28 +115,31 @@ reports that instance and exits instead of attempting a second bind.
 
 <a id="nvidia-nim-provider"></a>
 
-### 3. Configure NVIDIA NIM
+### 3. Configure the provider and model
 
-1. Create an API key at [build.nvidia.com/settings/api-keys](https://build.nvidia.com/settings/api-keys).
-2. Open the Admin UI URL from the server log.
-3. Paste the key into `NVIDIA_NIM_API_KEY`.
-4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or search the model dropdown and select another model.
-5. Click **Validate**, then **Apply**.
+The terminal-first configuration source is `~/.fcc/.env`. Copy the relevant
+entries from [.env.example](.env.example), set the provider credential, and
+choose an exact model reference. For the verified Muse path:
 
-The model picker is controlled by **Model Catalog Mode** and **Curated Model
-References** in the Model Routing section. Use `all` to expose every discovered
-provider model, or `curated` with exact `provider/model` refs separated by
+```dotenv
+OPENCODE_API_KEY=your-opencode-key
+MODEL=opencode_go/muse-spark-1.2-contributor
+ANTHROPIC_AUTH_TOKEN=freecc
+```
+
+Restart `fcc-server` after changing configuration. The local `/admin` endpoint
+is an explicit local control/API surface; startup only reports it and never
+opens it in a browser.
+
+Model discovery is controlled by `MODEL_CATALOG_MODE` and
+`MODEL_CATALOG_ALLOWLIST` in `~/.fcc/.env`. Use `all` to expose discovered
+provider models, or `curated` with exact `provider/model` refs separated by
 commas or new lines. Curated mode also accepts `provider/*` and `*` wildcards.
 Explicitly configured `MODEL` routes remain usable even when hidden from
-discovery. Leaving the generic mode and allowlist empty retains the legacy
-NVIDIA NIM behavior; its old `NVIDIA_NIM_MODEL_ALLOWLIST` setting is only used
-in that compatibility mode. Optional stable client-facing aliases use
+discovery. Optional stable client-facing aliases use
 `MODEL_ALIASES=fast=opencode_go/minimax-m2.7`; the alias is accepted by the
-gateway while receipts and provider dispatch retain the exact target ref.
-
-<div align="center">
-  <img src="assets/admin-page.png" alt="Free Claude Code Admin UI" width="700">
-</div>
+gateway while receipts and provider dispatch retain the exact target ref. See
+[Configuration](docs/CONFIGURATION.md) for the complete policy.
 
 ### 4. Run Your Coding Agent
 
@@ -151,7 +171,8 @@ Pi:
 fcc-pi
 ```
 
-All three launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+The launchers use the current `~/.fcc/.env` settings. Normal CLI arguments still
+work, for example:
 
 ```bash
 fcc-codex exec "hello"
@@ -174,40 +195,32 @@ launcher context cap remains the actual client budget.
 
 ### Inspect usage and model labels
 
-Open **Admin UI → Usage** to see locally recorded requests, input/output
+FCC's local usage ledger records requests, input/output
 tokens, cache reads, daily activity, failures, and model breakdowns over the
 last 7, 30, or 90 days. FCC records the final Anthropic-compatible usage event
 in <code>~/.fcc/usage.db</code>; prompt and response content is never stored.
 The graph starts recording after this version is installed, so older requests
 are not retroactively reconstructed.
 
-The Admin model picker shows a human-readable label plus the exact provider
-model id. Labels are cosmetic: the exact id remains the value sent to the
-router, and custom model ids remain supported.
+Model labels are cosmetic: the exact provider model id remains the value sent to
+the router, and custom model ids remain supported. Use the generated local
+catalog at `~/.fcc/codex-model-catalog.json` when a client needs discovery.
 
-<a id="model-picker"></a>
+## Choose a provider
 
-<div align="center">
-  <img src="assets/cc-model-picker.png" alt="Claude Code model picker showing FCC models" width="700">
-  <p><em>Select an FCC model from Claude Code's native <code>/model</code> picker.</em></p>
-</div>
-
-## Choose A Provider
-
-1. Open a provider link below for its key, models, or setup instructions.
-2. In the Admin UI, configure the listed setting. For OpenAI, use
-   **Providers → Connected accounts** instead.
-3. Search the `MODEL` dropdown and select a model. If the provider cannot list
-   models, enter `<provider-id>/<exact-provider-model-id>` manually.
-4. Click **Validate**, then **Apply**.
+1. Obtain the provider credential from the provider's normal account page.
+2. Put the credential and exact `MODEL` reference in `~/.fcc/.env`.
+3. Restart `fcc-server` and verify the route with a terminal client and the
+   local receipts/logs. If a provider cannot list models, an exact
+   `<provider-id>/<provider-model-id>` value remains supported.
 
 <details>
 <summary><strong>Provider catalog</strong></summary>
 
-| Provider | Admin UI setting | Example `MODEL` |
+| Provider | Configuration | Example `MODEL` |
 | --- | --- | --- |
 | [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
-| [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | Connect ChatGPT in the Admin UI | `openai/<model-id>` |
+| [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | FCC connected-account state | `openai/<model-id>` |
 | [Azure OpenAI](https://learn.microsoft.com/azure/foundry/openai/how-to/chatgpt) | `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_BASE_URL` | `azure_openai/<deployment-name>` |
 | [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | `open_router/openrouter/free` |
 | [Google AI Studio (Gemini)](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | `gemini/models/gemini-3.1-flash-lite` |
@@ -243,9 +256,9 @@ router, and custom model ids remain supported.
 <details>
 <summary><strong>Provider-specific setup</strong></summary>
 
-- OpenAI uses your ChatGPT subscription rather than an API key. Connect from
-  **Providers → Connected accounts** in the Admin UI. Use device code on
-  headless systems. Restart an already-running agent after connecting.
+- OpenAI uses your ChatGPT subscription rather than an API key. Complete the
+  local FCC connected-account flow, use device code on headless systems, and
+  restart an already-running agent after connecting.
 - Azure OpenAI uses the deployment names from your resource. Set
   `AZURE_OPENAI_BASE_URL` to its complete v1 endpoint, such as
   `https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/`, and select a
@@ -264,8 +277,8 @@ router, and custom model ids remain supported.
   files and attached service accounts also work. Set `VERTEX_PROJECT_ID`, and
   optionally change `VERTEX_LOCATION` from its `global` default.
 - Cloudflare requires both its API token and account ID.
-- For Ollama Cloud, use the exact model IDs shown in the model picker. Local
-  Ollama uses the separate `ollama/` prefix.
+- For Ollama Cloud, use the exact model IDs returned by discovery or listed by
+  the provider. Local Ollama uses the separate `ollama/` prefix.
 - Prefer tool-capable models for coding agents. Local models also need enough context for the agent's system prompt and tool definitions.
 
 </details>
@@ -304,7 +317,7 @@ For example, route Opus to `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, Sonne
 <details>
 <summary><strong>Reasoning control</strong></summary>
 
-Open **Admin UI → Model Config → Reasoning** and select the behavior you want.
+Set `REASONING_POLICY` and its optional tier overrides in `~/.fcc/.env`.
 
 | Selection | Behavior |
 | --- | --- |
@@ -371,7 +384,7 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
 ]
 ```
 
-Match the port and authentication token to the Admin UI, then reload the extension.
+Match the port and authentication token to `~/.fcc/.env`, then reload the extension.
 
 </details>
 
@@ -410,7 +423,7 @@ http_headers = { Authorization = "Bearer freecc" }
 wire_api = "responses"
 ```
 
-Match the model, port, and bearer token to the Admin UI. Restart the Codex App
+Match the model, port, and bearer token to `~/.fcc/.env`. Restart the Codex App
 after setup or model changes, then select an FCC model from its model picker.
 
 </details>
@@ -431,7 +444,7 @@ http_headers = { Authorization = "Bearer freecc" }
 wire_api = "responses"
 ```
 
-Match `model`, the port, and bearer token to the Admin UI, then restart VS Code. For WSL-backed Codex, edit the file inside WSL.
+Match `model`, the port, and bearer token to `~/.fcc/.env`, then restart VS Code. For WSL-backed Codex, edit the file inside WSL.
 
 </details>
 
@@ -457,7 +470,7 @@ Set the environment for `acp.registry.claude-acp`:
 }
 ```
 
-Match the port and token to the Admin UI, then restart the IDE.
+Match the port and token to `~/.fcc/.env`, then restart the IDE.
 
 </details>
 
@@ -491,7 +504,9 @@ Restart Claude Code or the IDE after saving the file.
 
 ## Optional Integrations
 
-Configure integrations from **Admin UI → Messaging**, then click **Validate** and **Apply**.
+Optional integrations remain configured through the local settings surface. They
+are outside the minimal terminal-only Muse release proof and should be enabled
+only after the core `fccdanger` path is healthy.
 
 <details>
 <summary><strong>Discord bot</strong></summary>
@@ -543,19 +558,17 @@ Choose the voice backend you want, then re-run the installer with its option.
 The examples below install NVIDIA NIM transcription. To use another backend,
 replace the final option with the matching one from the table.
 
-macOS/Linux:
+From this checkout, install the optional extra with the local installer:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-nim
+./scripts/install.sh --voice-nim
 ```
 
-Windows PowerShell:
+On Windows, run `scripts/install.ps1 -VoiceNim` in PowerShell.
 
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceNim
-```
-
-Restart `fcc-server`. In **Admin UI → Messaging → Voice**, enable voice notes, select `cpu`, `cuda`, or `nvidia_nim`, and choose the Whisper model. Local gated models need `HUGGINGFACE_API_KEY`; NVIDIA NIM transcription needs `NVIDIA_NIM_API_KEY`.
+Restart `fcc-server`. Set `VOICE_NOTE_ENABLED`, `WHISPER_DEVICE`, and
+`WHISPER_MODEL` in `~/.fcc/.env`. Local gated models need
+`HUGGINGFACE_API_KEY`; NVIDIA NIM transcription needs `NVIDIA_NIM_API_KEY`.
 
 </details>
 
@@ -571,7 +584,7 @@ Stop every running FCC command before uninstalling.
 
 **Removes**
 
-- Free Claude Code, including its desktop launcher and commands
+- Free Claude Code's installed commands and managed state
 - `~/.fcc/`
 
 **Keeps**
@@ -580,22 +593,20 @@ Stop every running FCC command before uninstalling.
 - Claude Code, Codex, Pi, and RTK
 - Shared PATH entries
 
-macOS/Linux:
+From the checkout, use the matching local uninstaller:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.sh" | sh
+./scripts/uninstall.sh
 ```
 
-Windows PowerShell:
-
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.ps1")))
-```
+On Windows, run `scripts/uninstall.ps1` in PowerShell.
 
 ## Project Links
 
-- [Report bugs or request features](https://github.com/Alishahryar1/free-claude-code/issues)
+- [Report bugs or request features](https://github.com/tverma101/Harness/issues)
 - [Architecture and extension guide](ARCHITECTURE.md)
+- [Configuration reference](docs/CONFIGURATION.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Contributing guide](CONTRIBUTING.md)
 
 ## License
