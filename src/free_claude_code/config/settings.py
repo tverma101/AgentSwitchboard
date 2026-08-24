@@ -186,6 +186,17 @@ class Settings(BaseSettings):
         default="", validation_alias="FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR"
     )
 
+    # ==================== Claude compatibility firewall ====================
+    claude_known_good_version: str = Field(
+        default="2.1.228", validation_alias="FCC_CLAUDE_KNOWN_GOOD_VERSION"
+    )
+    claude_allow_uncertified: bool = Field(
+        default=False, validation_alias="FCC_CLAUDE_ALLOW_UNCERTIFIED"
+    )
+    claude_process_wrapper_path: str = Field(
+        default="", validation_alias="FCC_CLAUDE_PROCESS_WRAPPER_PATH"
+    )
+
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
