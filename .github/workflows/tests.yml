@@ -23,7 +23,7 @@ concurrency:
 jobs:
   no-suppressions-or-legacy-annotations:
     name: Ban suppressions and legacy annotations
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -44,7 +44,7 @@ jobs:
 
   quality:
     name: ${{ matrix.id }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
