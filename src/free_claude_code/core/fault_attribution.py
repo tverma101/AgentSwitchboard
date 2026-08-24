@@ -160,13 +160,20 @@ def classify_failure(
     *,
     error_code: str | None = None,
     transport: bool = False,
+    harness_transport: bool = False,
     bridge: bool = False,
     output_committed: bool = False,
     complete_tool_call: bool = False,
     invalid_tool_json: bool = False,
     missing_terminal: bool = False,
 ) -> tuple[FaultDomain, FaultConfidence, list[str]]:
-    """Apply deterministic ownership rules to sanitized stream evidence."""
+    """Apply deterministic ownership rules to sanitized stream evidence.
+
+    A generic transport signal proves only that the request failed around the
+    network boundary; it does not prove whether FCC, DNS/TLS, the network, or
+    the upstream edge owned the failure. ``harness_transport`` is reserved for
+    failures whose local Harness ownership was established independently.
+    """
 
     def codes_with_output(codes: list[str]) -> list[str]:
         if output_committed:
@@ -197,14 +204,18 @@ def classify_failure(
             FaultConfidence.MEDIUM,
             codes_with_output(["stream_closed_without_terminal"]),
         )
-    if transport:
+    if harness_transport:
         domain = FaultDomain.HARNESS_TRANSPORT
-        confidence = FaultConfidence.MEDIUM
-        codes = ["transport_failure"]
+        confidence = FaultConfidence.HIGH
+        codes = ["local_transport_failure_proven"]
     elif error_code:
         domain = FaultDomain.OPENCODE_GATEWAY
         confidence = FaultConfidence.HIGH
         codes = [f"upstream_error:{error_code}"]
+    elif transport:
+        domain = FaultDomain.UNKNOWN
+        confidence = FaultConfidence.MEDIUM
+        codes = ["transport_failure_ownership_unproven"]
     else:
         domain = FaultDomain.UNKNOWN
         confidence = FaultConfidence.LOW
