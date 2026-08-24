@@ -16,6 +16,7 @@ boundaries explicit so design notes are not mistaken for release guarantees.
 | [Terminal-only startup](ADMIN_TERMINAL_BROWSER.md) | `fcc-server` lifecycle and the no-browser contract | Current personal-fork policy |
 | [Smoke and receipt guide](../smoke/README.md) | Deterministic and opt-in live validation, receipt schemas, and evidence limits | Current validation guide |
 | [Upstream regression watch](UPSTREAM_REGRESSION_WATCH.md) | Bounded provenance registry for promoted external edge cases | Current manual registry; no hot-path polling |
+| [Diagnostics](DIAGNOSTICS.md) | Terminal-only synthetic route and capability explanations | Current; zero-network diagnostic surface |
 
 The maintainer architecture map is [ARCHITECTURE.md](../ARCHITECTURE.md). It
 describes package ownership and extension boundaries, not a promise that every
