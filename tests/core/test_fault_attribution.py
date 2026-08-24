@@ -61,6 +61,11 @@ def test_attempt_receipt_is_metadata_only_and_serializable() -> None:
         model="muse-spark-1.2-contributor",
         attempt_number=1,
         request_shape_hash=canonical_hash({"model": "muse-spark-1.2-contributor"}),
+        requested_reasoning_effort="high",
+        requested_reasoning_budget_tokens=2_048,
+        provider_reasoning_item=True,
+        provider_visible_reasoning_summary=True,
+        harness_thinking_block=True,
     )
     evidence.add_event("response.output_text.delta", byte_count=17)
     evidence.add_event("response.output_text.delta", byte_count=3)
@@ -74,6 +79,8 @@ def test_attempt_receipt_is_metadata_only_and_serializable() -> None:
     assert receipt["bytes_received"] == 20
     assert "prompt" not in receipt
     assert "content" not in receipt
+    assert receipt["requested_reasoning_effort"] == "high"
+    assert receipt["provider_visible_reasoning_summary"] is True
 
 
 def test_attempt_receipt_event_sequence_is_bounded() -> None:

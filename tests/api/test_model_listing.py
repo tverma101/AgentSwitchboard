@@ -1,6 +1,10 @@
 from fastapi.testclient import TestClient
 
-from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.model_metadata import (
+    ProviderModelInfo,
+    ReasoningCapabilityEvidence,
+    ReasoningCapabilityStatus,
+)
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.settings import Settings
 from tests.api.support import create_test_app, provider_manager_for_app
@@ -147,6 +151,56 @@ def test_models_list_exposes_cached_visual_metadata_for_configured_refs():
             "image/jpeg",
             "image/png",
         ]
+
+
+def test_models_list_exposes_reasoning_capability_evidence() -> None:
+    app = create_test_app(
+        _settings(
+            model="open_router/reasoning-model",
+            model_opus=None,
+            model_haiku=None,
+        )
+    )
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "reasoning-model",
+                reasoning=ReasoningCapabilityEvidence(
+                    status=ReasoningCapabilityStatus.SUPPORTED,
+                    effort_evidence=(
+                        ("low", ReasoningCapabilityStatus.SUPPORTED),
+                        ("max", ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED),
+                    ),
+                    provider_default_effort="low",
+                    reports_reasoning_tokens=True,
+                    emits_visible_summary=True,
+                    emits_opaque_continuation=True,
+                    evidence_source="deterministic_fixture",
+                    evidence_protocol="responses",
+                ),
+            )
+        },
+    )
+
+    response = TestClient(app).get("/v1/models")
+
+    model = next(
+        item
+        for item in response.json()["data"]
+        if item["id"] == "anthropic/open_router/reasoning-model"
+    )
+    assert model["reasoning_support"] == "supported"
+    assert model["reasoning_effort_evidence"] == {
+        "low": "supported",
+        "max": "accepted-but-unverified",
+    }
+    assert model["reasoning_default_effort"] == "low"
+    assert model["reasoning_tokens_reported"] is True
+    assert model["reasoning_summary_emitted"] is True
+    assert model["reasoning_opaque_continuation"] is True
+    assert model["reasoning_evidence_source"] == "deterministic_fixture"
+    assert model["reasoning_evidence_protocol"] == "responses"
 
 
 def test_models_list_includes_cached_wafer_models():

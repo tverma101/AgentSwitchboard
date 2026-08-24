@@ -149,6 +149,17 @@ def _sync_responses_evidence(
     evidence.cache_read_tokens = stream_view.usage_cache_read_tokens
     evidence.cache_write_tokens = stream_view.usage_cache_write_tokens
     evidence.output_tokens = stream_view.usage_output_tokens
+    evidence.effective_reasoning_effort = stream_view.effective_reasoning_effort
+    evidence.provider_reasoning_tokens = stream_view.usage_reasoning_tokens
+    evidence.provider_reasoning_item = stream_view.provider_reasoning_item
+    evidence.provider_visible_reasoning_summary = (
+        stream_view.provider_visible_reasoning_summary
+    )
+    evidence.provider_reasoning_text = stream_view.provider_reasoning_text
+    evidence.provider_opaque_reasoning = stream_view.provider_opaque_reasoning
+    evidence.opaque_reasoning_hash = stream_view.opaque_reasoning_hash
+    evidence.harness_thinking_block = stream_view.harness_thinking_block
+    evidence.harness_thinking_delta = stream_view.harness_thinking_delta
 
 
 class GoProtocol(StrEnum):
@@ -417,6 +428,10 @@ class OpenCodeGoProvider(BaseProvider):
             model=response_model,
             attempt_number=retry_session.attempts_started,
             input_tokens=input_tokens,
+            requested_reasoning_effort=(
+                reasoning.effort.value if reasoning.effort is not None else None
+            ),
+            requested_reasoning_budget_tokens=reasoning.numeric_budget_tokens,
             request_shape_hash=canonical_hash(body),
             stable_prefix_hash=stable_prefix_hash(body),
             tool_schema_hash=canonical_hash(body.get("tools", [])),

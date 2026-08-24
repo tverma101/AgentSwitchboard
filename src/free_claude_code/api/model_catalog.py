@@ -2,8 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from free_claude_code.application.model_metadata import ReasoningCapabilityEvidence
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.model_aliases import parse_model_aliases
 from free_claude_code.config.model_refs import (
@@ -31,6 +32,16 @@ class ModelResponse(BaseModel):
     type: Literal["model"] = "model"
     supports_vision: bool | None = None
     accepted_image_types: tuple[str, ...] = ()
+    reasoning_support: str | None = None
+    reasoning_effort_evidence: dict[str, str] = Field(default_factory=dict)
+    reasoning_default_effort: str | None = None
+    reasoning_tokens_reported: bool | None = None
+    reasoning_summary_emitted: bool | None = None
+    reasoning_opaque_continuation: bool | None = None
+    reasoning_evidence_source: str | None = None
+    reasoning_evidence_date: str | None = None
+    reasoning_evidence_version: str | None = None
+    reasoning_evidence_protocol: str | None = None
 
 
 class ModelsListResponse(BaseModel):
@@ -107,6 +118,7 @@ def build_models_list_response(
             accepted_image_types=(
                 model_info.accepted_image_types if model_info is not None else ()
             ),
+            reasoning=(model_info.reasoning if model_info is not None else None),
         )
 
     for alias, target in parse_model_aliases(
@@ -115,21 +127,21 @@ def build_models_list_response(
         target_info = runtime.cached_model_info(
             parse_provider_type(target), parse_model_name(target)
         )
-        _append_unique_model(
-            models,
-            seen,
-            ModelResponse(
-                id=alias,
-                display_name=f"{alias} → {target}",
-                created_at=DISCOVERED_MODEL_CREATED_AT,
-                supports_vision=(
-                    target_info.supports_vision if target_info is not None else None
-                ),
-                accepted_image_types=(
-                    target_info.accepted_image_types if target_info is not None else ()
-                ),
+        alias_model = ModelResponse(
+            id=alias,
+            display_name=f"{alias} → {target}",
+            created_at=DISCOVERED_MODEL_CREATED_AT,
+            supports_vision=(
+                target_info.supports_vision if target_info is not None else None
+            ),
+            accepted_image_types=(
+                target_info.accepted_image_types if target_info is not None else ()
             ),
         )
+        _apply_reasoning_fields(
+            alias_model, target_info.reasoning if target_info is not None else None
+        )
+        _append_unique_model(models, seen, alias_model)
 
     for model_info in filter_cached_model_infos(
         settings, runtime.cached_prefixed_model_infos()
@@ -141,6 +153,7 @@ def build_models_list_response(
             supports_thinking=model_info.supports_thinking,
             supports_vision=model_info.supports_vision,
             accepted_image_types=model_info.accepted_image_types,
+            reasoning=model_info.reasoning,
         )
 
     for model in SUPPORTED_CLAUDE_MODELS:
@@ -160,14 +173,37 @@ def _discovered_model_response(
     display_name: str,
     supports_vision: bool | None = None,
     accepted_image_types: tuple[str, ...] = (),
+    reasoning: ReasoningCapabilityEvidence | None = None,
 ) -> ModelResponse:
-    return ModelResponse(
+    model = ModelResponse(
         id=model_id,
         display_name=display_name,
         created_at=DISCOVERED_MODEL_CREATED_AT,
         supports_vision=supports_vision,
         accepted_image_types=accepted_image_types,
     )
+    _apply_reasoning_fields(model, reasoning)
+    return model
+
+
+def _apply_reasoning_fields(
+    model: ModelResponse,
+    reasoning: ReasoningCapabilityEvidence | None,
+) -> None:
+    if reasoning is None:
+        return
+    model.reasoning_support = reasoning.status.value
+    model.reasoning_effort_evidence = {
+        effort: status.value for effort, status in reasoning.effort_evidence
+    }
+    model.reasoning_default_effort = reasoning.provider_default_effort
+    model.reasoning_tokens_reported = reasoning.reports_reasoning_tokens
+    model.reasoning_summary_emitted = reasoning.emits_visible_summary
+    model.reasoning_opaque_continuation = reasoning.emits_opaque_continuation
+    model.reasoning_evidence_source = reasoning.evidence_source
+    model.reasoning_evidence_date = reasoning.evidence_date
+    model.reasoning_evidence_version = reasoning.evidence_version
+    model.reasoning_evidence_protocol = reasoning.evidence_protocol
 
 
 def _append_unique_model(
@@ -187,6 +223,7 @@ def _append_provider_model_variants(
     supports_thinking: bool | None = None,
     supports_vision: bool | None = None,
     accepted_image_types: tuple[str, ...] = (),
+    reasoning: ReasoningCapabilityEvidence | None = None,
 ) -> None:
     if supports_thinking is not False:
         _append_unique_model(
@@ -197,6 +234,7 @@ def _append_provider_model_variants(
                 display_name=provider_model_ref,
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
+                reasoning=reasoning,
             ),
         )
     _append_unique_model(
@@ -207,5 +245,6 @@ def _append_provider_model_variants(
             display_name=f"{provider_model_ref} (no thinking)",
             supports_vision=supports_vision,
             accepted_image_types=accepted_image_types,
+            reasoning=reasoning,
         ),
     )

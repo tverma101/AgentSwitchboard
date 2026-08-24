@@ -82,6 +82,14 @@ that source.
   and fails closed if proxy auth or the context cap is missing.
   Inspect the current state without launching Claude with
   `fcc-learning claude-compat`.
+- `/v1/models` exposes explicit reasoning evidence when the provider's model
+  catalog supplies it: overall support, individually evidenced effort levels,
+  provider default, reasoning-token reporting, visible-summary and opaque-
+  continuation behavior, evidence source, and protocol/version fields.
+  `accepted-but-unverified` means the provider accepted a request field; it is
+  not proof that the model actually reasoned. Generation receipts separately
+  record requested effort, provider-reported reasoning tokens, summary/text/
+  opaque state, and the Anthropic thinking presentation.
 
 ## Routing isolation
 

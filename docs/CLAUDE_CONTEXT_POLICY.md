@@ -52,10 +52,12 @@ and reuse of observations. The live CLI compaction probe uses several bounded
 stdin-fed conversation groups before `/compact`, because Claude cannot compact
 a single oversized message. It requires Claude's actual successful compact
 status/boundary and a resumed continuation marker; the FCC cap in that probe is
-50,000 tokens. The leash does not replace a future runtime tool-result
-governor.
+50,000 tokens. The leash does not replace the hard runtime tool-result
+governor at the FCC Messages/Responses ingress boundary; that governor
+redirects only oversized text-only tool results and fails explicitly for
+unsupported structured values.
 
 The current live compact/resume evidence is recorded in the sanitized
 [Muse auto-compact receipt](../smoke/receipts/muse-auto-compact-2026-08-23.json).
-That receipt is evidence for one installed-client boundary, not a claim that the
-advisory leash replaces the future hard runtime governor.
+That receipt is evidence for one installed-client boundary, not a claim that
+the advisory leash replaces the hard runtime governor.

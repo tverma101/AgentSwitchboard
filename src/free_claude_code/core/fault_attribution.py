@@ -96,6 +96,17 @@ class AttemptEvidence:
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
     output_tokens: int | None = None
+    requested_reasoning_effort: str | None = None
+    requested_reasoning_budget_tokens: int | None = None
+    effective_reasoning_effort: str | None = None
+    provider_reasoning_tokens: int | None = None
+    provider_reasoning_item: bool = False
+    provider_visible_reasoning_summary: bool = False
+    provider_reasoning_text: bool = False
+    provider_opaque_reasoning: bool = False
+    opaque_reasoning_hash: str | None = None
+    harness_thinking_block: bool = False
+    harness_thinking_delta: bool = False
     stable_prefix_hash: str | None = None
     request_shape_hash: str | None = None
     tool_schema_hash: str | None = None

@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.model_metadata import (
+    ProviderModelInfo,
+    ReasoningCapabilityEvidence,
+    ReasoningCapabilityStatus,
+)
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
     DEEPSEEK_DEFAULT_BASE,
@@ -237,7 +241,14 @@ async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
 
     assert infos == frozenset(
         {
-            ProviderModelInfo("reasoning-tool-model", supports_thinking=True),
+            ProviderModelInfo(
+                "reasoning-tool-model",
+                supports_thinking=True,
+                reasoning=ReasoningCapabilityEvidence(
+                    status=ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED,
+                    evidence_source="provider_metadata",
+                ),
+            ),
             ProviderModelInfo("plain-tool-model", supports_thinking=False),
         }
     )

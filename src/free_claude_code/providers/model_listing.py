@@ -6,6 +6,10 @@ from typing import Any
 from free_claude_code.application.model_metadata import (
     ProviderModelInfo as _ProviderModelInfo,
 )
+from free_claude_code.application.model_metadata import (
+    ReasoningCapabilityEvidence,
+    ReasoningCapabilityStatus,
+)
 
 
 class ModelListResponseError(ValueError):
@@ -37,11 +41,30 @@ def extract_openai_model_infos(
         if not isinstance(model_id, str) or not model_id.strip():
             raise _malformed(provider_name, "expected every data item to include id")
         supports_vision, accepted_image_types = _vision_metadata(item)
+        raw_supported_parameters = _field(item, "supported_parameters")
+        supported_parameters = (
+            {param for param in raw_supported_parameters if isinstance(param, str)}
+            if _is_sequence(raw_supported_parameters)
+            else None
+        )
+        reasoning = _reasoning_metadata(item, supported_parameters=supported_parameters)
         model_infos.add(
             _ProviderModelInfo(
                 model_id=model_id,
+                supports_thinking=(
+                    True
+                    if reasoning.status
+                    in {
+                        ReasoningCapabilityStatus.SUPPORTED,
+                        ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED,
+                    }
+                    else False
+                    if reasoning.status is ReasoningCapabilityStatus.UNSUPPORTED
+                    else None
+                ),
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
+                reasoning=reasoning,
             )
         )
 
@@ -70,10 +93,17 @@ def extract_tool_capable_model_infos(
         }
         if supported_parameter_names.isdisjoint({"tools", "tool_choice"}):
             continue
+        reasoning = _reasoning_metadata(
+            item, supported_parameters=supported_parameter_names
+        )
         model_infos.add(
             _ProviderModelInfo(
                 model_id=model_id,
-                supports_thinking="reasoning" in supported_parameter_names,
+                supports_thinking=(
+                    "reasoning" in supported_parameter_names
+                    or reasoning.status is ReasoningCapabilityStatus.SUPPORTED
+                ),
+                reasoning=reasoning,
             )
         )
 
@@ -128,6 +158,171 @@ def _vision_metadata(item: Any) -> tuple[bool | None, tuple[str, ...]]:
         supports_vision if isinstance(supports_vision, bool) else None,
         accepted_types,
     )
+
+
+_REASONING_EFFORTS = (
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+)
+
+
+def _reasoning_metadata(
+    item: Any,
+    *,
+    supported_parameters: set[str] | None = None,
+) -> ReasoningCapabilityEvidence:
+    """Extract explicit reasoning evidence without inferring from model names."""
+
+    capabilities = _field(item, "capabilities")
+    capabilities = capabilities if isinstance(capabilities, Mapping) else {}
+    raw_status = _field(item, "reasoning_status")
+    if raw_status is None:
+        raw_status = capabilities.get("reasoning_status")
+    status = _reasoning_status(raw_status)
+    if status is ReasoningCapabilityStatus.UNKNOWN:
+        supported = _field(item, "supports_reasoning")
+        if not isinstance(supported, bool):
+            supported = _field(item, "supports_thinking")
+        if not isinstance(supported, bool):
+            supported = capabilities.get("reasoning")
+        if isinstance(supported, bool):
+            status = (
+                ReasoningCapabilityStatus.SUPPORTED
+                if supported
+                else ReasoningCapabilityStatus.UNSUPPORTED
+            )
+        elif supported_parameters and "reasoning" in supported_parameters:
+            status = ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED
+
+    raw_efforts = _first_field(
+        item,
+        "reasoning_efforts",
+        "accepted_reasoning_efforts",
+        "accepted_efforts",
+    )
+    if raw_efforts is None:
+        raw_efforts = capabilities.get("reasoning_efforts")
+    efforts = _normalized_efforts(raw_efforts)
+    raw_effort_status = _first_field(item, "reasoning_effort_evidence")
+    if raw_effort_status is None:
+        raw_effort_status = capabilities.get("reasoning_effort_evidence")
+    evidence = _effort_evidence(raw_effort_status, efforts, status)
+    if not evidence and efforts:
+        effort_status = (
+            ReasoningCapabilityStatus.SUPPORTED
+            if status is ReasoningCapabilityStatus.SUPPORTED
+            else ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED
+        )
+        evidence = tuple((effort, effort_status) for effort in efforts)
+
+    default_effort = _first_string(
+        item, "reasoning_default_effort", "provider_default_effort"
+    )
+    if default_effort is None:
+        default_effort = _first_string(
+            capabilities, "reasoning_default_effort", "provider_default_effort"
+        )
+    explicit_source = _first_string(item, "reasoning_evidence_source")
+    if explicit_source is None:
+        explicit_source = _first_string(capabilities, "reasoning_evidence_source")
+    evidence_source = explicit_source or (
+        "provider_metadata"
+        if status is not ReasoningCapabilityStatus.UNKNOWN
+        or evidence
+        or default_effort is not None
+        else "unknown"
+    )
+    return ReasoningCapabilityEvidence(
+        status=status,
+        effort_evidence=evidence,
+        provider_default_effort=default_effort,
+        reports_reasoning_tokens=_first_bool(
+            item, capabilities, "reports_reasoning_tokens"
+        ),
+        emits_visible_summary=_first_bool(
+            item, capabilities, "emits_visible_summary", "visible_summary"
+        ),
+        emits_opaque_continuation=_first_bool(
+            item, capabilities, "emits_opaque_continuation", "opaque_reasoning"
+        ),
+        tool_compatible_efforts=_normalized_efforts(
+            _first_field(item, "tool_compatible_reasoning_efforts")
+            or capabilities.get("tool_compatible_reasoning_efforts")
+        ),
+        evidence_source=evidence_source,
+        evidence_date=_first_string(item, "reasoning_evidence_date")
+        or _first_string(capabilities, "reasoning_evidence_date"),
+        evidence_version=_first_string(item, "reasoning_evidence_version")
+        or _first_string(capabilities, "reasoning_evidence_version"),
+        evidence_protocol=_first_string(item, "reasoning_evidence_protocol")
+        or _first_string(capabilities, "reasoning_evidence_protocol"),
+    )
+
+
+def _reasoning_status(value: Any) -> ReasoningCapabilityStatus:
+    if isinstance(value, str):
+        try:
+            return ReasoningCapabilityStatus(value.strip().lower())
+        except ValueError:
+            return ReasoningCapabilityStatus.UNKNOWN
+    return ReasoningCapabilityStatus.UNKNOWN
+
+
+def _normalized_efforts(value: Any) -> tuple[str, ...]:
+    if not _is_sequence(value):
+        return ()
+    normalized = {
+        str(effort).strip().lower()
+        for effort in value
+        if str(effort).strip().lower() in _REASONING_EFFORTS
+    }
+    return tuple(effort for effort in _REASONING_EFFORTS if effort in normalized)
+
+
+def _effort_evidence(
+    value: Any,
+    efforts: tuple[str, ...],
+    overall: ReasoningCapabilityStatus,
+) -> tuple[tuple[str, ReasoningCapabilityStatus], ...]:
+    if isinstance(value, Mapping):
+        result: list[tuple[str, ReasoningCapabilityStatus]] = []
+        for effort in _REASONING_EFFORTS:
+            status = _reasoning_status(value.get(effort))
+            if status is not ReasoningCapabilityStatus.UNKNOWN:
+                result.append((effort, status))
+        return tuple(result)
+    if not efforts:
+        return ()
+    status = (
+        ReasoningCapabilityStatus.SUPPORTED
+        if overall is ReasoningCapabilityStatus.SUPPORTED
+        else ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED
+    )
+    return tuple((effort, status) for effort in efforts)
+
+
+def _first_field(value: Any, *names: str) -> Any:
+    for name in names:
+        field = _field(value, name)
+        if field is not None:
+            return field
+    return None
+
+
+def _first_string(value: Any, *names: str) -> str | None:
+    result = _first_field(value, *names)
+    return result.strip() if isinstance(result, str) and result.strip() else None
+
+
+def _first_bool(item: Any, capabilities: Mapping[str, Any], *names: str) -> bool | None:
+    result = _first_field(item, *names)
+    if not isinstance(result, bool):
+        result = _first_field(capabilities, *names)
+    return result if isinstance(result, bool) else None
 
 
 def _is_sequence(value: Any) -> bool:
