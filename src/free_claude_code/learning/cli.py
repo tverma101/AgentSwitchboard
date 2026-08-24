@@ -7,6 +7,11 @@ import sys
 from collections.abc import Iterable
 from typing import Any
 
+from .context_policy import (
+    context_policy_status,
+    install_context_policy,
+    uninstall_context_policy,
+)
 from .hooks import install_hooks, run_hook, uninstall_hooks
 from .stop_hook import drain_queue
 from .store import LearningStore, learning_home, project_identity
@@ -38,6 +43,15 @@ def _parser() -> argparse.ArgumentParser:
     subcommands.add_parser("install", help="merge FCC Learning hooks into Claude Code")
     subcommands.add_parser("uninstall", help="remove only FCC Learning hooks")
     subcommands.add_parser("status", help="show local learning state")
+
+    policy = subcommands.add_parser(
+        "context-policy",
+        help="manage the global Claude context-discipline instructions",
+    )
+    policy_commands = policy.add_subparsers(dest="policy_command", required=True)
+    policy_commands.add_parser("install", help="install or update the managed block")
+    policy_commands.add_parser("uninstall", help="remove only the managed block")
+    policy_commands.add_parser("status", help="show the policy path and digest")
 
     memory = subcommands.add_parser("memory", help="inspect or edit durable memories")
     memory_commands = memory.add_subparsers(dest="memory_command", required=True)
@@ -158,6 +172,16 @@ def main() -> None:
     if args.command == "uninstall":
         changed = uninstall_hooks()
         print("removed" if changed else "not installed")
+        return
+    if args.command == "context-policy":
+        if args.policy_command == "install":
+            changed = install_context_policy()
+            print(json.dumps({"changed": changed, **context_policy_status()}))
+        elif args.policy_command == "uninstall":
+            changed = uninstall_context_policy()
+            print(json.dumps({"changed": changed, **context_policy_status()}))
+        else:
+            print(json.dumps(context_policy_status(), indent=2))
         return
 
     store = LearningStore()

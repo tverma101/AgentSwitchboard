@@ -26,3 +26,27 @@ FCC sets `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` because FCC al
 ## Design rule
 
 The provider's advertised context window is capability metadata, not a session-budget instruction. FCC owns the client-facing session budget.
+
+## Global context-discipline leash
+
+The client cap is a safety boundary, but it cannot prevent one oversized `Read`,
+`cat`, JSON dump, or test log from consuming the session budget unnecessarily.
+FCC can install a managed instruction block into the global Claude file at
+`~/.claude/CLAUDE.md`:
+
+```bash
+fcc-learning context-policy install
+fcc-learning context-policy status
+fcc-learning context-policy uninstall
+```
+
+The command is explicit and reversible. It preserves all bytes outside stable
+`FCC_CONTEXT_POLICY` markers, is idempotent, and creates one recovery copy at
+`CLAUDE.md.fcc-context-policy.bak` before the first mutation. Set
+`FCC_CLAUDE_GLOBAL_INSTRUCTIONS` when Claude's global instruction file is in a
+different location. The status command reports only the path, policy version,
+backup presence, and SHA-256 digests; it does not print instruction contents.
+
+This leash is advisory: it guides the client toward bounded reads, summaries,
+and reuse of observations. It does not replace a future runtime tool-result
+governor or literal-client compaction proof.

@@ -62,6 +62,8 @@ class ClaudeCliRun:
     stderr: str
     duration_s: float
     timed_out: bool = False
+    requested_context_tokens: int | None = None
+    effective_context_tokens: int | None = None
 
     @property
     def combined_output(self) -> str:
@@ -100,6 +102,7 @@ def run_claude_cli(
     session_id: str | None = None,
     resume_session_id: str | None = None,
     no_session_persistence: bool = True,
+    context_cap_tokens: int | None = None,
 ) -> ClaudeCliRun:
     """Run Claude Code CLI against the local smoke proxy."""
     cwd.mkdir(parents=True, exist_ok=True)
@@ -118,14 +121,18 @@ def run_claude_cli(
         )
     )
 
+    base_env = os.environ.copy()
+    if context_cap_tokens is not None:
+        base_env["FCC_CLAUDE_CONTEXT_TOKENS"] = str(context_cap_tokens)
     env = build_claude_proxy_env(
         proxy_root_url=server.base_url,
         auth_token=config.settings.anthropic_auth_token,
-        base_env=os.environ,
+        base_env=base_env,
     )
     env["TERM"] = "dumb"
     env["NO_COLOR"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    effective_context_tokens = int(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 
     started = time.monotonic()
     try:
@@ -144,6 +151,8 @@ def run_claude_cli(
             stderr=_coerce_timeout_text(exc.stderr),
             duration_s=time.monotonic() - started,
             timed_out=True,
+            requested_context_tokens=context_cap_tokens,
+            effective_context_tokens=effective_context_tokens,
         )
 
     return ClaudeCliRun(
@@ -152,6 +161,8 @@ def run_claude_cli(
         stdout=_coerce_timeout_text(result.stdout),
         stderr=_coerce_timeout_text(result.stderr),
         duration_s=time.monotonic() - started,
+        requested_context_tokens=context_cap_tokens,
+        effective_context_tokens=effective_context_tokens,
     )
 
 
@@ -269,6 +280,8 @@ def token_evidence(
         "run_in_background_false": "run_in_background" in combined and "false" in lower,
         "compact_boundary": "compact_boundary" in combined,
         "compact_metadata": "compact_metadata" in combined,
+        "requested_context_tokens": run.requested_context_tokens,
+        "effective_context_tokens": run.effective_context_tokens,
         "http_422": 'HTTP/1.1" 422' in combined,
         "http_500": bool(re.search(r'HTTP/1\.1" 5\d\d', combined)),
         "timed_out": run.timed_out,
@@ -284,6 +297,7 @@ def classify_probe(
     requires_agent: bool = False,
     requires_task: bool = False,
     requires_compact: bool = False,
+    requires_continuation: bool = False,
 ) -> tuple[str, str]:
     """Classify a probe without failing compatibility characterization failures."""
     combined = f"{run.combined_output}\n{log_delta}"
@@ -311,14 +325,20 @@ def classify_probe(
         and "false" in lower
     )
     compact_ok = not requires_compact or (
-        "compact_boundary" in combined
-        or "compact_metadata" in combined
-        or "/compact" in combined
-        or "compact" in lower
+        "compact_boundary" in combined or "compact_metadata" in combined
     )
+    continuation_ok = not requires_continuation or marker in combined
     cli_ok = run.returncode == 0
 
-    if cli_ok and marker_ok and tool_ok and agent_ok and task_ok and compact_ok:
+    if (
+        cli_ok
+        and marker_ok
+        and tool_ok
+        and agent_ok
+        and task_ok
+        and compact_ok
+        and continuation_ok
+    ):
         return "passed", "passed"
     if _has_upstream_unavailable_text(combined):
         return "failed", "upstream_unavailable"
@@ -341,6 +361,7 @@ def make_outcome(
     requires_agent: bool = False,
     requires_task: bool = False,
     requires_compact: bool = False,
+    requires_continuation: bool = False,
 ) -> CliMatrixOutcome:
     """Build one report outcome from a CLI run and its server log delta."""
     outcome, classification = classify_probe(
@@ -351,6 +372,7 @@ def make_outcome(
         requires_agent=requires_agent,
         requires_task=requires_task,
         requires_compact=requires_compact,
+        requires_continuation=requires_continuation,
     )
     evidence = token_evidence(
         feature=feature,
@@ -593,6 +615,7 @@ def _compact_command(
     marker_prefix: str,
 ) -> CliMatrixOutcome:
     marker = _marker(marker_prefix, "COMPACT")
+    continuation_marker = _marker(marker_prefix, "COMPACT_CONTINUED")
     workspace = model_dir / "compact_command"
     session_id = str(uuid.uuid4())
     offset = read_log_offset(server.log_path)
@@ -605,6 +628,7 @@ def _compact_command(
         tools="",
         session_id=session_id,
         no_session_persistence=False,
+        context_cap_tokens=50_000,
     )
     second = run_claude_cli(
         claude_bin=claude_bin,
@@ -615,26 +639,48 @@ def _compact_command(
         tools="",
         resume_session_id=session_id,
         no_session_persistence=False,
+        context_cap_tokens=50_000,
+    )
+    third = run_claude_cli(
+        claude_bin=claude_bin,
+        server=server,
+        config=smoke_config,
+        cwd=workspace,
+        prompt=(
+            f"After compaction, reply with exactly {continuation_marker}. "
+            f"You preserved the earlier token {marker}."
+        ),
+        tools="",
+        resume_session_id=session_id,
+        no_session_persistence=False,
+        context_cap_tokens=50_000,
     )
     log_delta = read_log_delta(server.log_path, offset)
     run = ClaudeCliRun(
-        command=(*first.command, "&&", *second.command),
-        returncode=second.returncode if first.returncode == 0 else first.returncode,
-        stdout=f"{first.stdout}\n{second.stdout}",
-        stderr=f"{first.stderr}\n{second.stderr}",
-        duration_s=first.duration_s + second.duration_s,
-        timed_out=first.timed_out or second.timed_out,
+        command=(*first.command, "&&", *second.command, "&&", *third.command),
+        returncode=(
+            third.returncode
+            if first.returncode == 0 and second.returncode == 0
+            else (first.returncode if first.returncode != 0 else second.returncode)
+        ),
+        stdout=f"{first.stdout}\n{second.stdout}\n{third.stdout}",
+        stderr=f"{first.stderr}\n{second.stderr}\n{third.stderr}",
+        duration_s=first.duration_s + second.duration_s + third.duration_s,
+        timed_out=first.timed_out or second.timed_out or third.timed_out,
+        requested_context_tokens=50_000,
+        effective_context_tokens=50_000,
     )
     return make_outcome(
         model=provider_model.model_name,
         full_model=provider_model.full_model,
         source=provider_model.source,
-        feature="compact_command",
-        marker="",
+        feature="compact_resume",
+        marker=continuation_marker,
         run=run,
         log_delta=log_delta,
         log_path=server.log_path,
         requires_compact=True,
+        requires_continuation=True,
     )
 
 

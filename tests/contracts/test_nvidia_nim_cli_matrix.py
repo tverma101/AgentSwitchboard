@@ -199,6 +199,67 @@ def test_nvidia_nim_cli_matrix_regression_detection(tmp_path: Path) -> None:
     ]
 
 
+def test_compact_probe_requires_boundary_event_and_continuation_marker(
+    tmp_path: Path,
+) -> None:
+    marker = "FCC_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p", "compact"),
+        returncode=0,
+        stdout=marker,
+        stderr="",
+        duration_s=0.1,
+        requested_context_tokens=50_000,
+        effective_context_tokens=50_000,
+    )
+    outcome = make_outcome(
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
+        source="nvidia_nim_cli_default",
+        feature="compact_resume",
+        marker=marker,
+        run=run,
+        log_delta=(
+            "API_REQUEST: request_id=req_1 model=z-ai/glm-5.2 messages=2\n"
+            '"type":"system","subtype":"compact_boundary",'
+            '"compact_metadata":{"trigger":"manual"}'
+        ),
+        log_path=tmp_path / "server.log",
+        requires_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "passed"
+    assert outcome.token_evidence["compact_boundary"] is True
+    assert outcome.token_evidence["compact_metadata"] is True
+    assert outcome.token_evidence["requested_context_tokens"] == 50_000
+    assert outcome.token_evidence["effective_context_tokens"] == 50_000
+
+
+def test_compact_probe_does_not_pass_on_command_text_alone(tmp_path: Path) -> None:
+    run = ClaudeCliRun(
+        command=("claude", "-p", "compact"),
+        returncode=0,
+        stdout="/compact completed but no continuation",
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
+        source="nvidia_nim_cli_default",
+        feature="compact_resume",
+        marker="FCC_COMPACT_CONTINUED",
+        run=run,
+        log_delta="API_REQUEST: request_id=req_1 model=z-ai/glm-5.2 messages=2",
+        log_path=tmp_path / "server.log",
+        requires_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "model_feature_failure"
+
+
 def test_nvidia_nim_cli_matrix_model_feature_failures_do_not_regress(
     tmp_path: Path,
 ) -> None:

@@ -78,6 +78,9 @@ This is intentional: a one-time tool failure must not become permanent behavior.
 fcc-learning status
 fcc-learning install
 fcc-learning uninstall
+fcc-learning context-policy install
+fcc-learning context-policy status
+fcc-learning context-policy uninstall
 fcc-learning memory list
 fcc-learning memory search "terms"
 fcc-learning memory show <id>
@@ -91,6 +94,10 @@ fcc-learning queue drain
 ```
 
 `fcc-claude` normally installs/repairs the hooks automatically, so manual `install` is usually unnecessary.
+
+`context-policy` is a separate explicit operation. It manages only FCC's
+delimited global context-discipline block and does not install hooks or change
+the rest of the user's `CLAUDE.md`.
 
 Memory replacement/removal is ID-based and scope-checked. The learner may only replace a project memory with a project memory, and only explicit user evidence can remove one. The CLI's `remove` command is an explicit user action and records a tombstone rather than silently deleting history.
 
@@ -107,6 +114,7 @@ Environment overrides:
 | `FCC_LEARNING_MAX_ATTEMPTS` | `3` | Attempts before a permanently failing queue row enters `dead_letter`. |
 | `FCC_LEARNING_HOME` | `~/.fcc/learning` | Override SQLite/state location. |
 | `FCC_LEARNING_ALLOW_REMOTE` | `0` | Expert-only escape hatch permitting a non-loopback Anthropic base URL. |
+| `FCC_CLAUDE_GLOBAL_INSTRUCTIONS` | `~/.claude/CLAUDE.md` | Optional path for the managed global context-discipline block. |
 
 ## Failure behavior
 

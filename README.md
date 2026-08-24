@@ -149,6 +149,19 @@ fcc-codex exec "hello"
 
 `fcc-pi` registers FCC only for that Pi process; your existing Pi settings, sessions, credentials, and extensions remain unchanged.
 
+For a cheap global context-discipline leash, explicitly install FCC's bounded
+read/output guidance into Claude's global instruction file:
+
+```bash
+fcc-learning context-policy install
+fcc-learning context-policy status
+```
+
+The operation is idempotent, preserves unrelated `CLAUDE.md` text, and creates
+one recovery copy before its first mutation. Remove only the managed block with
+`fcc-learning context-policy uninstall`. This is advisory guidance; the
+launcher context cap remains the actual client budget.
+
 ### Inspect usage and model labels
 
 Open **Admin UI → Usage** to see locally recorded requests, input/output
