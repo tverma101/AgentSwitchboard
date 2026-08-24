@@ -1,4 +1,7 @@
 import asyncio
+import json
+import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,6 +78,111 @@ async def test_stopped_session_reference_cannot_launch_a_new_process() -> None:
 
     create_process.assert_not_awaited()
     trace.assert_not_called()
+    assert session.is_busy is False
+
+
+@pytest.mark.asyncio
+async def test_settings_routing_override_blocks_managed_launch(
+    tmp_path,
+) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_AUTH_TOKEN": "first-party-token",
+                }
+            }
+        )
+    )
+    session = ManagedClaudeSession("/tmp", "http://127.0.0.1:8082")
+
+    with (
+        patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(settings_dir)}, clear=False),
+        patch(
+            "free_claude_code.cli.managed.session.asyncio.create_subprocess_exec",
+            new=AsyncMock(),
+        ) as create_process,
+    ):
+        events = [event async for event in session.start_task("must stay on FCC")]
+
+    assert events[0]["type"] == "error"
+    assert "ANTHROPIC_BASE_URL" in events[0]["error"]["message"]
+    assert events[1] == {
+        "type": "exit",
+        "code": 2,
+        "stderr": events[0]["error"]["message"],
+    }
+    create_process.assert_not_awaited()
+    assert session.is_busy is False
+
+
+@pytest.mark.asyncio
+async def test_project_settings_routing_override_blocks_managed_launch(
+    tmp_path,
+) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.local.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://api.anthropic.com"}})
+    )
+    session = ManagedClaudeSession(str(tmp_path), "http://127.0.0.1:8082")
+
+    with (
+        patch.dict(
+            os.environ, {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing")}, clear=False
+        ),
+        patch(
+            "free_claude_code.cli.managed.session.asyncio.create_subprocess_exec",
+            new=AsyncMock(),
+        ) as create_process,
+    ):
+        events = [event async for event in session.start_task("must stay on FCC")]
+
+    assert events[0]["type"] == "error"
+    assert "ANTHROPIC_BASE_URL" in events[0]["error"]["message"]
+    assert "local .claude/settings.local.json" in events[0]["error"]["message"]
+    create_process.assert_not_awaited()
+    assert session.is_busy is False
+
+
+@pytest.mark.asyncio
+async def test_managed_launch_blocks_uncertified_claude_version(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "claude"
+    binary.write_text("#!/bin/sh\nprintf '%s\\n' '2.1.229'\n", encoding="utf-8")
+    binary.chmod(0o700)
+    wrapper = tmp_path / "fcc-wrapper"
+    session = ManagedClaudeSession(
+        "/tmp",
+        "http://127.0.0.1:8082",
+        claude_bin=str(binary),
+    )
+
+    with (
+        patch.dict(
+            os.environ,
+            {"FCC_CLAUDE_PROCESS_WRAPPER_PATH": str(wrapper)},
+            clear=False,
+        ),
+        patch(
+            "free_claude_code.cli.managed.session.asyncio.create_subprocess_exec",
+            new=AsyncMock(),
+        ) as create_process,
+    ):
+        events = [event async for event in session.start_task("must be certified")]
+
+    assert events[0]["type"] == "error"
+    assert "quarantined" in events[0]["error"]["message"]
+    assert events[1] == {
+        "type": "exit",
+        "code": 78,
+        "stderr": events[0]["error"]["message"],
+    }
+    create_process.assert_not_awaited()
     assert session.is_busy is False
 
 

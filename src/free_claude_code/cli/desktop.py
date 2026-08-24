@@ -8,8 +8,8 @@ from free_claude_code.cli.commands import (
     ServerStatus,
     ServerSupervisor,
     load_server_settings,
-    open_admin_when_ready,
-    schedule_open_admin_browser,
+    report_admin_when_ready,
+    schedule_report_admin_ready,
 )
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.config.paths import config_dir_path
@@ -40,7 +40,7 @@ class ServerOwner(Protocol):
 
     def schedule_run(self) -> bool: ...
 
-    def run(self, *, open_admin_browser: bool | None = None) -> None: ...
+    def run(self) -> None: ...
 
     def request_restart(self) -> bool: ...
 
@@ -112,7 +112,7 @@ class DesktopController:
             self._server_thread.start()
 
     def _run_server(self) -> None:
-        self._supervisor.run(open_admin_browser=False)
+        self._supervisor.run()
 
 
 def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
@@ -121,18 +121,18 @@ def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
     settings = load_server_settings()
     instance_lock = InterprocessFileLock(config_dir_path() / "desktop.lock")
     if not instance_lock.acquire():
-        open_admin_when_ready(settings)
+        report_admin_when_ready(settings)
         return
 
     try:
         if preflight_proxy(local_proxy_root_url(settings)) is None:
-            open_admin_when_ready(settings)
+            report_admin_when_ready(settings)
             return
 
         supervisor = ServerSupervisor(console_logging=False)
 
         def open_current_admin() -> None:
-            schedule_open_admin_browser(get_settings())
+            schedule_report_admin_ready(get_settings())
 
         DesktopController(supervisor, tray_factory, open_current_admin).run()
     finally:

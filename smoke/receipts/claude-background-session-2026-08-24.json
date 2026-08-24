@@ -1,0 +1,38 @@
+{
+  "receipt": "claude-background-session",
+  "captured_at": "2026-08-24T06:35:39Z",
+  "claude": {
+    "launcher": "claude",
+    "version": "2.1.228",
+    "invocation": "--bg <positional-argument>"
+  },
+  "harness": {
+    "package_version": "4.30.7",
+    "isolated_server": "loopback-isolated",
+    "active_user_server_8082_touched": false
+  },
+  "surface": {
+    "name": "top_level_background_session",
+    "outcome": "unverified",
+    "background_handle_returned": true,
+    "daemon_lifecycle": "disappeared_before_tool_execution",
+    "claude_agents_after_probe": []
+  },
+  "requests": {
+    "fcc_messages_requests_observed": 0,
+    "upstream_attempts": 0,
+    "tool_marker_seen": false,
+    "raw_input_retained": false
+  },
+  "routing": {
+    "provider_model": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses",
+    "route_proven": false
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_background_subagent_when_requested",
+    "retained_content": "metadata-only receipt; sensitive payloads omitted",
+    "next_probe": "certify Claude background daemon inheritance before claiming #61 complete"
+  }
+}

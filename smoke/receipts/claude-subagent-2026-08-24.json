@@ -1,0 +1,49 @@
+{
+  "receipt": "claude-foreground-subagent",
+  "captured_at": "2026-08-24T06:09:39Z",
+  "claude": {
+    "launcher": "claude",
+    "version": "2.1.228",
+    "child_version": "not separately exposed by Claude stream-json"
+  },
+  "harness": {
+    "package_version": "4.30.7",
+    "isolated_server": "loopback-isolated",
+    "active_user_server_8082_touched": false
+  },
+  "surface": {
+    "name": "foreground_agent_subagent",
+    "outcome": "passed",
+    "background": "not_run",
+    "child_process_wrapper": "not separately exposed"
+  },
+  "context": {
+    "requested_tokens": 256000,
+    "effective_tokens": 256000,
+    "compact_fired": false
+  },
+  "requests": {
+    "fcc_messages_requests_observed": 9,
+    "completed_provider_turns": 7,
+    "upstream_attempts_per_completed_turn": 1,
+    "terminal_event": "response.completed",
+    "agent_tool_count": 19,
+    "agent_result_count": 19,
+    "foreground_run_in_background": false,
+    "tool_result_count": 11
+  },
+  "routing": {
+    "provider_id": "opencode_go",
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses"
+  },
+  "reasoning": {
+    "requested_effort": "high",
+    "effective_effort": "high"
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_subagent_when_requested",
+    "retained_content": "metadata-only receipt; sensitive payloads omitted"
+  }
+}

@@ -34,6 +34,11 @@ class FakeRequestRuntime(RequestRuntimePort):
     ) -> bool | None:
         return None
 
+    def cached_model_info(
+        self, provider_id: str, model_id: str
+    ) -> ProviderModelInfo | None:
+        return None
+
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         return self._cached_infos
 

@@ -55,7 +55,7 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
                             "source": {
                                 "type": "base64",
                                 "media_type": "image/png",
-                                "data": "aGVsbG8=",
+                                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
                             },
                         },
                     ],
@@ -109,8 +109,116 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
     }
     assert body["input"][4]["content"][1] == {
         "type": "input_image",
-        "image_url": "data:image/png;base64,aGVsbG8=",
+        "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     }
+
+
+def test_build_responses_provider_request_rejects_media_inside_tool_result() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_image",
+                            "name": "screenshot",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_image",
+                            "content": [
+                                {
+                                    "payload": {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "url",
+                                            "url": "https://example.test/shot.png",
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    with pytest.raises(ResponsesConversionError, match=r"media blocks.*tool_result"):
+        build_responses_provider_request(
+            request,
+            reasoning=ReasoningPolicy.provider_default(),
+        )
+
+
+def test_responses_prompt_cache_key_prefers_explicit_caller_value() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "prompt_cache_key": "caller-key",
+            "claude_session_id": "header-key",
+            "metadata": {"user_id": "metadata-key"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+        prompt_cache_key="parameter-key",
+    )
+
+    assert body["prompt_cache_key"] == "caller-key"
+
+
+def test_responses_prompt_cache_key_uses_session_then_metadata_fallback() -> None:
+    session_request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "claude_session_id": "header-key",
+            "metadata": {"user_id": "metadata-key"},
+        }
+    )
+    session_body = build_responses_provider_request(
+        session_request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+    assert session_body["prompt_cache_key"] == "header-key"
+
+    metadata_request = session_request.model_copy(update={"claude_session_id": None})
+    metadata_body = build_responses_provider_request(
+        metadata_request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+    assert metadata_body["prompt_cache_key"] == "metadata-key"
+
+
+def test_responses_prompt_cache_key_ignores_unsafe_candidates() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "claude_session_id": "bad\nkey",
+            "metadata": {"user_id": "fallback-key"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["prompt_cache_key"] == "fallback-key"
 
 
 def test_build_responses_provider_request_accepts_claude_client_controls() -> None:
@@ -151,6 +259,62 @@ def test_build_responses_provider_request_uses_resolved_reasoning_policy() -> No
     )
 
     assert body["reasoning"] == {"effort": "max", "summary": "auto"}
+
+
+@pytest.mark.parametrize("summary", ["auto", "concise", "detailed"])
+def test_build_responses_provider_request_preserves_summary_mode(
+    summary: str,
+) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "output_config": {"summary": summary},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["reasoning"] == {"summary": summary}
+
+
+def test_build_responses_provider_request_combines_effort_and_summary_mode() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "output_config": {"summary": "concise"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+    )
+
+    assert body["reasoning"] == {"effort": "high", "summary": "concise"}
+
+
+@pytest.mark.parametrize("summary", ["verbose", "", 1, None, {"mode": "auto"}])
+def test_build_responses_provider_request_rejects_invalid_summary_mode(
+    summary: object,
+) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "output_config": {"summary": summary},
+        }
+    )
+
+    with pytest.raises(ResponsesConversionError, match=r"output_config\.summary"):
+        build_responses_provider_request(
+            request,
+            reasoning=ReasoningPolicy.provider_default(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -419,6 +583,29 @@ def test_responses_reasoning_round_trip_reaches_provider_request() -> None:
 
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
     assert "output_config" not in body
+
+
+@pytest.mark.parametrize("summary", ["auto", "concise", "detailed"])
+def test_responses_reasoning_summary_round_trip_reaches_provider_request(
+    summary: str,
+) -> None:
+    adapter = OpenAIResponsesAdapter()
+    ingress = OpenAIResponsesRequest.model_validate(
+        {
+            "model": "openai/gpt-test",
+            "input": "hello",
+            "reasoning": {"summary": summary},
+        }
+    )
+    anthropic = MessagesRequest.model_validate(adapter.to_anthropic_payload(ingress))
+
+    assert anthropic.output_config == {"summary": summary}
+    body = build_responses_provider_request(
+        anthropic,
+        reasoning=client_reasoning_policy(anthropic),
+    )
+
+    assert body["reasoning"] == {"summary": summary}
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,7 @@ FCC_COMMANDS = (
     "fcc-desktop",
     "fcc-server",
     "fcc-claude",
+    "fccdanger",
     "fcc-codex",
     "fcc-pi",
     "fcc-init",
@@ -108,7 +109,9 @@ printf '%s\n' "$FCC_PS_OUTPUT"
         awk = shutil.which("awk", path=self.env["PATH"])
         if awk is None:
             pytest.skip("awk is required for the POSIX process fallback scenario")
-        shutil.copy2(awk, fallback_bin / "awk")
+        # Keep the system awk executable intact.  Copying a protected macOS
+        # system binary can fail because of code-signing metadata.
+        (fallback_bin / "awk").symlink_to(awk)
         self.env["FCC_PS_OUTPUT"] = process_line
         self.env["PATH"] = str(fallback_bin)
 
@@ -153,7 +156,7 @@ if [ "${1:-}" = "tool" ] && [ "${2:-}" = "uninstall" ]; then
         echo 'Tool `free-claude-code` is not installed' >&2
         exit 2
     fi
-    for name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code; do
+    for name in fcc-desktop fcc-server fcc-claude fccdanger fcc-codex fcc-pi fcc-init free-claude-code; do
         /bin/rm -f "$FAKE_TOOL_BIN/$name"
     done
     echo "Uninstalled free-claude-code"
@@ -177,6 +180,13 @@ exec /bin/rm "$@"
         bin_dir / "uname",
         """#!/bin/sh
 printf '%s\n' "$FAKE_UNAME"
+""",
+    )
+    _write_executable(
+        bin_dir / "pgrep",
+        """#!/bin/sh
+# Keep the fixture independent of unrelated FCC processes on the host.
+exit 1
 """,
     )
 

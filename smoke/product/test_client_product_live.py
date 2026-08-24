@@ -86,7 +86,6 @@ def test_pi_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
             {
                 "HOST": "127.0.0.1",
                 "PORT": str(server.port),
-                "FCC_OPEN_BROWSER": "0",
                 "ANTHROPIC_AUTH_TOKEN": auth_token,
                 "PI_CODING_AGENT_DIR": str(tmp_path / "pi-agent"),
             }

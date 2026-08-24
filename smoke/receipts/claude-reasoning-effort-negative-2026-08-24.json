@@ -1,0 +1,35 @@
+{
+  "receipt": "claude-reasoning-effort-negative",
+  "captured_at": "2026-08-24T10:44:17Z",
+  "claude": {
+    "launcher": "claude",
+    "version": "2.1.228",
+    "advertised_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "requested_unavailable_efforts": [
+      "off",
+      "minimal"
+    ]
+  },
+  "harness": {
+    "package_version": "4.30.18",
+    "source_commit_sha": "e773b18",
+    "isolated_server": false,
+    "active_user_server_8082_touched": false
+  },
+  "probe": {
+    "status": "unverified",
+    "provider_requests": 0,
+    "reason": "Claude --help for the installed executable does not advertise off or minimal; those values are not sent as if they were supported.",
+    "next_boundary": "Exercise explicit Anthropic thinking disabled and minimal-effort Messages requests through an isolated FCC/Muse API path."
+  },
+  "artifacts": {
+    "source": "claude --help",
+    "retained_content": "metadata-only receipt; no input content or credentials"
+  }
+}

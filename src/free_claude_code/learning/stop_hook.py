@@ -6,6 +6,7 @@ import subprocess
 import sys
 from typing import Any
 
+from .config import PROFILE_ENV, normalize_profile
 from .engine import learn_from_turn
 from .store import LearningStore
 
@@ -57,13 +58,15 @@ def enqueue_stop(payload: dict[str, Any], store: LearningStore) -> str | None:
     )
 
 
-def spawn_queue_worker() -> None:
+def spawn_queue_worker(*, profile: str | None = None) -> None:
     """Start one bounded worker process when stale queue work exists."""
 
     if os.environ.get(_WORKER_FLAG) == "1":
         return
     environment = os.environ.copy()
     environment[_WORKER_FLAG] = "1"
+    if profile is not None:
+        environment[PROFILE_ENV] = normalize_profile(profile)
     try:
         subprocess.Popen(
             [sys.executable, "-m", "free_claude_code.learning.stop_hook", "--drain"],
@@ -115,7 +118,7 @@ def handle_stop(payload: dict[str, Any], store: LearningStore) -> None:
 
     queue_id = enqueue_stop(payload, store)
     if queue_id is not None:
-        spawn_queue_worker()
+        spawn_queue_worker(profile=store.profile)
 
 
 def main() -> None:

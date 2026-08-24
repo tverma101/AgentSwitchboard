@@ -1,0 +1,63 @@
+{
+  "receipt": "claude-managed-fresh-resume-fork",
+  "captured_at": "2026-08-24T06:10:31Z",
+  "claude": {
+    "path": "claude",
+    "version": "2.1.228"
+  },
+  "harness": {
+    "package_version": "4.30.7",
+    "isolated_server": "loopback-isolated",
+    "active_user_server_8082_touched": false
+  },
+  "surface": {
+    "name": "managed_claude_session",
+    "fresh": "passed",
+    "resume": "passed",
+    "fork": "passed",
+    "subagent": "not_run",
+    "background": "not_run",
+    "process_wrapper": "validated"
+  },
+  "context": {
+    "requested_tokens": 256000,
+    "effective_tokens": 256000,
+    "auto_compact_window": 256000,
+    "policy_source": "managed_invocation_environment",
+    "claude_settings": "temporary_isolated_config"
+  },
+  "requests": {
+    "managed_turns": 3,
+    "messages_requests": 6,
+    "completed_provider_turns": 3,
+    "upstream_attempts_total": 3,
+    "upstream_attempts_per_turn": 1,
+    "terminal_event": "response.completed"
+  },
+  "routing": {
+    "provider_id": "opencode_go",
+    "provider_model": "muse-spark-1.2-contributor",
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses"
+  },
+  "reasoning": {
+    "requested_effort": "high",
+    "effective_effort": "high",
+    "provider_reasoning_tokens": [
+      154,
+      22,
+      10
+    ],
+    "provider_reasoning_item": true,
+    "provider_visible_reasoning_summary": false,
+    "provider_reasoning_text": false,
+    "provider_opaque_reasoning": true,
+    "harness_thinking_block": true,
+    "harness_thinking_delta": false
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_cli_prereq_live.py::test_managed_claude_fresh_resume_fork_roundtrip_when_requested",
+    "retained_content": "metadata-only receipt; sensitive payloads omitted"
+  }
+}

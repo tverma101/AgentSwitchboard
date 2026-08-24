@@ -44,11 +44,10 @@ def test_supervisor_accepts_restart_during_scheduled_startup() -> None:
         assert supervisor.schedule_run() is True
         assert supervisor.status is ServerStatus.STARTING
         assert supervisor.request_restart() is True
-        supervisor.run(open_admin_browser=False)
+        supervisor.run()
 
     run_once.assert_called_once_with(
         settings,
-        open_admin_browser=False,
         restart_generation=1,
     )
     assert supervisor.status is ServerStatus.STOPPED
@@ -62,7 +61,7 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
             self.status = ServerStatus.STARTING
             self.started = threading.Event()
             self.stopped = threading.Event()
-            self.run_arguments: list[bool | None] = []
+            self.run_count = 0
             self.schedule_count = 0
             self.restart_count = 0
             self.stop_count = 0
@@ -71,8 +70,8 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
             self.schedule_count += 1
             return True
 
-        def run(self, *, open_admin_browser: bool | None = None) -> None:
-            self.run_arguments.append(open_admin_browser)
+        def run(self) -> None:
+            self.run_count += 1
             self.status = ServerStatus.RUNNING
             self.started.set()
             assert self.stopped.wait(2)
@@ -117,7 +116,7 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
 
     assert tray is not None
     assert tray.run_thread_id == main_thread_id
-    assert supervisor.run_arguments == [False]
+    assert supervisor.run_count == 1
     assert supervisor.schedule_count == 1
     assert supervisor.restart_count == 1
     assert supervisor.stop_count >= 1
@@ -141,8 +140,7 @@ def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
             self.run_scheduled = True
             return True
 
-        def run(self, *, open_admin_browser: bool | None = None) -> None:
-            assert open_admin_browser is False
+        def run(self) -> None:
             self.run_called.set()
             assert self.allow_run.wait(2)
             self.run_scheduled = False
@@ -216,12 +214,14 @@ def test_second_desktop_launch_opens_existing_admin_without_new_server() -> None
     with (
         patch.object(desktop, "load_server_settings", return_value=settings),
         patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
-        patch.object(desktop, "open_admin_when_ready", return_value=True) as open_admin,
+        patch.object(
+            desktop, "report_admin_when_ready", return_value=True
+        ) as report_admin,
         patch.object(desktop, "ServerSupervisor") as supervisor,
     ):
         desktop.launch_desktop(MagicMock())
 
-    open_admin.assert_called_once_with(settings)
+    report_admin.assert_called_once_with(settings)
     supervisor.assert_not_called()
     instance_lock.release.assert_not_called()
 
@@ -237,12 +237,14 @@ def test_desktop_attaches_to_terminal_server_instead_of_binding_twice() -> None:
         patch.object(desktop, "load_server_settings", return_value=settings),
         patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "preflight_proxy", return_value=None),
-        patch.object(desktop, "open_admin_when_ready", return_value=True) as open_admin,
+        patch.object(
+            desktop, "report_admin_when_ready", return_value=True
+        ) as report_admin,
         patch.object(desktop, "ServerSupervisor") as supervisor,
     ):
         desktop.launch_desktop(MagicMock())
 
-    open_admin.assert_called_once_with(settings)
+    report_admin.assert_called_once_with(settings)
     supervisor.assert_not_called()
     instance_lock.release.assert_called_once_with()
 

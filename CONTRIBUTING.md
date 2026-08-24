@@ -15,8 +15,8 @@ Thanks for helping improve Free Claude Code. Keep changes focused, test the beha
 Install [uv](https://docs.astral.sh/uv/) and Python 3.14, then run directly from the checkout:
 
 ```bash
-git clone https://github.com/Alishahryar1/free-claude-code.git
-cd free-claude-code
+git clone https://github.com/tverma101/Harness.git
+cd Harness
 uv python install 3.14.0
 uv run fcc-server
 ```

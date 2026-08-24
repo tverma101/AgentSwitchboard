@@ -21,6 +21,7 @@ class OpenAIResponsesRequest(BaseModel):
     top_p: float | None = None
     max_output_tokens: int | None = None
     metadata: dict[str, Any] | None = None
+    prompt_cache_key: str | None = None
     reasoning: dict[str, Any] | None = None
     previous_response_id: str | None = None
     store: bool | None = None

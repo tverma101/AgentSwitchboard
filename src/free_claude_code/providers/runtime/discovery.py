@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import httpx
 from loguru import logger
@@ -12,7 +13,9 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.config.model_refs import configured_chat_model_refs
-from free_claude_code.config.model_visibility import filter_discovered_model_infos
+from free_claude_code.config.model_visibility import (
+    filter_discovered_model_infos,
+)
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.failures import ExecutionFailure
@@ -141,15 +144,23 @@ class ProviderModelDiscovery:
                     self._log_discovery_failure(provider_id, result)
                     failed_provider_ids.append(provider_id)
                     continue
-                visible_result = filter_discovered_model_infos(
-                    self._settings, provider_id, result
+                # Keep raw discovery metadata in the cache. The visible view
+                # is re-filtered at read time so policy edits affect an
+                # already-populated catalog without requiring a new upstream
+                # model-list request.
+                observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                observed_result = frozenset(
+                    info.with_observed_at(observed_at) for info in result
                 )
-                self._model_cache.cache_model_infos(provider_id, visible_result)
+                self._model_cache.cache_model_infos(provider_id, observed_result)
+                visible_result = filter_discovered_model_infos(
+                    self._settings, provider_id, observed_result
+                )
                 refreshed_provider_ids.append(provider_id)
                 logger.info(
                     "Provider model discovery cached: provider={} models={} visible={}",
                     provider_id,
-                    len(result),
+                    len(observed_result),
                     len(visible_result),
                 )
 

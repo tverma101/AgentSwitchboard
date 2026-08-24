@@ -39,13 +39,19 @@ def combine_reasoning(existing: str | None, addition: str | None) -> str | None:
 
 
 def responses_reasoning_to_output_config(value: Any) -> dict[str, Any] | None:
-    """Preserve the client's named effort for application-level resolution."""
+    """Preserve the client's effort and summary controls for resolution."""
     if not isinstance(value, Mapping):
         return None
+    output_config: dict[str, Any] = {}
     effort = value.get("effort")
     if isinstance(effort, str) and effort.strip():
-        return {"effort": effort.strip().lower()}
-    return None
+        output_config["effort"] = effort.strip().lower()
+    if "summary" in value:
+        summary = value["summary"]
+        output_config["summary"] = (
+            summary.strip().lower() if isinstance(summary, str) else summary
+        )
+    return output_config or None
 
 
 def _text_parts_from_items(value: Any, *, item_type: str) -> list[str]:

@@ -32,6 +32,7 @@ class TransportBenchmarkConfig:
     mode: str = "synthetic"
     model: str = "qwen3.7-plus"
     samples: tuple[int, ...] = (1, 100, 1000)
+    max_tokens: int = 4_096
     response_bytes: int = 65_536
     output_path: Path = Path(".smoke-results/opencode-go-transport.json")
     base_url: str = OPENCODE_GO_DEFAULT_BASE
@@ -208,6 +209,8 @@ async def run_transport_benchmark(
         raise ValueError("samples must contain only positive counts")
     if sorted(config.samples) != list(config.samples):
         raise ValueError("samples must be sorted ascending")
+    if config.max_tokens <= 0:
+        raise ValueError("max_tokens must be positive")
     if config.mode not in {"synthetic", "live"}:
         raise ValueError("mode must be synthetic or live")
     if (
@@ -247,7 +250,7 @@ async def run_transport_benchmark(
     request = MessagesRequest.model_validate(
         {
             "model": config.model,
-            "max_tokens": 128,
+            "max_tokens": config.max_tokens,
             "messages": [
                 {
                     "role": "user",
@@ -305,6 +308,7 @@ async def run_transport_benchmark(
         "commit_sha": _git_sha(),
         "environment": _environment_receipt(),
         "model": config.model,
+        "max_tokens": config.max_tokens,
         "protocol": protocol.value,
         "sample_counts": list(config.samples),
         "warmup_streams": warmup_count,

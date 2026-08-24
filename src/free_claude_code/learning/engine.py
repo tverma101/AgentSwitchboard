@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .config import qualify_skill_key
 from .store import LearningStore, project_identity, redact_sensitive
 
 _ALLOWED_MEMORY_EVIDENCE = {"user_explicit", "verified_fact", "successful_workflow"}
@@ -251,12 +252,16 @@ def _claude_config_dir() -> Path:
     return Path(configured).expanduser() if configured else Path.home() / ".claude"
 
 
-def _skill_key(*, name: str, scope: str, project_key: str) -> str:
+def _skill_key(
+    *, name: str, scope: str, project_key: str, profile: str | None = None
+) -> str:
     base_slug = _safe_slug(name)
     if scope == "project":
         project_slug = _safe_slug(Path(project_key).name, fallback="project")
-        return f"fcc-auto-{project_slug}-{base_slug}"
-    return f"fcc-auto-{base_slug}"
+        base_key = f"fcc-auto-{project_slug}-{base_slug}"
+    else:
+        base_key = f"fcc-auto-{base_slug}"
+    return qualify_skill_key(base_key, profile)
 
 
 def _skill_content(
@@ -290,6 +295,7 @@ def _validate_skill(
     *,
     skill: dict[str, Any],
     project_key: str,
+    profile: str | None = None,
 ) -> tuple[str, str, str, str, str] | None:
     name = skill.get("name")
     description = skill.get("description")
@@ -314,7 +320,9 @@ def _validate_skill(
         return None
     if not re.search(r"(?i)\b(validat|verif|check|test|assert)\w*\b", instructions):
         return None
-    skill_key = _skill_key(name=name, scope=scope, project_key=project_key)
+    skill_key = _skill_key(
+        name=name, scope=scope, project_key=project_key, profile=profile
+    )
     requested_key = skill.get("skill_key")
     if requested_key is not None and requested_key != skill_key:
         return None
@@ -374,7 +382,9 @@ def _write_skill(
     skill: dict[str, Any],
     project_key: str,
 ) -> Path | None:
-    validated = _validate_skill(skill=skill, project_key=project_key)
+    validated = _validate_skill(
+        skill=skill, project_key=project_key, profile=store.profile
+    )
     if validated is None:
         return None
     skill_key, scope, description, content, instructions = validated

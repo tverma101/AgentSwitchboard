@@ -114,6 +114,13 @@ def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> 
     events = parse_sse_text("".join(output))
     assert_anthropic_stream_contract(events)
     assert thinking_content(events) == "reasoning"
+    assert stream.provider_reasoning_item is True
+    assert stream.provider_visible_reasoning_summary is True
+    assert stream.provider_reasoning_text is False
+    assert stream.provider_opaque_reasoning is True
+    assert stream.opaque_reasoning_hash is not None
+    assert stream.harness_thinking_block is True
+    assert stream.harness_thinking_delta is True
     starts = [
         event.data["content_block"]
         for event in events
@@ -139,6 +146,132 @@ def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> 
         "cache_read_input_tokens": 15,
         "cache_creation_input_tokens": 4,
     }
+
+
+def test_responses_provider_stream_keeps_opaque_reasoning_without_fabricating_summary() -> (
+    None
+):
+    stream = ResponsesProviderStream(
+        message_id="msg_opaque",
+        model="muse-spark-1.2-contributor",
+        input_tokens=1,
+    )
+    output = stream.start()
+    output.extend(
+        stream.feed(
+            "response.output_item.added",
+            {"item": {"type": "reasoning", "id": "rs_opaque"}},
+        )
+    )
+    output.extend(
+        stream.feed(
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "reasoning",
+                    "id": "rs_opaque",
+                    "encrypted_content": "opaque-only",
+                }
+            },
+        )
+    )
+    output.extend(
+        stream.feed(
+            "response.completed",
+            {
+                "response": {
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "output_tokens_details": {"reasoning_tokens": 1},
+                    }
+                }
+            },
+        )
+    )
+
+    events = parse_sse_text("".join(output))
+    assert_anthropic_stream_contract(events)
+    assert thinking_content(events) == ""
+    assert stream.provider_visible_reasoning_summary is False
+    assert stream.provider_reasoning_text is False
+    assert stream.usage_reasoning_tokens == 1
+    assert stream.harness_thinking_block is True
+    assert stream.harness_thinking_delta is False
+
+
+def test_responses_provider_stream_keeps_raw_reasoning_distinct_from_summary() -> None:
+    stream = ResponsesProviderStream(
+        message_id="msg_raw_reasoning",
+        model="muse-spark-1.2-contributor",
+        input_tokens=1,
+    )
+    output = stream.start()
+    output.extend(
+        stream.feed(
+            "response.output_item.added",
+            {"item": {"type": "reasoning", "id": "rs_raw"}},
+        )
+    )
+    output.extend(
+        stream.feed(
+            "response.reasoning_text.delta",
+            {"item_id": "rs_raw", "delta": "raw reasoning"},
+        )
+    )
+    output.extend(
+        stream.feed("response.output_text.delta", {"delta": "visible answer"})
+    )
+    output.extend(
+        stream.feed(
+            "response.completed",
+            {"response": {"usage": {"input_tokens": 1, "output_tokens": 2}}},
+        )
+    )
+
+    events = parse_sse_text("".join(output))
+    assert_anthropic_stream_contract(events)
+    assert thinking_content(events) == "raw reasoning"
+    assert stream.provider_reasoning_item is True
+    assert stream.provider_visible_reasoning_summary is False
+    assert stream.provider_reasoning_text is True
+    assert stream.provider_opaque_reasoning is False
+    assert stream.harness_thinking_block is True
+    assert stream.harness_thinking_delta is True
+
+
+def test_responses_provider_stream_does_not_fabricate_reasoning_without_state() -> None:
+    stream = ResponsesProviderStream(
+        message_id="msg_reasoning_item_only",
+        model="muse-spark-1.2-contributor",
+        input_tokens=1,
+    )
+    output = stream.start()
+    output.extend(
+        stream.feed(
+            "response.output_item.added",
+            {"item": {"type": "reasoning", "id": "rs_empty"}},
+        )
+    )
+    output.extend(
+        stream.feed("response.output_text.delta", {"delta": "visible answer"})
+    )
+    output.extend(
+        stream.feed(
+            "response.completed",
+            {"response": {"usage": {"input_tokens": 1, "output_tokens": 2}}},
+        )
+    )
+
+    events = parse_sse_text("".join(output))
+    assert_anthropic_stream_contract(events)
+    assert thinking_content(events) == ""
+    assert stream.provider_reasoning_item is True
+    assert stream.provider_visible_reasoning_summary is False
+    assert stream.provider_reasoning_text is False
+    assert stream.provider_opaque_reasoning is False
+    assert stream.harness_thinking_block is False
+    assert stream.harness_thinking_delta is False
 
 
 def test_responses_provider_stream_rejects_invalid_tool_json() -> None:

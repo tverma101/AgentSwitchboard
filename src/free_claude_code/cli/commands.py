@@ -5,7 +5,6 @@ import shutil
 import sys
 import threading
 import time
-import webbrowser
 from enum import StrEnum
 from pathlib import Path
 
@@ -78,7 +77,7 @@ class ServerSupervisor:
             self._run_scheduled = True
             return True
 
-    def run(self, *, open_admin_browser: bool | None = None) -> None:
+    def run(self) -> None:
         """Block until stopped, applying only fully closed Admin restarts."""
 
         with self._lock:
@@ -89,25 +88,17 @@ class ServerSupervisor:
                 return
             self._running = True
 
-        opened_admin_browser = False
         try:
             try:
                 while not self._is_stop_requested():
                     with self._lock:
                         restart_generation = self._restart_generation
                     settings = load_server_settings()
-                    should_open_admin = (
-                        settings.open_admin_browser
-                        if open_admin_browser is None
-                        else open_admin_browser
-                    ) and not opened_admin_browser
                     if not self._run_once(
                         settings,
-                        open_admin_browser=should_open_admin,
                         restart_generation=restart_generation,
                     ):
                         return
-                    opened_admin_browser = opened_admin_browser or should_open_admin
                     get_settings.cache_clear()
             except KeyboardInterrupt:
                 return
@@ -150,7 +141,6 @@ class ServerSupervisor:
         self,
         settings: Settings,
         *,
-        open_admin_browser: bool,
         restart_generation: int,
     ) -> bool:
         asgi_app = build_asgi_app(
@@ -173,8 +163,6 @@ class ServerSupervisor:
             if self._stop_requested or self._restart_generation != restart_generation:
                 server.should_exit = True
 
-        if open_admin_browser:
-            schedule_open_admin_browser(settings)
         server.run()
 
         with self._lock:
@@ -196,26 +184,30 @@ def load_server_settings() -> Settings:
     return get_settings()
 
 
-def open_admin_when_ready(settings: Settings) -> bool:
-    """Wait briefly for /health, then open the current Admin UI."""
+def report_admin_when_ready(settings: Settings) -> bool:
+    """Wait briefly for /health, then report the terminal-only Admin endpoint."""
 
     admin_url = local_admin_url(settings)
     proxy_root_url = local_proxy_root_url(settings)
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
         if preflight_proxy(proxy_root_url) is None:
-            return webbrowser.open(admin_url)
+            print(
+                "FCC server is ready at "
+                f"{proxy_root_url}; terminal-only mode leaves Admin at {admin_url}."
+            )
+            return True
         time.sleep(0.15)
     return False
 
 
-def schedule_open_admin_browser(settings: Settings) -> None:
-    """Open Admin after health succeeds without blocking the caller."""
+def schedule_report_admin_ready(settings: Settings) -> None:
+    """Report Admin readiness after health succeeds without blocking the caller."""
 
     threading.Thread(
-        target=open_admin_when_ready,
+        target=report_admin_when_ready,
         args=(settings,),
-        name="fcc-open-admin-browser",
+        name="fcc-report-admin-ready",
         daemon=True,
     ).start()
 

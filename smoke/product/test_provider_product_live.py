@@ -18,6 +18,7 @@ from smoke.lib.e2e import (
     echo_tool_schema,
     tool_use_blocks,
 )
+from smoke.lib.http import REASONING_SAFE_OUTPUT_TOKENS
 from smoke.lib.skips import (
     skip_if_upstream_unavailable_events,
     skip_if_upstream_unavailable_exception,
@@ -195,7 +196,7 @@ def test_provider_codex_responses_text_e2e(
                 json={
                     "model": provider_model.full_model,
                     "input": smoke_config.prompt,
-                    "max_output_tokens": 128,
+                    "max_output_tokens": REASONING_SAFE_OUTPUT_TOKENS,
                     "stream": True,
                 },
                 timeout=smoke_config.timeout_s,

@@ -23,16 +23,30 @@ Local state lives under:
 
 ```text
 ~/.fcc/learning/learning.db
+~/.fcc/learning/profiles/<profile>/learning.db
 ```
 
-SQLite runs in WAL mode. Memories are deduplicated by a stable fingerprint and scoped either globally or to the detected git project root. Replacements, removals, and retention evictions create audit rows in `memory_history`; removed memories are not injected again. Explicit user memories are pinned, while only unused, low-confidence stale memories are eligible for retention eviction.
+The first path is the backward-compatible `default` profile. Named profiles
+use the second path and never share SQLite rows, queue state, memory history,
+or skill revisions with another profile. SQLite runs in WAL mode. Memories are
+deduplicated by a stable fingerprint and scoped either globally or to the
+detected git project root. Replacements, removals, and retention evictions
+create audit rows in `memory_history`; removed memories are not injected again.
+Explicit user memories are pinned, while only unused, low-confidence stale
+memories are eligible for retention eviction.
 
-Queue rows contain a stable hash, redacted prompt/result text, attempt count, lease timestamp, status, and bounded error text. Completed and dead-letter rows are retained for a bounded period. A killed worker leaves its row recoverable; repeated failures move to `dead_letter` after the configured attempt limit.
+Queue rows contain a stable hash, redacted prompt/result text, attempt count, lease timestamp, status, and bounded error text. Image data URLs and base64 image sources are redacted before they enter the queue or learning context. Completed and dead-letter rows are retained for a bounded period. A killed worker leaves its row recoverable; repeated failures move to `dead_letter` after the configured attempt limit.
 
 Global learned skills use Claude Code's personal skills directory:
 
 ```text
 ~/.claude/skills/fcc-auto-*/SKILL.md
+```
+
+For a named profile, generated keys are prefixed with the profile namespace:
+
+```text
+~/.claude/skills/fcc-<profile>-auto-*/SKILL.md
 ```
 
 Project-scoped learned skills use Claude Code's native repository scope:
@@ -44,6 +58,22 @@ Project-scoped learned skills use Claude Code's native repository scope:
 That means a project-specific learned procedure is visible as a normal working-tree change and can be reviewed or committed with the project. FCC does not embed the machine's absolute project path into the generated skill. It never intentionally writes outside an FCC-owned `fcc-auto-*` skill directory.
 
 Every accepted skill revision is stored in the local `skill_revisions` table with a SHA-256 digest. Before an update, the previous bytes are retained. The current skill is provided to the distiller so an update must be a complete procedure; local validation requires frontmatter, bounded fields, no secrets or project-path leakage, and an explicit validation/check/test step. An update is rejected if it drops a normalized validation clause from the current skill. A prior revision can be restored byte-for-byte with `fcc-learning skill rollback <skill-key> <revision>`.
+
+Profile selection is explicit and fixed for the launched session:
+
+```bash
+fcc-claude --profile coding
+FCC_LEARNING_PROFILE=school fcc-claude
+fcc-learning status --profile coding
+fcc-learning memory list --cwd /path/to/project --profile coding
+```
+
+`fcc-claude --profile` is consumed by the FCC launcher and is not forwarded to
+Claude Code. The selected environment is inherited by SessionStart,
+UserPromptSubmit, and Stop hooks. A SessionStart hook announces the active
+profile in its context, and `fcc-learning status` reports the profile schema,
+version, and database path. Switching profiles under a live Claude process is
+not supported; start a new session instead.
 
 ## Learning-model route
 
@@ -78,6 +108,9 @@ This is intentional: a one-time tool failure must not become permanent behavior.
 fcc-learning status
 fcc-learning install
 fcc-learning uninstall
+fcc-learning context-policy install
+fcc-learning context-policy status
+fcc-learning context-policy uninstall
 fcc-learning memory list
 fcc-learning memory search "terms"
 fcc-learning memory show <id>
@@ -86,11 +119,42 @@ fcc-learning memory history <id>
 fcc-learning skill list
 fcc-learning skill history <skill-key>
 fcc-learning skill rollback <skill-key> <revision>
+fcc-learning bundle export ./fcc-learning.bundle --profile coding
+fcc-learning bundle inspect ./fcc-learning.bundle
+fcc-learning bundle import ./fcc-learning.bundle --cwd /path/to/project --dry-run
+fcc-learning bundle import ./fcc-learning.bundle --cwd /path/to/project --conflict replace
 fcc-learning queue status
 fcc-learning queue drain
 ```
 
+### Portable learning bundles
+
+Bundle version 1 is a deterministic ZIP containing `manifest.json` and the
+current `SKILL.md` files. The manifest carries a profile label, portable
+global/current-project bindings, memory metadata, skill revision metadata, and
+SHA-256 checksums. Export omits SQLite IDs, timestamps, absolute project paths,
+credentials, raw conversations, queues, and transient state. Project paths
+inside exported memory are normalized to `<project>` and are rebound to the
+target `--cwd` during import.
+
+`inspect` validates the complete archive before reporting counts. `import --dry-run`
+plans memory adds/duplicates and skill adds/unchanged/conflict
+actions without changing the store or skill files. Imports default to skipping
+conflicting skills; `--conflict replace` records the prior local skill revision
+before replacing it, while `--conflict fail` aborts before any change. Unknown
+schema versions, checksum mismatches, unsafe paths, secrets, and malformed
+`SKILL.md` files fail visibly.
+
+This is the first portable-bundle contract for issue #68. Bundle export/import
+now operate on the explicitly selected learning store when `--profile` is
+provided. Cross-profile re-homing, selective item-level copy, full history
+transfer, and admin/App Mode profile selection remain follow-up work.
+
 `fcc-claude` normally installs/repairs the hooks automatically, so manual `install` is usually unnecessary.
+
+`context-policy` is a separate explicit operation. It manages only FCC's
+delimited global context-discipline block and does not install hooks or change
+the rest of the user's `CLAUDE.md`.
 
 Memory replacement/removal is ID-based and scope-checked. The learner may only replace a project memory with a project memory, and only explicit user evidence can remove one. The CLI's `remove` command is an explicit user action and records a tombstone rather than silently deleting history.
 
@@ -106,7 +170,9 @@ Environment overrides:
 | `FCC_LEARNING_DRAIN_LIMIT` | `2` | Maximum queue rows one short-lived worker drains. |
 | `FCC_LEARNING_MAX_ATTEMPTS` | `3` | Attempts before a permanently failing queue row enters `dead_letter`. |
 | `FCC_LEARNING_HOME` | `~/.fcc/learning` | Override SQLite/state location. |
+| `FCC_LEARNING_PROFILE` | `default` | Explicit profile used by learning hooks and CLI state commands. |
 | `FCC_LEARNING_ALLOW_REMOTE` | `0` | Expert-only escape hatch permitting a non-loopback Anthropic base URL. |
+| `FCC_CLAUDE_GLOBAL_INSTRUCTIONS` | `~/.claude/CLAUDE.md` | Optional path for the managed global context-discipline block. |
 
 ## Failure behavior
 

@@ -74,6 +74,7 @@ class ProviderExecutor:
             "provider_model": routed.resolved.provider_model,
             "provider_model_ref": routed.resolved.provider_model_ref,
             "gateway_model": gateway_model,
+            "virtual_context_window": routed.resolved.virtual_context_window,
             "reasoning_control": routed.reasoning.control.value,
             "reasoning_effort": (
                 routed.reasoning.effort.value

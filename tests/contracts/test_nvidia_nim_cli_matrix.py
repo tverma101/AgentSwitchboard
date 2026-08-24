@@ -66,6 +66,8 @@ def test_nvidia_nim_cli_matrix_report_shape_and_redaction(
     assert path.name.startswith("nvidia-nim-cli-matrix-test-worker-")
     assert payload["target"] == "nvidia_nim_cli"
     assert payload["models"] == ["nvidia_nim/z-ai/glm-5.2"]
+    assert payload["harness"]["package_version"]
+    assert len(payload["harness"]["commit_sha"]) >= 7
     saved = payload["outcomes"][0]
     assert saved["feature"] == "basic_text"
     assert saved["classification"] == "passed"
@@ -197,6 +199,173 @@ def test_nvidia_nim_cli_matrix_regression_detection(tmp_path: Path) -> None:
     assert regression_failures([outcome]) == [
         "nvidia_nim/z-ai/glm-5.2 basic_text: product_failure"
     ]
+
+
+def test_compact_probe_requires_success_status_and_continuation_marker(
+    tmp_path: Path,
+) -> None:
+    marker = "FCC_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p", "compact"),
+        returncode=0,
+        stdout=marker,
+        stderr="",
+        duration_s=0.1,
+        requested_context_tokens=50_000,
+        effective_context_tokens=50_000,
+    )
+    outcome = make_outcome(
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
+        source="nvidia_nim_cli_default",
+        feature="compact_resume",
+        marker=marker,
+        run=run,
+        log_delta=(
+            "API_REQUEST: request_id=req_1 model=z-ai/glm-5.2 messages=2\n"
+            '"type":"system","subtype":"compact_boundary",'
+            '"compact_metadata":{"trigger":"manual"}'
+        ),
+        log_path=tmp_path / "server.log",
+        requires_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "model_feature_failure"
+    assert outcome.token_evidence["compact_boundary"] is True
+    assert outcome.token_evidence["compact_metadata"] is True
+    assert outcome.token_evidence["compact_result_success"] is False
+    assert outcome.token_evidence["requested_context_tokens"] == 50_000
+    assert outcome.token_evidence["effective_context_tokens"] == 50_000
+
+
+def test_compact_probe_does_not_pass_on_command_text_alone(tmp_path: Path) -> None:
+    run = ClaudeCliRun(
+        command=("claude", "-p", "compact"),
+        returncode=0,
+        stdout="/compact completed but no continuation",
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
+        source="nvidia_nim_cli_default",
+        feature="compact_resume",
+        marker="FCC_COMPACT_CONTINUED",
+        run=run,
+        log_delta="API_REQUEST: request_id=req_1 model=z-ai/glm-5.2 messages=2",
+        log_path=tmp_path / "server.log",
+        requires_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "model_feature_failure"
+
+
+def test_compact_probe_accepts_claude_cli_compact_success_status(
+    tmp_path: Path,
+) -> None:
+    marker = "FCC_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p"),
+        returncode=0,
+        stdout=(
+            '{"type":"system","subtype":"status","status":"compacting"}\n'
+            '{"type":"system","subtype":"status",'
+            '"compact_result":"success"}\n'
+            f"{marker}"
+        ),
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="muse-spark-1.2-contributor",
+        full_model="opencode_go/muse-spark-1.2-contributor",
+        source="live_p0",
+        feature="compact_resume",
+        marker=marker,
+        run=run,
+        log_delta=(
+            'POST /v1/messages HTTP/1.1" 200 OK\ncompact_boundary compact_metadata'
+        ),
+        log_path=tmp_path / "server.log",
+        requires_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "passed"
+    assert outcome.token_evidence["compact_result_success"] is True
+
+
+def test_auto_compact_probe_rejects_manual_boundary(tmp_path: Path) -> None:
+    marker = "FCC_AUTO_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p"),
+        returncode=0,
+        stdout=f'{marker}\n{{"type":"tool_result"}}',
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="muse-spark-1.2-contributor",
+        full_model="opencode_go/muse-spark-1.2-contributor",
+        source="live_p0",
+        feature="auto_compact_resume",
+        marker=marker,
+        run=run,
+        log_delta=(
+            'POST /v1/messages HTTP/1.1" 200 OK\n'
+            '"compact_boundary" "compact_metadata":{"trigger":"manual"}\n'
+            '"compact_result":"success"'
+        ),
+        log_path=tmp_path / "server.log",
+        requires_tool_result=True,
+        requires_compact=True,
+        requires_auto_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "model_feature_failure"
+    assert outcome.token_evidence["compact_trigger"] == "manual"
+    assert outcome.token_evidence["auto_compact"] is False
+
+
+def test_auto_compact_probe_requires_explicit_auto_boundary(tmp_path: Path) -> None:
+    marker = "FCC_AUTO_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p"),
+        returncode=0,
+        stdout=(
+            f'{marker}\n{{"type":"tool_result","content":"{marker}"}}\n'
+            '{"type":"system","subtype":"status",'
+            '"compact_result":"success"}'
+        ),
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="muse-spark-1.2-contributor",
+        full_model="opencode_go/muse-spark-1.2-contributor",
+        source="live_p0",
+        feature="auto_compact_resume",
+        marker=marker,
+        run=run,
+        log_delta=(
+            'POST /v1/messages HTTP/1.1" 200 OK\n'
+            '"type":"system","subtype":"compact_boundary",'
+            '"compact_metadata":{"trigger":"auto"}'
+        ),
+        log_path=tmp_path / "server.log",
+        requires_tool_result=True,
+        requires_compact=True,
+        requires_auto_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "passed"
+    assert outcome.token_evidence["compact_trigger"] == "auto"
+    assert outcome.token_evidence["auto_compact"] is True
 
 
 def test_nvidia_nim_cli_matrix_model_feature_failures_do_not_regress(
@@ -532,6 +701,18 @@ def test_cli_matrix_default_command_uses_bare_mode() -> None:
     assert command[:2] == ("claude", "--bare")
     assert "--tools" in command
     assert "Read" in command
+
+
+def test_cli_matrix_can_send_prompt_through_stdin() -> None:
+    command = _build_claude_cli_command(
+        claude_bin="claude",
+        prompt="large prompt omitted from argv",
+        tools="",
+        prompt_in_stdin=True,
+    )
+
+    assert command[-1:] == ("-p",)
+    assert "large prompt omitted from argv" not in command
 
 
 def test_cli_matrix_subagent_command_uses_agent_without_bare_or_task() -> None:

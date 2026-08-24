@@ -62,6 +62,10 @@ class RequestRuntimePort(Protocol):
         self, provider_id: str, model_id: str
     ) -> bool | None: ...
 
+    def cached_model_info(
+        self, provider_id: str, model_id: str
+    ) -> ProviderModelInfo | None: ...
+
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]: ...
 
 

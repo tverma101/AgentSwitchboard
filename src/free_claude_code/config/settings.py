@@ -12,6 +12,8 @@ from .env_files import (
     env_file_override,
     settings_env_files,
 )
+from .model_aliases import parse_model_aliases
+from .model_catalog import ModelCatalogMode
 from .nim import NimSettings
 from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
 from .reasoning import ReasoningPreference
@@ -55,6 +57,9 @@ class Settings(BaseSettings):
     # ==================== OpenCode Zen / OpenCode Go ====================
     # Same key from opencode.ai/auth; Zen uses ``opencode_zen/``, Go uses ``opencode_go/``.
     opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
+    opencode_go_base_url: str = Field(
+        default="", validation_alias="OPENCODE_GO_BASE_URL"
+    )
 
     # ==================== Vercel AI Gateway ====================
     vercel_ai_gateway_api_key: str = Field(
@@ -152,6 +157,15 @@ class Settings(BaseSettings):
     )
 
     # ==================== Model ====================
+    # Empty means retain the legacy NVIDIA NIM allowlist behavior. Set this to
+    # ``all`` or ``curated`` to activate the provider-independent policy.
+    model_catalog_mode: ModelCatalogMode | None = Field(
+        default=None, validation_alias="MODEL_CATALOG_MODE"
+    )
+    model_catalog_allowlist: str = Field(
+        default="", validation_alias="MODEL_CATALOG_ALLOWLIST"
+    )
+    model_aliases: str = Field(default="", validation_alias="MODEL_ALIASES")
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -162,6 +176,29 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+
+    # ==================== Context-pressure governor ====================
+    context_governor_enabled: bool = Field(
+        default=True, validation_alias="FCC_CONTEXT_GOVERNOR_ENABLED"
+    )
+    context_governor_tool_result_max_bytes: int = Field(
+        default=16 * 1024,
+        validation_alias="FCC_CONTEXT_GOVERNOR_TOOL_RESULT_MAX_BYTES",
+    )
+    context_governor_artifact_dir: str = Field(
+        default="", validation_alias="FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR"
+    )
+
+    # ==================== Claude compatibility firewall ====================
+    claude_known_good_version: str = Field(
+        default="2.1.228", validation_alias="FCC_CLAUDE_KNOWN_GOOD_VERSION"
+    )
+    claude_allow_uncertified: bool = Field(
+        default=False, validation_alias="FCC_CLAUDE_ALLOW_UNCERTIFIED"
+    )
+    claude_process_wrapper_path: str = Field(
+        default="", validation_alias="FCC_CLAUDE_PROCESS_WRAPPER_PATH"
+    )
 
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
@@ -326,7 +363,6 @@ class Settings(BaseSettings):
     # ==================== Server ====================
     host: str = "0.0.0.0"
     port: int = 8082
-    open_admin_browser: bool = Field(default=True, validation_alias="FCC_OPEN_BROWSER")
     # Optional proxy bearer token protecting public API endpoints.
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(
@@ -366,6 +402,21 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"LOG_LEVEL must be one of {sorted(valid)}, got {v!r}")
         return upper
+
+    @field_validator("model_catalog_mode", mode="before")
+    @classmethod
+    def parse_model_catalog_mode(cls, value: Any) -> Any:
+        """Treat an empty Admin select as the legacy compatibility mode."""
+
+        return None if value == "" else value
+
+    @field_validator("model_aliases")
+    @classmethod
+    def validate_model_aliases(cls, value: str) -> str:
+        """Reject malformed alias entries before a runtime can start."""
+
+        parse_model_aliases(value)
+        return value
 
     @field_validator("reasoning_policy")
     @classmethod
@@ -407,6 +458,16 @@ class Settings(BaseSettings):
         if v <= 0:
             raise ValueError("messaging_rate_window must be > 0")
         return float(v)
+
+    @field_validator("context_governor_tool_result_max_bytes")
+    @classmethod
+    def validate_context_governor_tool_result_max_bytes(cls, v: int) -> int:
+        if not 512 <= v <= 1_000_000:
+            raise ValueError(
+                "FCC_CONTEXT_GOVERNOR_TOOL_RESULT_MAX_BYTES must be between "
+                "512 and 1000000"
+            )
+        return v
 
     @field_validator("web_fetch_allowed_schemes")
     @classmethod

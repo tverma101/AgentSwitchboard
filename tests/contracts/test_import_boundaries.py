@@ -17,8 +17,12 @@ ALLOWED_PACKAGE_DEPENDENCIES: dict[str, set[str]] = {
     "messaging": {"core"},
     "providers": {"application", "config", "core"},
     "api": {"application", "config", "core", "usage"},
-    "cli": {"config", "core", "learning"},
-    "learning": set(),
+    # The terminal route diagnostic is an application composition adapter;
+    # it performs no provider I/O and relies on application-owned policy.
+    "cli": {"application", "config", "core", "learning"},
+    # The learning CLI exposes the Claude compatibility diagnostic, whose
+    # implementation is deliberately dependency-neutral in core.
+    "learning": {"core"},
     "usage": set(),
     "runtime": {
         "api",

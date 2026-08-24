@@ -1,5 +1,6 @@
 """Translate upstream OpenAI Responses events into Anthropic Messages SSE."""
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -60,6 +61,15 @@ class ResponsesProviderStream:
         self.usage_cache_read_tokens: int | None = None
         self.usage_cache_write_tokens: int | None = None
         self.usage_output_tokens: int | None = None
+        self.usage_reasoning_tokens: int | None = None
+        self.effective_reasoning_effort: str | None = None
+        self.provider_reasoning_item = False
+        self.provider_visible_reasoning_summary = False
+        self.provider_reasoning_text = False
+        self.provider_opaque_reasoning = False
+        self.opaque_reasoning_hash: str | None = None
+        self.harness_thinking_block = False
+        self.harness_thinking_delta = False
         self._tool_names = tool_names or OpenAIToolNameCodec.from_names(())
         self._tools: dict[str, _ToolState] = {}
         self._encrypted_reasoning: dict[str, str] = {}
@@ -76,11 +86,10 @@ class ResponsesProviderStream:
             return []
         if event_type == "response.output_item.added":
             return self._item_added(data)
-        if event_type in {
-            "response.reasoning_text.delta",
-            "response.reasoning_summary_text.delta",
-        }:
-            return self._reasoning_delta(data)
+        if event_type == "response.reasoning_text.delta":
+            return self._reasoning_delta(data, summary=False)
+        if event_type == "response.reasoning_summary_text.delta":
+            return self._reasoning_delta(data, summary=True)
         if event_type == "response.output_text.delta":
             return self._text_delta(data)
         if event_type == "response.function_call_arguments.delta":
@@ -110,20 +119,37 @@ class ResponsesProviderStream:
                 call_id=_string(item.get("call_id")) or item_id,
                 name=self._tool_names.decode(_string(item.get("name"))),
             )
+        if item.get("type") == "reasoning":
+            self.provider_reasoning_item = True
         if item.get("type") == "reasoning" and item_id:
             encrypted = item.get("encrypted_content")
             if isinstance(encrypted, str) and encrypted:
-                self._encrypted_reasoning[item_id] = encrypted
+                self._remember_opaque_reasoning(item_id, encrypted)
         return []
 
-    def _reasoning_delta(self, data: dict[str, Any]) -> list[str]:
+    def _reasoning_delta(self, data: dict[str, Any], *, summary: bool) -> list[str]:
         delta = data.get("delta")
         if not isinstance(delta, str) or not delta:
             return []
+        self.provider_reasoning_item = True
+        if summary:
+            self.provider_visible_reasoning_summary = True
+        else:
+            self.provider_reasoning_text = True
         events = list(self.ledger.ensure_thinking_block())
+        self.harness_thinking_block = True
         events.append(self.ledger.emit_thinking_delta(delta))
+        self.harness_thinking_delta = True
         self.generated_output = True
         return events
+
+    def _remember_opaque_reasoning(self, item_id: str, encrypted: str) -> None:
+        self.provider_reasoning_item = True
+        self.provider_opaque_reasoning = True
+        self._encrypted_reasoning[item_id] = encrypted
+        self.opaque_reasoning_hash = hashlib.sha256(
+            encrypted.encode("utf-8")
+        ).hexdigest()
 
     def _text_delta(self, data: dict[str, Any]) -> list[str]:
         delta = data.get("delta")
@@ -252,6 +278,7 @@ class ResponsesProviderStream:
             if not isinstance(encrypted, str) or not encrypted:
                 encrypted = self._encrypted_reasoning.get(item_id)
             if isinstance(encrypted, str) and encrypted:
+                self._remember_opaque_reasoning(item_id, encrypted)
                 events = list(self.ledger.close_content_blocks())
                 index = self.ledger.blocks.allocate_index()
                 events.append(
@@ -261,6 +288,7 @@ class ResponsesProviderStream:
                 )
                 events.append(self.ledger.content_block_stop(index))
                 self.generated_output = True
+                self.harness_thinking_block = True
                 return events
         return []
 
@@ -329,6 +357,8 @@ class ResponsesProviderStream:
         output_tokens = _integer(usage.get("output_tokens"))
         details = usage.get("input_tokens_details")
         details = details if isinstance(details, dict) else {}
+        output_details = usage.get("output_tokens_details")
+        output_details = output_details if isinstance(output_details, dict) else {}
         cached_tokens = _integer(details.get("cached_tokens"))
         if cached_tokens is not None and input_tokens is not None:
             if cached_tokens <= input_tokens:
@@ -348,6 +378,17 @@ class ResponsesProviderStream:
         self.usage_cache_read_tokens = cached_tokens
         self.usage_cache_write_tokens = cache_write_tokens
         self.usage_output_tokens = output_tokens
+        self.usage_reasoning_tokens = _integer(
+            output_details.get("reasoning_tokens", usage.get("reasoning_tokens"))
+        )
+        reasoning = response.get("reasoning")
+        reasoning = reasoning if isinstance(reasoning, dict) else {}
+        effective_effort = reasoning.get("effort", response.get("reasoning_effort"))
+        self.effective_reasoning_effort = (
+            effective_effort.strip()
+            if isinstance(effective_effort, str) and effective_effort.strip()
+            else None
+        )
         usage_fields: dict[str, int] = {}
         if cached_tokens is not None:
             usage_fields["cache_read_input_tokens"] = cached_tokens

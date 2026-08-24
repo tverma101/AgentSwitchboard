@@ -4,6 +4,7 @@ from free_claude_code.core.fault_attribution import (
     FaultDomain,
     canonical_hash,
     classify_failure,
+    media_metadata,
     stable_prefix_hash,
 )
 
@@ -29,6 +30,42 @@ def test_hashes_are_deterministic_and_exclude_conversation_suffix() -> None:
     assert canonical_hash(first) == canonical_hash({**first})
     assert stable_prefix_hash(first) == stable_prefix_hash(second)
     assert stable_prefix_hash(first) != canonical_hash(first)
+
+
+def test_media_metadata_counts_ordered_types_without_payloads() -> None:
+    payload_marker = "do-not-retain-this-image"
+    count, type_hash = media_metadata(
+        {
+            "messages": [
+                {
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": payload_marker,
+                            },
+                        },
+                        {
+                            "type": "tool_result",
+                            "content": [
+                                {
+                                    "type": "document",
+                                    "source": {"media_type": "application/pdf"},
+                                }
+                            ],
+                        },
+                    ]
+                }
+            ]
+        }
+    )
+
+    assert count == 2
+    assert type_hash is not None
+    assert payload_marker not in type_hash
+    assert media_metadata({}) == (0, None)
 
 
 def test_fault_classifier_prioritizes_bridge_and_model_output_evidence() -> None:
@@ -60,7 +97,15 @@ def test_attempt_receipt_is_metadata_only_and_serializable() -> None:
         provider="OPENCODE_GO",
         model="muse-spark-1.2-contributor",
         attempt_number=1,
+        duration_ms=1234,
+        time_to_first_token_ms=321,
         request_shape_hash=canonical_hash({"model": "muse-spark-1.2-contributor"}),
+        requested_reasoning_control="on",
+        requested_reasoning_effort="high",
+        requested_reasoning_budget_tokens=2_048,
+        provider_reasoning_item=True,
+        provider_visible_reasoning_summary=True,
+        harness_thinking_block=True,
     )
     evidence.add_event("response.output_text.delta", byte_count=17)
     evidence.add_event("response.output_text.delta", byte_count=3)
@@ -72,8 +117,29 @@ def test_attempt_receipt_is_metadata_only_and_serializable() -> None:
         "response.output_text.delta",
     ]
     assert receipt["bytes_received"] == 20
+    assert receipt["duration_ms"] == 1234
+    assert receipt["time_to_first_token_ms"] == 321
     assert "prompt" not in receipt
     assert "content" not in receipt
+    assert receipt["requested_reasoning_effort"] == "high"
+    assert receipt["requested_reasoning_control"] == "on"
+    assert receipt["provider_visible_reasoning_summary"] is True
+
+
+def test_attempt_receipt_defaults_timing_to_null_when_no_stream_started() -> None:
+    evidence = AttemptEvidence(
+        turn_id="turn_1",
+        request_id=None,
+        protocol="messages",
+        provider="OPENCODE_GO",
+        model="muse-spark-1.2-contributor",
+        attempt_number=0,
+    )
+
+    receipt = evidence.as_dict()
+
+    assert receipt["duration_ms"] is None
+    assert receipt["time_to_first_token_ms"] is None
 
 
 def test_attempt_receipt_event_sequence_is_bounded() -> None:

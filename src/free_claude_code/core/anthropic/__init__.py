@@ -1,6 +1,18 @@
 """Anthropic protocol helpers shared across API, providers, and integrations."""
 
 from .content import extract_text_from_content, get_block_attr, get_block_type
+from .context_artifact import (
+    ContextArtifactError,
+    ContextArtifactSlice,
+    read_context_artifact_slice,
+)
+from .context_governor import (
+    ContextGovernanceError,
+    ContextGovernanceRecord,
+    ContextGovernorConfig,
+    GovernedMessagesRequest,
+    govern_messages_request,
+)
 from .conversion import (
     AnthropicToOpenAIConverter,
     OpenAIConversionError,
@@ -36,7 +48,11 @@ from .models import (
     Usage,
 )
 from .openai_tool_names import OpenAIToolNameCodec
-from .request_serialization import dump_messages_request, serialize_tool_result_content
+from .request_serialization import (
+    dump_messages_request,
+    serialize_tool_result_content,
+    tool_result_media_block_types,
+)
 from .request_snapshot import anthropic_request_snapshot
 from .sse_aggregation import aggregate_anthropic_sse_to_message
 from .streaming import (
@@ -66,6 +82,12 @@ __all__ = [
     "ContentBlockWebSearchToolResult",
     "ContentChunk",
     "ContentType",
+    "ContextArtifactError",
+    "ContextArtifactSlice",
+    "ContextGovernanceError",
+    "ContextGovernanceRecord",
+    "ContextGovernorConfig",
+    "GovernedMessagesRequest",
     "HeuristicToolParser",
     "Message",
     "MessagesRequest",
@@ -95,8 +117,11 @@ __all__ = [
     "get_block_attr",
     "get_block_type",
     "get_token_count",
+    "govern_messages_request",
     "is_synthetic_openai_tool_turn_boundary",
     "map_stop_reason",
+    "read_context_artifact_slice",
     "serialize_tool_result_content",
     "set_if_not_none",
+    "tool_result_media_block_types",
 ]

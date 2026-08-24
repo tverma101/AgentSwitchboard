@@ -1,5 +1,10 @@
 """Contracts for OpenCode Go native protocol routing."""
 
+import json
+from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock
+
+import httpx
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
@@ -10,7 +15,11 @@ from free_claude_code.core.fault_attribution import (
     FaultConfidence,
     FaultDomain,
 )
-from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.opencode_go import (
@@ -22,8 +31,54 @@ from free_claude_code.providers.opencode_go import (
 )
 from free_claude_code.providers.opencode_go.provider import (
     _record_failure,
+    _sse_chunk_has_output,
     _sse_event_types,
 )
+
+_PNG_DATA = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
+
+class _ResponsesEvent:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, object]:
+        del mode, exclude_none
+        return self._payload
+
+
+class _ResponsesStream:
+    def __init__(self, events: list[dict[str, object]]) -> None:
+        self._events = iter(_ResponsesEvent(event) for event in events)
+
+    def __aiter__(self) -> AsyncIterator[_ResponsesEvent]:
+        return self
+
+    async def __anext__(self) -> _ResponsesEvent:
+        try:
+            return next(self._events)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _provider_request(model: str) -> MessagesRequest:
+    return MessagesRequest.model_validate(
+        {
+            "model": model,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+
+def _upstream_request(url: str) -> httpx.Request:
+    return httpx.Request("POST", url)
 
 
 def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
@@ -124,7 +179,7 @@ def test_native_messages_preserve_anthropic_cache_control_and_images() -> None:
                             "source": {
                                 "type": "base64",
                                 "media_type": "image/png",
-                                "data": "aGVsbG8=",
+                                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
                             },
                         },
                         {
@@ -150,7 +205,10 @@ def test_native_messages_preserve_anthropic_cache_control_and_images() -> None:
 
     assert body["stream"] is True
     assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
-    assert body["messages"][0]["content"][0]["source"]["data"] == "aGVsbG8="
+    assert (
+        body["messages"][0]["content"][0]["source"]["data"]
+        == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
     assert body["messages"][0]["content"][1]["cache_control"] == {"type": "ephemeral"}
     assert body["tools"][0]["cache_control"] == {"type": "ephemeral"}
 
@@ -243,6 +301,58 @@ def test_muse_tool_aliases_cover_exact_limit_and_collision_shapes() -> None:
     assert tuple(codec.decode(alias) for alias in aliases) == originals
 
 
+@pytest.mark.parametrize(
+    ("effort", "expected_reasoning"),
+    [
+        (ReasoningEffort.MINIMAL, {"effort": "minimal", "summary": "auto"}),
+        (ReasoningEffort.LOW, {"effort": "low", "summary": "auto"}),
+        (ReasoningEffort.MEDIUM, {"effort": "medium", "summary": "auto"}),
+        (ReasoningEffort.HIGH, {"effort": "high", "summary": "auto"}),
+        (ReasoningEffort.XHIGH, {"effort": "xhigh", "summary": "auto"}),
+        # OpenCode Go's Responses endpoint has no `max` variant; the provider
+        # adapter sends its highest representable effort.
+        (ReasoningEffort.MAX, {"effort": "xhigh", "summary": "auto"}),
+    ],
+)
+def test_muse_responses_body_translates_each_reasoning_effort(
+    effort: ReasoningEffort, expected_reasoning: dict[str, str]
+) -> None:
+    """The outgoing /responses body names the exact client-selected effort."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "reason about this"}],
+        }
+    )
+
+    body = OpenCodeGoProvider._build_responses_body(
+        request,
+        reasoning=ReasoningPolicy.on(effort=effort),
+    )
+
+    assert body["model"] == "muse-spark-1.2-contributor"
+    assert body["reasoning"] == expected_reasoning
+
+
+def test_muse_responses_body_maps_off_to_lowest_supported_effort() -> None:
+    """Reasoning off suppresses output while using Muse's lowest effort."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "no reasoning"}],
+        }
+    )
+
+    body = OpenCodeGoProvider._build_responses_body(
+        request,
+        reasoning=ReasoningPolicy.off(),
+    )
+
+    assert body["reasoning"] == {"effort": "minimal", "summary": "auto"}
+
+
 @pytest.mark.asyncio
 async def test_native_protocols_share_one_hardened_transport_pool() -> None:
     provider = OpenCodeGoProvider(
@@ -261,6 +371,305 @@ async def test_native_protocols_share_one_hardened_transport_pool() -> None:
         await provider.cleanup()
 
 
+@pytest.mark.asyncio
+async def test_responses_stream_retries_pre_payload_transient_status() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=2,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("muse-spark-1.2-contributor")
+    upstream_request = _upstream_request("https://example.invalid/v1/responses")
+    retry_response = httpx.Response(
+        503,
+        request=upstream_request,
+        text="temporarily unavailable",
+    )
+    retry_error = httpx.HTTPStatusError(
+        "temporarily unavailable",
+        request=upstream_request,
+        response=retry_response,
+    )
+    provider._responses.responses.create = AsyncMock(
+        side_effect=[
+            retry_error,
+            _ResponsesStream(
+                [
+                    {"type": "response.output_text.delta", "delta": "ok"},
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp_1",
+                            "usage": {"input_tokens": 3, "output_tokens": 1},
+                        },
+                    },
+                ]
+            ),
+        ]
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_retry",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert provider._responses.responses.create.await_count == 2
+    assert any("ok" in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_responses_receipt_records_metadata_only_timing(monkeypatch) -> None:
+    payload_marker = "unique-output-payload-should-not-be-retained"
+    receipts: list[dict[str, object]] = []
+
+    def record_trace(**fields: object) -> None:
+        if fields.get("event") == "provider.fault_attribution":
+            receipts.append(fields)
+
+    monkeypatch.setattr(
+        "free_claude_code.providers.opencode_go.provider.trace_event",
+        record_trace,
+    )
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    provider._responses.responses.create = AsyncMock(
+        return_value=_ResponsesStream(
+            [
+                {"type": "response.output_text.delta", "delta": payload_marker},
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_timing",
+                        "usage": {"input_tokens": 3, "output_tokens": 1},
+                    },
+                },
+            ]
+        )
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "max_tokens": 32,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "inspect this"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": _PNG_DATA,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_timing",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert any(payload_marker in event for event in events)
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert type(receipt["duration_ms"]) is int
+    assert type(receipt["time_to_first_token_ms"]) is int
+    assert receipt["duration_ms"] >= receipt["time_to_first_token_ms"]
+    assert receipt["media_count"] == 1
+    assert type(receipt["media_type_hash"]) is str
+    serialized = json.dumps(receipt)
+    assert "hello" not in serialized
+    assert payload_marker not in serialized
+
+
+@pytest.mark.asyncio
+async def test_messages_receipt_records_output_timing_without_payload(
+    monkeypatch,
+) -> None:
+    payload_marker = "unique-output-payload-should-not-be-retained"
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("minimax-m2.7")
+    upstream_request = _upstream_request("https://example.invalid/v1/messages")
+    response = httpx.Response(
+        200,
+        request=upstream_request,
+        headers={"content-type": "text/event-stream"},
+        content=(
+            b"event: message_start\ndata: {}\n\n"
+            b'event: content_block_delta\ndata: {"delta":{"text":"unique-output-payload-should-not-be-retained"}}\n\n'
+            b"event: message_stop\ndata: {}\n\n"
+        ),
+    )
+    receipts: list[dict[str, object]] = []
+
+    def record_trace(**fields: object) -> None:
+        if fields.get("event") == "provider.fault_attribution":
+            receipts.append(fields)
+
+    monkeypatch.setattr(
+        "free_claude_code.providers.opencode_go.provider.trace_event",
+        record_trace,
+    )
+    provider._native_http.send = AsyncMock(return_value=response)
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_messages_timing",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert len(events) == 1
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert type(receipt["duration_ms"]) is int
+    assert type(receipt["time_to_first_token_ms"]) is int
+    assert receipt["duration_ms"] >= receipt["time_to_first_token_ms"]
+    assert payload_marker not in json.dumps(receipt)
+
+
+@pytest.mark.asyncio
+async def test_messages_stream_retries_pre_payload_transient_status() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=2,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("minimax-m2.7")
+    upstream_request = _upstream_request("https://example.invalid/v1/messages")
+    retry_response = httpx.Response(
+        503,
+        request=upstream_request,
+        text="temporarily unavailable",
+    )
+    success_response = httpx.Response(
+        200,
+        request=upstream_request,
+        headers={"content-type": "text/event-stream"},
+        content=(
+            b"event: message_start\ndata: {}\n\n"
+            b"event: content_block_delta\ndata: {}\n\n"
+            b"event: message_stop\ndata: {}\n\n"
+        ),
+    )
+    provider._native_http.send = AsyncMock(
+        side_effect=[retry_response, success_response]
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_messages_retry",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert provider._native_http.send.await_count == 2
+    assert len(events) == 1
+    assert "message_stop" in events[0]
+
+
+@pytest.mark.asyncio
+async def test_messages_stream_accepts_coalesced_small_sse_frames() -> None:
+    """HTTP chunk coalescing must not look like one oversized SSE event."""
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("minimax-m2.7")
+    upstream_request = _upstream_request("https://example.invalid/v1/messages")
+    frame = b"event: content_block_delta\ndata: {}\n\n"
+    success_response = httpx.Response(
+        200,
+        request=upstream_request,
+        headers={"content-type": "text/event-stream"},
+        content=frame * 3_000 + b"event: message_stop\ndata: {}\n\n",
+    )
+    provider._native_http.send = AsyncMock(return_value=success_response)
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_messages_coalesced",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert len(events) == 1
+    assert events[0].count("content_block_delta") == 3_000
+    assert "message_stop" in events[0]
+
+
 def test_messages_sse_receipt_extracts_types_without_data() -> None:
     chunk = (
         ": keep-alive\n\n"
@@ -272,3 +681,19 @@ def test_messages_sse_receipt_extracts_types_without_data() -> None:
 
     assert _sse_event_types(chunk) == ("content_block_delta", "message_stop")
     assert "secret" not in _sse_event_types(chunk)
+
+
+def test_messages_sse_ttft_ignores_lifecycle_and_empty_delta_events() -> None:
+    lifecycle = (
+        "event: message_start\n"
+        'data: {"type":"message_start"}\n\n'
+        "event: content_block_delta\n"
+        "data: {}\n\n"
+    )
+    output = (
+        "event: content_block_delta\n"
+        'data: {"delta":{"type":"text_delta","text":"ok"}}\n\n'
+    )
+
+    assert _sse_chunk_has_output(lifecycle) is False
+    assert _sse_chunk_has_output(output) is True

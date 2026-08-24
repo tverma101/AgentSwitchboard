@@ -14,6 +14,7 @@ from free_claude_code.api.handlers import (
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.content import get_block_attr
 from free_claude_code.core.anthropic.models import (
     Message,
     MessagesRequest,
@@ -122,6 +123,98 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
     assert provider.stream_kwargs[0]["response_model"] == "nvidia_nim/test-model"
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
     assert len(provider.preflight_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_keeps_session_affinity_metadata_internal() -> None:
+    provider = FakeProvider()
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        stream=True,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    response = await handler.create(request, claude_session_id="session_stable")
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
+
+    routed = provider.requests[0]
+    assert routed.claude_session_id == "session_stable"
+    assert "claude_session_id" not in routed.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_governs_large_tool_result_before_provider() -> None:
+    provider = FakeProvider()
+    settings = Settings().model_copy(
+        update={"context_governor_tool_result_max_bytes": 4096}
+    )
+    handler = MessagesHandler(
+        settings,
+        provider_resolver=lambda _: provider,
+    )
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_large",
+                        "content": "before\n" + ("large-output\n" * 10_000),
+                    }
+                ],
+            )
+        ],
+    )
+
+    response = await handler.create(request)
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
+
+    routed_block = provider.requests[0].messages[0].content[0]
+    routed_content = get_block_attr(routed_block, "content")
+    assert isinstance(routed_content, str)
+    assert "tool result redirected" in routed_content
+    assert len(routed_content.encode()) <= 4096
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_rejects_image_for_known_nonvision_model() -> None:
+    provider = FakeProvider()
+    handler = MessagesHandler(
+        Settings(),
+        provider_resolver=lambda _: provider,
+        model_info_resolver=lambda _provider, _model: ProviderModelInfo(
+            "test-model", supports_vision=False
+        ),
+    )
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.test/image.png",
+                        },
+                    }
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(InvalidRequestError, match="before upstream I/O"):
+        await handler.create(request)
+
+    assert provider.preflight_calls == []
+    assert provider.requests == []
 
 
 @pytest.mark.asyncio

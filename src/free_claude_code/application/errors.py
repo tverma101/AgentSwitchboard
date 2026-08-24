@@ -23,6 +23,10 @@ class InvalidRequestError(ApplicationError):
     status_code = 400
 
 
+class VisualCapabilityError(InvalidRequestError):
+    """The selected model explicitly cannot consume the request's images."""
+
+
 class UnknownProviderError(InvalidRequestError):
     """The configured provider identifier is not registered."""
 

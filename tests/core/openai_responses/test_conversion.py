@@ -25,6 +25,7 @@ def test_responses_string_input_converts_to_anthropic_message() -> None:
             "temperature": 0.2,
             "top_p": 0.9,
             "metadata": {"trace": "abc"},
+            "prompt_cache_key": "native-key",
         }
     )
 
@@ -35,6 +36,7 @@ def test_responses_string_input_converts_to_anthropic_message() -> None:
     assert payload["temperature"] == 0.2
     assert payload["top_p"] == 0.9
     assert payload["metadata"] == {"trace": "abc"}
+    assert payload["prompt_cache_key"] == "native-key"
 
 
 @pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh"])

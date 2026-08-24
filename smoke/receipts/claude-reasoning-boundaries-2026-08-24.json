@@ -1,0 +1,74 @@
+{
+  "receipt": "claude-reasoning-boundaries",
+  "captured_at": "2026-08-24T10:53:56Z",
+  "claude": {
+    "launcher": "isolated Anthropic Messages API",
+    "version": "2.1.228",
+    "requested_controls": ["off", "minimal"]
+  },
+  "harness": {
+    "package_version": "4.30.19",
+    "source_commit_sha": "e773b18",
+    "working_tree_dirty": true,
+    "isolated_server": "loopback-isolated",
+    "active_user_server_8082_touched": false
+  },
+  "requests": {
+    "messages_requests": 2,
+    "completed_provider_turns": 2,
+    "upstream_attempts_total": 2,
+    "upstream_attempts_per_completed_turn": 1,
+    "http_errors": 0,
+    "terminal_event": "response.completed",
+    "output_budget_tokens": 4096
+  },
+  "routing": {
+    "provider_id": "opencode_go",
+    "provider_model": "muse-spark-1.2-contributor",
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses"
+  },
+  "boundaries": [
+    {
+      "requested_control": "off",
+      "route_reasoning_control": "off",
+      "wire_effort": "minimal",
+      "effective_effort": "minimal",
+      "provider_reasoning_tokens": 97,
+      "provider_reasoning_item": true,
+      "provider_visible_reasoning_summary": false,
+      "provider_reasoning_text": false,
+      "provider_opaque_reasoning": true,
+      "harness_thinking_block": true,
+      "harness_thinking_delta": false,
+      "outcome": "completed",
+      "duration_ms": 4086,
+      "time_to_first_token_ms": 3996
+    },
+    {
+      "requested_control": "minimal",
+      "route_reasoning_control": "default",
+      "wire_effort": "minimal",
+      "effective_effort": "minimal",
+      "provider_reasoning_tokens": 74,
+      "provider_reasoning_item": true,
+      "provider_visible_reasoning_summary": false,
+      "provider_reasoning_text": false,
+      "provider_opaque_reasoning": true,
+      "harness_thinking_block": true,
+      "harness_thinking_delta": false,
+      "outcome": "completed",
+      "duration_ms": 2252,
+      "time_to_first_token_ms": 2244
+    }
+  ],
+  "translation": {
+    "off_wire_policy": "minimal",
+    "reason": "Muse rejects effort=none; FCC preserves off for output suppression and receipts while using the lowest supported Muse effort."
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_api_prereq_live.py::test_muse_reasoning_boundaries_when_requested",
+    "retained": "metadata-only receipt; no input text or credentials"
+  }
+}

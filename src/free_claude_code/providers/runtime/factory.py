@@ -1,13 +1,16 @@
 """Provider construction from declarative profiles and exceptional adapters."""
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 
 from free_claude_code.application.errors import (
     ApplicationUnavailableError,
     UnknownProviderError,
 )
+from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.provider_policy import ProviderEgressGuard, ProviderPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.openai_chat import (
@@ -147,12 +150,23 @@ def _create_groq(
 
 def _create_opencode_go(
     config: ProviderConfig,
-    _settings: Settings,
+    settings: Settings,
     admission: ProviderAdmissionController,
 ) -> BaseProvider:
     from free_claude_code.providers.opencode_go import OpenCodeGoProvider
 
-    return OpenCodeGoProvider(config, admission=admission)
+    configured_model = "configured"
+    if parse_provider_type(settings.model) == "opencode_go":
+        configured_model = parse_model_name(settings.model)
+    policy = ProviderPolicy(
+        primary_provider="opencode_go",
+        primary_model=configured_model,
+    )
+    guarded_config = replace(
+        config,
+        egress_guard=ProviderEgressGuard(policy),
+    )
+    return OpenCodeGoProvider(guarded_config, admission=admission)
 
 
 _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
