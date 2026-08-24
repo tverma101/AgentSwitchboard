@@ -592,8 +592,8 @@ def test_passthrough_tool_use_and_result(deepseek_provider):
     assert body["messages"][1]["role"] == "tool"
 
 
-def test_preflight_strips_user_image():
-    """Image blocks are silently stripped (DeepSeek lacks vision); request must not fail."""
+def test_preflight_rejects_user_image():
+    """DeepSeek rejects image input instead of silently dropping it."""
     request = MessagesRequest(
         model="m",
         messages=[
@@ -621,12 +621,8 @@ def test_preflight_strips_user_image():
         ),
         admission=immediate_admission(),
     )
-    # Should not raise; image is stripped.
-    provider.preflight_stream(request, reasoning=REASONING_ON)
-    body = provider._build_request_body(request, reasoning=reasoning_for(request))
-    content = body["messages"][0]["content"]
-    assert "attachment omitted" in content.lower()
-    assert "image or document inputs" in content.lower()
+    with pytest.raises(InvalidRequestError, match="image"):
+        provider.preflight_stream(request, reasoning=REASONING_ON)
 
 
 def test_preflight_rejects_mcp_servers():
@@ -973,8 +969,8 @@ def test_normalizes_tool_result_content_array_to_string(deepseek_provider):
     assert "file2.txt" in tool_result["content"]
 
 
-def test_strips_document_blocks_for_deepseek(deepseek_provider):
-    """Document blocks (e.g. PDFs from Claude Code) are stripped since DeepSeek can't process them."""
+def test_rejects_document_blocks_for_deepseek(deepseek_provider):
+    """DeepSeek rejects document blocks instead of silently dropping them."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -998,19 +994,12 @@ def test_strips_document_blocks_for_deepseek(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
-    )
-
-    assert body["messages"][0] == {
-        "role": "tool",
-        "tool_call_id": "t1",
-        "content": "PDF text extracted",
-    }
+    with pytest.raises(InvalidRequestError, match="document"):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
-def test_strips_image_blocks_for_deepseek(deepseek_provider):
-    """Image blocks are stripped for DeepSeek since it doesn't support vision."""
+def test_rejects_image_blocks_for_deepseek(deepseek_provider):
+    """DeepSeek rejects image blocks since it doesn't support vision."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1033,11 +1022,8 @@ def test_strips_image_blocks_for_deepseek(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
-    )
-
-    assert body["messages"][0] == {"role": "user", "content": "describe this"}
+    with pytest.raises(InvalidRequestError, match="image"):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
 def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
@@ -1082,8 +1068,8 @@ def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
     assert "success" in tool_result["content"]
 
 
-def test_strips_image_block_inside_tool_result(deepseek_provider):
-    """Image blocks nested inside tool_result.content are stripped, not rejected."""
+def test_rejects_image_block_inside_tool_result(deepseek_provider):
+    """Image blocks nested inside tool results are rejected, not dropped."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1123,21 +1109,12 @@ def test_strips_image_block_inside_tool_result(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
-    )
-
-    tool_result = body["messages"][1]
-    assert tool_result["role"] == "tool"
-    # After stripping + string-normalization, no base64/image marker survives.
-    assert isinstance(tool_result["content"], str)
-    assert "screenshot saved" in tool_result["content"]
-    assert "base64" not in tool_result["content"]
-    assert "abc" not in tool_result["content"]
+    with pytest.raises(InvalidRequestError, match="image"):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
-def test_image_only_tool_result_replaced_with_placeholder(deepseek_provider):
-    """A tool_result whose only inner block is an image becomes a placeholder string."""
+def test_image_only_tool_result_is_rejected(deepseek_provider):
+    """A tool result containing only an image is rejected before upstream I/O."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1176,22 +1153,14 @@ def test_image_only_tool_result_replaced_with_placeholder(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
-    )
-
-    tool_result = body["messages"][1]
-    assert tool_result["role"] == "tool"
-    assert isinstance(tool_result["content"], str)
-    assert tool_result["content"] != ""
-    assert "attachment omitted" in tool_result["content"].lower()
-    assert "image or document inputs" in tool_result["content"].lower()
+    with pytest.raises(InvalidRequestError, match="image"):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
-def test_document_only_tool_result_replaced_with_generic_placeholder(
+def test_document_only_tool_result_is_rejected(
     deepseek_provider,
 ):
-    """A document-only tool_result uses the generic attachment placeholder."""
+    """A document-only tool result is rejected before upstream I/O."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1229,20 +1198,12 @@ def test_document_only_tool_result_replaced_with_generic_placeholder(
         }
     )
 
-    body = deepseek_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
-    )
-
-    tool_result = body["messages"][1]
-    assert tool_result["role"] == "tool"
-    assert isinstance(tool_result["content"], str)
-    assert "attachment omitted" in tool_result["content"].lower()
-    assert "document inputs" in tool_result["content"].lower()
-    assert "image omitted" not in tool_result["content"].lower()
+    with pytest.raises(InvalidRequestError, match="document"):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
-def test_image_only_message_replaced_with_placeholder(deepseek_provider):
-    """A top-level image-only message remains non-empty after stripping."""
+def test_image_only_message_is_rejected(deepseek_provider):
+    """A top-level image-only message is rejected before upstream I/O."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1264,17 +1225,12 @@ def test_image_only_message_replaced_with_placeholder(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
-    )
-
-    content = body["messages"][0]["content"]
-    assert "attachment omitted" in content.lower()
-    assert "image or document inputs" in content.lower()
+    with pytest.raises(InvalidRequestError, match="image"):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
-def test_document_only_message_replaced_with_placeholder(deepseek_provider):
-    """A top-level document-only message remains non-empty after stripping."""
+def test_document_only_message_is_rejected(deepseek_provider):
+    """A top-level document-only message is rejected before upstream I/O."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1292,17 +1248,12 @@ def test_document_only_message_replaced_with_placeholder(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
-    )
-
-    content = body["messages"][0]["content"]
-    assert "attachment omitted" in content.lower()
-    assert "document inputs" in content.lower()
+    with pytest.raises(InvalidRequestError, match="document"):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
-def test_warns_when_stripping_attachment_blocks(deepseek_provider, caplog):
-    """A warning is emitted when image/document blocks are dropped so users notice."""
+def test_rejects_unsupported_attachment_blocks(deepseek_provider):
+    """Unsupported attachment blocks fail explicitly instead of being dropped."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1355,11 +1306,8 @@ def test_warns_when_stripping_attachment_blocks(deepseek_provider, caplog):
         }
     )
 
-    with caplog.at_level(logging.WARNING):
+    with pytest.raises(InvalidRequestError, match="image"):
         deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
-
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("stripped unsupported attachment blocks" in r.message for r in warnings)
 
 
 def test_no_warning_when_no_attachments(deepseek_provider, caplog):

@@ -105,6 +105,10 @@ instead of becoming implicit fallbacks, and each allowed or blocked decision is
 recorded as metadata-only `provider.egress.decision` trace evidence. This does
 not claim that optional browser, computer-use, or vision helpers are enabled.
 
+Image/document blocks are never silently discarded. Models with explicit
+non-vision metadata are rejected at ingress; provider adapters also fail before
+network I/O when their native protocol cannot consume the attachment.
+
 ## Local state
 
 | Path | Purpose |
