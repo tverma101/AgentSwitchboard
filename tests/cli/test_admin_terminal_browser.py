@@ -85,6 +85,29 @@ def test_terminal_mode_never_surprise_opens_system_browser() -> None:
     browser_open.assert_not_called()
 
 
+def test_terminal_mode_does_not_spawn_without_an_interactive_tty() -> None:
+    with (
+        patch.dict(
+            commands.os.environ,
+            {commands.ADMIN_OPEN_MODE_ENV: "terminal"},
+            clear=True,
+        ),
+        patch.object(commands, "_interactive_terminal_available", return_value=False),
+        patch.object(
+            commands.shutil,
+            "which",
+            return_value="/opt/bin/terminal-browser",
+        ) as which,
+        patch.object(commands.subprocess, "Popen") as popen,
+        patch.object(commands.webbrowser, "open") as browser_open,
+    ):
+        assert commands.open_admin_surface(ADMIN_URL) is False
+
+    which.assert_not_called()
+    popen.assert_not_called()
+    browser_open.assert_not_called()
+
+
 def test_browser_mode_preserves_original_system_browser_behavior() -> None:
     with (
         patch.dict(
@@ -121,3 +144,11 @@ def test_invalid_open_mode_degrades_to_auto() -> None:
         clear=True,
     ):
         assert commands._admin_open_mode() is commands.AdminOpenMode.AUTO
+
+
+def test_missing_stdio_is_not_treated_as_an_interactive_tty() -> None:
+    with (
+        patch.object(commands.sys, "stdin", None),
+        patch.object(commands.sys, "stdout", None),
+    ):
+        assert commands._interactive_terminal_available() is False

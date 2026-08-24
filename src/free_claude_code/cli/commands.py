@@ -208,7 +208,9 @@ def load_server_settings() -> Settings:
     return get_settings()
 
 
-def _admin_open_mode(env: dict[str, str] | os._Environ[str] | None = None) -> AdminOpenMode:
+def _admin_open_mode(
+    env: dict[str, str] | os._Environ[str] | None = None,
+) -> AdminOpenMode:
     """Resolve the presentation mode without making invalid values fatal."""
 
     source = os.environ if env is None else env
@@ -219,10 +221,22 @@ def _admin_open_mode(env: dict[str, str] | os._Environ[str] | None = None) -> Ad
         return AdminOpenMode.AUTO
 
 
+def _stream_is_tty(stream: object | None) -> bool:
+    """Return whether a possibly absent or closed stream is an interactive TTY."""
+
+    isatty = getattr(stream, "isatty", None)
+    if not callable(isatty):
+        return False
+    try:
+        return bool(isatty())
+    except OSError, ValueError:
+        return False
+
+
 def _interactive_terminal_available() -> bool:
     """Return whether inheriting stdio can safely host terminal-browser."""
 
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    return _stream_is_tty(sys.stdin) and _stream_is_tty(sys.stdout)
 
 
 def _try_terminal_browser(admin_url: str) -> bool:
@@ -253,9 +267,7 @@ def open_admin_surface(admin_url: str) -> bool:
     if mode is AdminOpenMode.BROWSER:
         return webbrowser.open(admin_url)
 
-    should_try_terminal = (
-        mode is AdminOpenMode.TERMINAL or _interactive_terminal_available()
-    )
+    should_try_terminal = _interactive_terminal_available()
     if should_try_terminal and _try_terminal_browser(admin_url):
         return True
 

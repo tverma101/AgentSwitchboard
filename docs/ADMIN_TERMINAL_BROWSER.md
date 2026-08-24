@@ -17,7 +17,7 @@ terminal-browser open http://127.0.0.1:<port>/admin --app-mode
 Set `FCC_ADMIN_OPEN_MODE` to one of:
 
 - `auto` (default): prefer terminal-browser when FCC is running in an interactive terminal and the executable is installed; otherwise use the operating-system browser.
-- `terminal`: use terminal-browser only. If it is missing or fails during startup, print the Admin URL and **do not** surprise-open a desktop browser.
+- `terminal`: use terminal-browser only from an interactive terminal. If no interactive TTY is available, it is missing, or it fails during startup, print the Admin URL and **do not** surprise-open a desktop browser.
 - `browser`: always retain the historical `webbrowser.open(...)` behavior.
 
 For a terminal-only personal setup:
