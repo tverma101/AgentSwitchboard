@@ -199,9 +199,14 @@ underlying client surface is certified unless its status is `passed`.
 
 The metadata-only [media conformance corpus](fixtures/media-conformance-v1.json)
 enumerates the supported image/tool-result protocol boundaries, deterministic
-rejection cases, retry identity, and native/provider route pairs. It contains
-no image bytes or prompt payloads. The corpus is a contract inventory; live
-vision and computer-use round trips remain explicitly separate acceptance gates.
+rejection cases, retry identity, and native/provider route pairs. Each case has
+a golden media count and ordered media-type list; the corpus also requires
+metadata-only `media_count`/`media_type_hash` receipts, `tool_use_id`
+association, and at-most-once retry side effects. It contains no image bytes or
+prompt payloads. Validate the contract with
+`uv run pytest -n 0 tests/contracts/test_media_conformance.py`. The corpus is a
+contract inventory; live vision and computer-use round trips remain explicitly
+separate acceptance gates.
 
 ## OpenCode Go transport benchmark
 
