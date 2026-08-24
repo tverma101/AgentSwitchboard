@@ -18,6 +18,22 @@ boundaries explicit so design notes are not mistaken for release guarantees.
 | [Upstream regression watch](UPSTREAM_REGRESSION_WATCH.md) | Bounded provenance registry for promoted external edge cases | Current manual registry; no hot-path polling |
 | [Diagnostics](DIAGNOSTICS.md) | Terminal-only synthetic route and capability explanations | Current; zero-network diagnostic surface |
 
+## Active design and conformance contracts
+
+These documents are intentionally kept in the repository so implementation
+agents have one current contract instead of reviving old stacked design PRs.
+They may describe partially shipped behavior and future acceptance criteria;
+each document begins with an explicit status banner.
+
+| Document | Scope |
+| --- | --- |
+| [Capability-aware routing](CAPABILITY_ROUTING.md) | Request-derived capability truth, controller/helper policy, provider isolation, and future semantic computer-use routing |
+| [Claude compatibility firewall](CLAUDE_COMPATIBILITY_FIREWALL.md) | Known-good client certification, process containment, candidate promotion/quarantine, and update-survival fixtures |
+| [Reasoning presentation conformance](REASONING_PRESENTATION_CONFORMANCE.md) | Truthful separation of reasoning usage, visible summaries, opaque continuation state, Anthropic thinking blocks, and Claude UI behavior |
+| [Compaction conformance](COMPACTION_CONFORMANCE.md) | Effective-window, compact/resume, semantic continuity, inheritance, and economic acceptance rules |
+| [Context-pressure leash](CONTEXT_PRESSURE_LEASH.md) | Managed Claude guidance, hard artifact-backed result governance, and OFF-vs-ON effectiveness testing |
+| [Upstream harvest plan](UPSTREAM_ROUTER_HARVEST.md) | Fork/adapt/wrap/test-only rules for router, Playwright browser, macOS AX, and capability prior art |
+
 The maintainer architecture map is [ARCHITECTURE.md](../ARCHITECTURE.md). It
 describes package ownership and extension boundaries, not a promise that every
 optional package surface is part of the daily-driver release.
