@@ -43,7 +43,9 @@ def test_stale_haiku_override_to_zen_is_explicitly_attributed() -> None:
 
 
 def test_direct_provider_route_records_request_model_source() -> None:
-    resolved = ModelRouter(_settings()).resolve("opencode_go/muse-spark-1.2-contributor")
+    resolved = ModelRouter(_settings()).resolve(
+        "opencode_go/muse-spark-1.2-contributor"
+    )
 
     assert resolved.provider_id == "opencode_go"
     assert resolved.route_source == "request_model"
