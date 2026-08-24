@@ -396,6 +396,8 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "TELEGRAM_PROXY_URL" in keys
     assert "CEREBRAS_API_KEY" in keys
     assert "OLLAMA_API_KEY" in keys
+    assert "MODEL_CATALOG_MODE" in keys
+    assert "MODEL_CATALOG_ALLOWLIST" in keys
     assert "NVIDIA_NIM_MODEL_ALLOWLIST" in keys
     assert "ZAI_BASE_URL" not in keys
     assert "CLAUDE_WORKSPACE" not in keys
@@ -453,6 +455,21 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     )
     assert nim_allowlist["section"] == "models"
     assert nim_allowlist["type"] == "textarea"
+    catalog_mode = next(
+        field for field in body["fields"] if field["key"] == "MODEL_CATALOG_MODE"
+    )
+    assert catalog_mode["section"] == "models"
+    assert catalog_mode["type"] == "select"
+    assert catalog_mode["options"] == [
+        {"value": "", "label": "Legacy NIM compatibility"},
+        {"value": "all", "label": "All discovered models"},
+        {"value": "curated", "label": "Curated allowlist only"},
+    ]
+    catalog_allowlist = next(
+        field for field in body["fields"] if field["key"] == "MODEL_CATALOG_ALLOWLIST"
+    )
+    assert catalog_allowlist["section"] == "models"
+    assert catalog_allowlist["type"] == "textarea"
     restart_required = {
         field["key"] for field in body["fields"] if field["restart_required"] is True
     }

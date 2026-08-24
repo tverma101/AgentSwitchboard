@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.settings import Settings
 from tests.api.support import create_test_app, provider_manager_for_app
 
@@ -181,6 +182,32 @@ def test_models_list_works_with_empty_discovery_catalog():
         "claude-3-freecc-no-thinking/open_router/anthropic/claude-opus",
     ]
     assert "claude-sonnet-4-20250514" in ids
+
+
+def test_models_list_refilters_cached_catalog_after_policy_edit_and_keeps_configured_ref():
+    settings = _settings(
+        model="open_router/unknown-configured-model",
+        model_opus=None,
+        model_haiku=None,
+    )
+    settings.model_catalog_mode = ModelCatalogMode.CURATED
+    settings.model_catalog_allowlist = "open_router/visible-model"
+    app = create_test_app(settings)
+    _cache_models(app, "open_router", "visible-model", "hidden-model")
+
+    response = TestClient(app).get("/v1/models")
+
+    assert response.status_code == 200
+    ids = [item["display_name"] for item in response.json()["data"]]
+    assert "open_router/unknown-configured-model" in ids
+    assert "open_router/visible-model" in ids
+    assert "open_router/hidden-model" not in ids
+
+    settings.model_catalog_mode = ModelCatalogMode.ALL
+    response = TestClient(app).get("/v1/models")
+
+    ids = [item["display_name"] for item in response.json()["data"]]
+    assert "open_router/hidden-model" in ids
 
 
 def test_known_nonvision_model_rejects_image_before_provider_resolution():

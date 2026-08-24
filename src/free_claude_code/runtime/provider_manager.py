@@ -13,7 +13,10 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.application.ports import RequestRuntimePort
-from free_claude_code.config.model_visibility import filter_discovered_model_infos
+from free_claude_code.config.model_visibility import (
+    filter_cached_model_infos,
+    is_discovered_model_visible,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
@@ -140,7 +143,22 @@ class ProviderRuntimeManager:
 
     def cached_model_ids(self) -> dict[str, frozenset[str]]:
         self._synchronize_model_cache_scope()
-        return self._model_cache.cached_model_ids()
+        return {
+            provider_id: frozenset(
+                model_id
+                for model_id in model_ids
+                if is_discovered_model_visible(
+                    self._current.settings, provider_id, model_id
+                )
+            )
+            for provider_id, model_ids in self._model_cache.cached_model_ids().items()
+            if any(
+                is_discovered_model_visible(
+                    self._current.settings, provider_id, model_id
+                )
+                for model_id in model_ids
+            )
+        }
 
     def cached_model_supports_thinking(
         self, provider_id: str, model_id: str
@@ -157,17 +175,16 @@ class ProviderRuntimeManager:
 
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         self._synchronize_model_cache_scope()
-        return self._model_cache.cached_prefixed_model_infos()
+        return filter_cached_model_infos(
+            self._current.settings, self._model_cache.cached_prefixed_model_infos()
+        )
 
     def cache_model_infos(
         self,
         provider_id: str,
         model_infos: Iterable[ProviderModelInfo],
     ) -> None:
-        visible_model_infos = filter_discovered_model_infos(
-            self._current.settings, provider_id, model_infos
-        )
-        self._model_cache.cache_model_infos(provider_id, visible_model_infos)
+        self._model_cache.cache_model_infos(provider_id, model_infos)
         self._publish_model_catalog()
 
     async def warm_referenced_model_cache(self) -> ProviderModelRefreshResult:

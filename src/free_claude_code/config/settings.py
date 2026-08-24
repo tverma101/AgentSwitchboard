@@ -12,6 +12,7 @@ from .env_files import (
     env_file_override,
     settings_env_files,
 )
+from .model_catalog import ModelCatalogMode
 from .nim import NimSettings
 from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
 from .reasoning import ReasoningPreference
@@ -152,6 +153,14 @@ class Settings(BaseSettings):
     )
 
     # ==================== Model ====================
+    # Empty means retain the legacy NVIDIA NIM allowlist behavior. Set this to
+    # ``all`` or ``curated`` to activate the provider-independent policy.
+    model_catalog_mode: ModelCatalogMode | None = Field(
+        default=None, validation_alias="MODEL_CATALOG_MODE"
+    )
+    model_catalog_allowlist: str = Field(
+        default="", validation_alias="MODEL_CATALOG_ALLOWLIST"
+    )
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -365,6 +374,13 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"LOG_LEVEL must be one of {sorted(valid)}, got {v!r}")
         return upper
+
+    @field_validator("model_catalog_mode", mode="before")
+    @classmethod
+    def parse_model_catalog_mode(cls, value: Any) -> Any:
+        """Treat an empty Admin select as the legacy compatibility mode."""
+
+        return None if value == "" else value
 
     @field_validator("reasoning_policy")
     @classmethod

@@ -106,10 +106,14 @@ reports that instance and exits instead of attempting a second bind.
 4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or search the model dropdown and select another model.
 5. Click **Validate**, then **Apply**.
 
-To control the NVIDIA model picker, use **NVIDIA NIM Model Allowlist** in the
-Model Routing section. Leave it blank to hide discovered NIM models while
-keeping explicitly configured `MODEL` routes usable, or enter exact model ids
-separated by commas or new lines. Use `*` to show every discovered NIM model.
+The model picker is controlled by **Model Catalog Mode** and **Curated Model
+References** in the Model Routing section. Use `all` to expose every discovered
+provider model, or `curated` with exact `provider/model` refs separated by
+commas or new lines. Curated mode also accepts `provider/*` and `*` wildcards.
+Explicitly configured `MODEL` routes remain usable even when hidden from
+discovery. Leaving the generic mode and allowlist empty retains the legacy
+NVIDIA NIM behavior; its old `NVIDIA_NIM_MODEL_ALLOWLIST` setting is only used
+in that compatibility mode.
 
 <div align="center">
   <img src="assets/admin-page.png" alt="Free Claude Code Admin UI" width="700">
