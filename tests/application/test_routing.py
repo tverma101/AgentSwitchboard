@@ -163,6 +163,37 @@ def test_model_router_routes_explicit_opencode_zen_prefix(settings):
     assert routed.resolved.provider_model_ref == "opencode_zen/kimi-k2.6"
 
 
+def test_model_router_resolves_alias_before_provider_dispatch(settings):
+    settings.model_aliases = "muse=opencode_go/minimax-m2.7"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="muse",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.request.model == "minimax-m2.7"
+    assert routed.resolved.original_model == "muse"
+    assert routed.resolved.provider_id == "opencode_go"
+    assert routed.resolved.provider_model_ref == "opencode_go/minimax-m2.7"
+
+
+def test_model_router_keeps_exact_provider_ref_independent_of_aliases(settings):
+    settings.model_aliases = "opencode=opencode_go/minimax-m2.7"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="opencode_zen/kimi-k2.6",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.resolved.provider_model_ref == "opencode_zen/kimi-k2.6"
+
+
 def test_model_router_routes_wafer_provider_model_directly(settings):
     routed = ModelRouter(settings).resolve_messages_request(
         MessagesRequest(

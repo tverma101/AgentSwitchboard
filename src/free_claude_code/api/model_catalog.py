@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from free_claude_code.application.ports import RequestRuntimePort
+from free_claude_code.config.model_aliases import parse_model_aliases
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.model_visibility import filter_cached_model_infos
 from free_claude_code.config.settings import Settings
@@ -101,6 +102,19 @@ def build_models_list_response(
             ),
             accepted_image_types=(
                 model_info.accepted_image_types if model_info is not None else ()
+            ),
+        )
+
+    for alias, target in parse_model_aliases(
+        getattr(settings, "model_aliases", "")
+    ).aliases.items():
+        _append_unique_model(
+            models,
+            seen,
+            ModelResponse(
+                id=alias,
+                display_name=f"{alias} → {target}",
+                created_at=DISCOVERED_MODEL_CREATED_AT,
             ),
         )
 

@@ -398,6 +398,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "OLLAMA_API_KEY" in keys
     assert "MODEL_CATALOG_MODE" in keys
     assert "MODEL_CATALOG_ALLOWLIST" in keys
+    assert "MODEL_ALIASES" in keys
     assert "NVIDIA_NIM_MODEL_ALLOWLIST" in keys
     assert "ZAI_BASE_URL" not in keys
     assert "CLAUDE_WORKSPACE" not in keys
@@ -470,6 +471,11 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     )
     assert catalog_allowlist["section"] == "models"
     assert catalog_allowlist["type"] == "textarea"
+    aliases_field = next(
+        field for field in body["fields"] if field["key"] == "MODEL_ALIASES"
+    )
+    assert aliases_field["section"] == "models"
+    assert aliases_field["type"] == "textarea"
     restart_required = {
         field["key"] for field in body["fields"] if field["restart_required"] is True
     }

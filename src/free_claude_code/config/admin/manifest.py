@@ -201,6 +201,17 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "MODEL_ALIASES",
+        "Stable Model Aliases",
+        "models",
+        "textarea",
+        settings_attr="model_aliases",
+        description=(
+            "Optional comma- or newline-separated alias=provider/model entries. "
+            "Aliases are client names; provider/model refs remain the routing IDs."
+        ),
+    ),
+    ConfigFieldSpec(
         "NVIDIA_NIM_MODEL_ALLOWLIST",
         "NVIDIA NIM Model Allowlist",
         "models",

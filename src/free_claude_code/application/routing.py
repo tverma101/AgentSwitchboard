@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from free_claude_code.application.errors import UnknownProviderError
+from free_claude_code.config.model_aliases import parse_model_aliases
 from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
@@ -53,13 +54,17 @@ class ModelRouter:
 
     def __init__(self, settings: Settings):
         self._settings = settings
+        self._model_aliases = parse_model_aliases(
+            getattr(settings, "model_aliases", "")
+        )
 
     def resolve(self, claude_model_name: str) -> ResolvedModel:
+        requested_model = self._model_aliases.resolve_if_configured(claude_model_name)
         (
             direct_provider_id,
             direct_provider_model,
             force_reasoning_off,
-        ) = self._direct_provider_model(claude_model_name)
+        ) = self._direct_provider_model(requested_model)
         if direct_provider_id is not None and direct_provider_model is not None:
             reasoning_preference = (
                 ReasoningPreference.OFF
@@ -77,11 +82,11 @@ class ModelRouter:
                 original_model=claude_model_name,
                 provider_id=direct_provider_id,
                 provider_model=direct_provider_model,
-                provider_model_ref=claude_model_name,
+                provider_model_ref=requested_model,
                 reasoning_preference=reasoning_preference,
             )
 
-        provider_model_ref = self._resolve_model_ref(claude_model_name)
+        provider_model_ref = self._resolve_model_ref(requested_model)
         reasoning_preference = self._resolve_reasoning_preference(claude_model_name)
         provider_id = parse_provider_type(provider_model_ref)
         self._validate_provider_id(provider_id)

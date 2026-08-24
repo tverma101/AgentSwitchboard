@@ -210,6 +210,21 @@ def test_models_list_refilters_cached_catalog_after_policy_edit_and_keeps_config
     assert "open_router/hidden-model" in ids
 
 
+def test_models_list_exposes_stable_aliases_without_replacing_exact_refs():
+    settings = _settings(model_opus=None, model_haiku=None)
+    settings.model_aliases = "muse=opencode_go/minimax-m2.7"
+    app = create_test_app(settings)
+
+    response = TestClient(app).get("/v1/models")
+
+    aliases = {
+        item["id"]: item["display_name"]
+        for item in response.json()["data"]
+        if item["id"] == "muse"
+    }
+    assert aliases == {"muse": "muse → opencode_go/minimax-m2.7"}
+
+
 def test_known_nonvision_model_rejects_image_before_provider_resolution():
     app = create_test_app(_settings(model_opus=None, model_haiku=None))
     manager = provider_manager_for_app(app)

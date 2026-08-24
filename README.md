@@ -113,7 +113,9 @@ commas or new lines. Curated mode also accepts `provider/*` and `*` wildcards.
 Explicitly configured `MODEL` routes remain usable even when hidden from
 discovery. Leaving the generic mode and allowlist empty retains the legacy
 NVIDIA NIM behavior; its old `NVIDIA_NIM_MODEL_ALLOWLIST` setting is only used
-in that compatibility mode.
+in that compatibility mode. Optional stable client-facing aliases use
+`MODEL_ALIASES=fast=opencode_go/minimax-m2.7`; the alias is accepted by the
+gateway while receipts and provider dispatch retain the exact target ref.
 
 <div align="center">
   <img src="assets/admin-page.png" alt="Free Claude Code Admin UI" width="700">

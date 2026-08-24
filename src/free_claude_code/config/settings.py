@@ -12,6 +12,7 @@ from .env_files import (
     env_file_override,
     settings_env_files,
 )
+from .model_aliases import parse_model_aliases
 from .model_catalog import ModelCatalogMode
 from .nim import NimSettings
 from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
@@ -161,6 +162,7 @@ class Settings(BaseSettings):
     model_catalog_allowlist: str = Field(
         default="", validation_alias="MODEL_CATALOG_ALLOWLIST"
     )
+    model_aliases: str = Field(default="", validation_alias="MODEL_ALIASES")
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -381,6 +383,14 @@ class Settings(BaseSettings):
         """Treat an empty Admin select as the legacy compatibility mode."""
 
         return None if value == "" else value
+
+    @field_validator("model_aliases")
+    @classmethod
+    def validate_model_aliases(cls, value: str) -> str:
+        """Reject malformed alias entries before a runtime can start."""
+
+        parse_model_aliases(value)
+        return value
 
     @field_validator("reasoning_policy")
     @classmethod
