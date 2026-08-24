@@ -14,9 +14,9 @@ from free_claude_code.application.capabilities import (
     required_capabilities_for_messages,
 )
 from free_claude_code.application.routing import ModelRouter
+from free_claude_code.config.model_protocols import OPENCODE_GO_MODEL_PROTOCOLS
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
-from free_claude_code.providers.opencode_go import protocol_for_model
 
 _SHAPES = frozenset(
     {
@@ -284,10 +284,8 @@ def _capability_evidence(
 def _protocol_name(provider_id: str, model: str) -> str:
     if provider_id != "opencode_go":
         return "provider-defined"
-    try:
-        return protocol_for_model(model).value
-    except Exception:
-        return "unknown"
+    protocol = OPENCODE_GO_MODEL_PROTOCOLS.get(model)
+    return protocol.value if protocol is not None else "unknown"
 
 
 __all__ = ["build_route_diagnostic", "main"]

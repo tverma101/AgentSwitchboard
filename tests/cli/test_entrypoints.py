@@ -94,6 +94,7 @@ def test_cli_scripts_are_registered() -> None:
         "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
         "fcc-learning": "free_claude_code.learning.cli:main",
         "fcc-appshot": "free_claude_code.cli.appshot:main",
+        "fcc-diagnose": "free_claude_code.cli.diagnose:main",
     }
     assert pyproject["project"]["gui-scripts"] == {
         "fcc-desktop": "free_claude_code.cli.desktop_entrypoint:launch",

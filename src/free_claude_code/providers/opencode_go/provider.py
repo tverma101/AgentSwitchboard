@@ -6,7 +6,6 @@ import sys
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -14,6 +13,10 @@ from openai import AsyncOpenAI
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.config.model_protocols import (
+    OPENCODE_GO_MODEL_PROTOCOLS,
+    GoProtocol,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.failures import ExecutionFailure
@@ -179,39 +182,7 @@ def _sync_responses_evidence(
     evidence.harness_thinking_delta = stream_view.harness_thinking_delta
 
 
-class GoProtocol(StrEnum):
-    """Wire protocols currently documented by OpenCode Go."""
-
-    CHAT = "chat/completions"
-    RESPONSES = "responses"
-    MESSAGES = "messages"
-
-
-GO_MODEL_PROTOCOLS: dict[str, GoProtocol] = {
-    "grok-4.5": GoProtocol.RESPONSES,
-    "gpt-5.6-luna": GoProtocol.RESPONSES,
-    "glm-5.3": GoProtocol.CHAT,
-    "glm-5.2": GoProtocol.CHAT,
-    "glm-5.1": GoProtocol.CHAT,
-    "kimi-k3": GoProtocol.CHAT,
-    "kimi-k2.7-code": GoProtocol.CHAT,
-    "kimi-k2.6": GoProtocol.CHAT,
-    "deepseek-v4-pro": GoProtocol.CHAT,
-    "deepseek-v4-flash": GoProtocol.CHAT,
-    "deepseek-v4-flash-vision-exp": GoProtocol.CHAT,
-    "mimo-v2.5": GoProtocol.CHAT,
-    "mimo-v2.5-pro": GoProtocol.CHAT,
-    "minimax-m3": GoProtocol.MESSAGES,
-    "minimax-m2.7": GoProtocol.MESSAGES,
-    "minimax-m2.5": GoProtocol.MESSAGES,
-    "muse-spark-1.2-contributor": GoProtocol.RESPONSES,
-    "qwen3.8-max": GoProtocol.MESSAGES,
-    "qwen3.7-max": GoProtocol.MESSAGES,
-    "qwen3.7-plus": GoProtocol.MESSAGES,
-    "qwen3.6-plus": GoProtocol.MESSAGES,
-    "hy3": GoProtocol.CHAT,
-    "ox-alpha-free": GoProtocol.CHAT,
-}
+GO_MODEL_PROTOCOLS = OPENCODE_GO_MODEL_PROTOCOLS
 
 
 def protocol_for_model(model_id: str) -> GoProtocol:
