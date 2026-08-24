@@ -174,15 +174,52 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Select None to use the Default Model for Haiku requests.",
     ),
     ConfigFieldSpec(
+        "MODEL_CATALOG_MODE",
+        "Model Catalog Mode",
+        "models",
+        "select",
+        settings_attr="model_catalog_mode",
+        options=(
+            ConfigOptionSpec("", "Legacy NIM compatibility"),
+            ConfigOptionSpec("all", "All discovered models"),
+            ConfigOptionSpec("curated", "Curated allowlist only"),
+        ),
+        description=(
+            "Choose provider-independent discovery visibility. Leave on legacy "
+            "compatibility to retain NVIDIA_NIM_MODEL_ALLOWLIST behavior."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_CATALOG_ALLOWLIST",
+        "Curated Model References",
+        "models",
+        "textarea",
+        settings_attr="model_catalog_allowlist",
+        description=(
+            "Comma- or newline-separated provider/model refs. Supports exact "
+            "refs, provider/*, and *; used when catalog mode is curated."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_ALIASES",
+        "Stable Model Aliases",
+        "models",
+        "textarea",
+        settings_attr="model_aliases",
+        description=(
+            "Optional comma- or newline-separated alias=provider/model entries. "
+            "Aliases are client names; provider/model refs remain the routing IDs."
+        ),
+    ),
+    ConfigFieldSpec(
         "NVIDIA_NIM_MODEL_ALLOWLIST",
         "NVIDIA NIM Model Allowlist",
         "models",
         "textarea",
         settings_attr="nvidia_nim_model_allowlist",
         description=(
-            "Optional comma- or newline-separated exact NVIDIA NIM model ids. "
-            "Leave blank to hide discovered NIM models; configured MODEL routes "
-            "remain usable. Use * to show every discovered NIM model."
+            "Legacy compatibility setting. It applies only when the generic "
+            "catalog mode and allowlist are both empty."
         ),
     ),
     ConfigFieldSpec(
@@ -309,15 +346,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="port",
         default="8082",
         restart_required=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_OPEN_BROWSER",
-        "Open Admin on Startup",
-        "runtime",
-        "boolean",
-        settings_attr="open_admin_browser",
-        default="true",
-        description="Open the Admin UI after the next fcc-server launch becomes healthy.",
     ),
     ConfigFieldSpec(
         "MESSAGING_PLATFORM",

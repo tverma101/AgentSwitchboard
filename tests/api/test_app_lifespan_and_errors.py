@@ -95,7 +95,7 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner():
     start_refresh.assert_called_once()
     get_logger.assert_any_call("uvicorn.error")
     uvicorn_logger.info.assert_called_once_with(
-        "Admin UI: %s (local-only)",
+        "FCC control endpoint: %s (terminal-only; browser launch disabled)",
         "http://127.0.0.1:9099/admin",
     )
 

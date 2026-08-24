@@ -87,6 +87,8 @@ def convert_request_to_anthropic_payload(
         payload["max_tokens"] = request.max_output_tokens
     if request.metadata is not None:
         payload["metadata"] = request.metadata
+    if request.prompt_cache_key is not None:
+        payload["prompt_cache_key"] = request.prompt_cache_key
 
     if output_config := responses_reasoning_to_output_config(request.reasoning):
         payload["output_config"] = output_config

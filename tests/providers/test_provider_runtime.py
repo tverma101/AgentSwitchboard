@@ -39,6 +39,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 from free_claude_code.providers.openai_codex import OpenAICodexProvider
+from free_claude_code.providers.opencode_go import OpenCodeGoProvider
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
@@ -335,10 +336,11 @@ def test_opencode_go_provider_config_uses_correct_base_url_and_name():
     with patch("httpx.AsyncClient"):
         provider = create_provider("opencode_go", _make_settings())
 
-    assert isinstance(provider, OpenAIChatProvider)
+    assert isinstance(provider, OpenCodeGoProvider)
     assert provider._base_url == "https://opencode.ai/zen/go/v1"
-    assert provider._provider_name == "OPENCODE_GO"
-    assert provider._api_key == "test_opencode_key"
+    assert provider._config.api_key == "test_opencode_key"
+    assert provider._config.egress_guard is not None
+    assert provider._config.provider_family == "opencode_go"
 
 
 def test_opencode_go_catalog_uses_opencode_api_key() -> None:
@@ -355,6 +357,16 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
     config = build_provider_config(descriptor, settings)
 
     assert config.api_key == "shared-opencode-token"
+
+
+def test_build_provider_config_opencode_go_accepts_explicit_base_url() -> None:
+    descriptor = PROVIDER_CATALOG["opencode_go"]
+    settings = _make_settings(opencode_api_key="shared-opencode-token")
+    settings.opencode_go_base_url = "http://127.0.0.1:5678/v1"
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.base_url == "http://127.0.0.1:5678/v1"
 
 
 def test_vercel_descriptor_uses_openai_chat_gateway() -> None:
@@ -488,7 +500,7 @@ def test_create_provider_instantiates_each_builtin():
         "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
         "opencode_zen": OpenAIChatProvider,
-        "opencode_go": OpenAIChatProvider,
+        "opencode_go": OpenCodeGoProvider,
         "vercel": OpenAIChatProvider,
         "bedrock": OpenAIChatProvider,
         "huggingface": OpenAIChatProvider,

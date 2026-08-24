@@ -45,6 +45,7 @@ def run_captured_text(
     *,
     cwd: str | Path | None = None,
     env: Mapping[str, str] | None = None,
+    input_text: str | None = None,
     timeout: float | None = None,
     check: bool = False,
 ) -> subprocess.CompletedProcess[str]:
@@ -53,6 +54,7 @@ def run_captured_text(
         list(command),
         cwd=cwd,
         env=env,
+        input=input_text,
         capture_output=True,
         text=True,
         encoding="utf-8",

@@ -133,6 +133,11 @@ class MessagesRequest(BaseModel):
     output_config: dict[str, Any] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
     extra_body: dict[str, Any] | None = None
+    # Ingress metadata used only to preserve session affinity when this
+    # request is translated to a provider-native Responses body.  It is not
+    # part of the Anthropic request payload sent to providers or logs.
+    claude_session_id: str | None = Field(default=None, exclude=True, repr=False)
+    prompt_cache_key: str | None = Field(default=None, exclude=True, repr=False)
     betas: list[str] | None = Field(default=None, exclude=True)
 
 

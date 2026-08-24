@@ -8,12 +8,25 @@ For installation, provider setup, and user-facing usage, see
 [README.md](README.md). This file focuses on where behavior lives in the codebase
 and how contributors should extend it.
 
+The current release-head status and evidence vocabulary are maintained in the
+[documentation index](docs/README.md). A package version bump does not silently
+upgrade the capture version of an older live receipt; receipt metadata remains
+the source of truth for the run that produced it.
+
 ## System Overview
 
-Free Claude Code is a local proxy for agent clients. It accepts Anthropic
-Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
-from Codex CLI, IDE, and App clients, routes the request to a configured
-upstream provider, and preserves the wire protocol expected by the caller.
+Free Claude Code is a local proxy for agent clients. In this personal fork, the
+supported release boundary is terminal-only: `fcc-server` starts the local
+gateway and `fcc-claude`/`fccdanger` run Claude Code through it. The proxy
+accepts Anthropic Messages traffic from Claude Code and Pi clients and OpenAI
+Responses traffic from Codex clients, routes requests to a configured upstream
+provider, and preserves the caller's wire protocol.
+
+The local Admin HTTP surface, desktop shell, messaging bridge, direct editor
+integrations, and tool-plane experiments remain package capabilities with their
+own permissions and evidence boundaries. They are not implied by, or required
+for, the terminal-only Muse release claim. `fcc-server` never opens a browser
+or launches a terminal-browser presentation.
 
 There are three runtime surfaces:
 
@@ -24,12 +37,26 @@ There are three runtime surfaces:
 - Messaging bridge: optional Discord or Telegram adapters turn chat messages
   into managed client CLI sessions.
 
+Local tool planes are provider-independent application capabilities. Computer
+use and browser/CDP adapters implement the typed contracts in
+`application.tool_planes`; they do not own model credentials or choose an
+upstream provider. A launch-time `core.provider_policy.ProviderPolicy` and
+`ProviderEgressGuard` authorize configured OpenCode Go requests before
+transport construction. Strict mode is the default and blocks
+Anthropic/OpenAI/Codex fallbacks; local tools are accounted for separately.
+
+Visual attachments are validated at the protocol boundary and represented in
+traces and learning state by redacted metadata only. `fcc-appshot` is a
+demand-only focused-window helper: it writes a session-scoped local image plus
+a metadata receipt for an explicit wrapper consumer and does not synthesize TUI
+keystrokes or choose an upstream model.
+
 ```mermaid
 flowchart LR
     ClaudeCode[Claude Code CLI and Extensions] --> ProxyAPI[FastAPI Proxy]
     Codex[Codex CLI, IDE, and App] --> ProxyAPI
     Pi[Pi Coding Agent] --> ProxyAPI
-    AdminUI[Local Admin UI] --> ProxyAPI
+    AdminAPI[Local Admin API (not auto-opened)] --> ProxyAPI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
     ClientCLI --> ProxyAPI
@@ -147,9 +174,10 @@ FCC optimizes for installed user workflows, not internal compatibility. The
 behavior that must be preserved is that these user-facing surfaces run correctly
 for real prompts against supported providers:
 
-- `fcc-server`, the Windows/macOS FCC Desktop shell, and the local Admin UI for
-  configuring supported providers, model routing, auth, server tools, messaging,
-  and diagnostics.
+- `fcc-server` and the local terminal clients are the supported release
+  surface. The local Admin API and optional desktop shell can configure or
+  operate additional package features, but they are not part of the
+  terminal-only Muse release proof.
 - `fcc-claude`, Claude Code, and the Anthropic-compatible proxy behavior Claude
   Code relies on, including streaming text, native/interleaved thinking, tool
   use/results, model discovery, token counting, retries/recovery, and supported
@@ -161,10 +189,9 @@ for real prompts against supported providers:
 - `fcc-pi`, Pi, and the Anthropic-compatible proxy behavior Pi relies on,
   including an FCC-scoped model catalog, streaming text and reasoning, and tool
   use/results.
-- Configured Discord and Telegram messaging bridges, including command handling,
-  reply-based conversation branches, status updates, transcript rendering,
-  managed Claude/Codex task execution where configured, task stop/clear flows,
-  persistence, and optional voice-note transcription.
+- Configured Discord and Telegram messaging bridges remain optional package
+  surfaces with separate provider, credential, and live-client evidence; their
+  presence does not expand the terminal-only release contract.
 - Installation, update, and uninstall scripts insofar as they make the
   above workflows available on a user's machine.
 
@@ -197,6 +224,25 @@ new places to add unrelated behavior:
   behavior. It separates immutable vendor profiles from per-request stream
   execution, recovery, request policy, and tool-call assembly. Shared
   protocol rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
+  Its usage normalizer maps provider cache reads, uncached input, and explicit
+  cache-write counters into disjoint Anthropic usage buckets; a cache miss is
+  never treated as a cache write. The Responses adapter applies the same
+  normalization and preserves an explicit upstream cache-write counter.
+- [providers/opencode_go/](src/free_claude_code/providers/opencode_go/) owns the
+  documented OpenCode Go protocol manifest and native transports. Responses
+  models use the protocol-neutral conversion and stream adapter; Messages
+  models preserve Anthropic fields; Chat models reuse the shared OpenAI-chat
+  adapter. Unknown model IDs fail closed instead of probing a different
+  endpoint. Native clients disable ambient environment proxying and redirects,
+  use bounded long-lived connection pools, and carry metadata-only attempt
+  receipts with request-shape, stable-prefix, and tool-schema hashes.
+  Muse's documented Go capability policy rejects unsupported named, required,
+  or disabled tool choices locally; it never silently rewrites them to `auto`.
+  Responses receipts record upstream event types, terminal and response IDs,
+  usage/cache counters, tool-call completeness, and committed-output state.
+  Invalid complete tool JSON, missing tool terminals, empty completed streams,
+  conversion failures, and transport failures remain distinct evidence classes;
+  no prompt, tool arguments, or response content is stored in the receipt.
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
@@ -236,15 +282,12 @@ incomplete ASGI shutdown therefore exits the supervisor instead of overlapping
 old and replacement graphs. On final shutdown it best-effort kills registered
 child processes.
 
-[cli/desktop.py](src/free_claude_code/cli/desktop.py) owns the platform-neutral
-desktop lifecycle. An operating-system file lock admits one desktop host, the
-tray remains on the process main thread for native event-loop compatibility, and
-one worker runs the same in-process `ServerSupervisor` with console output and
-automatic browser launch disabled. A second desktop launch waits for health,
-opens the existing Admin page, and exits. Tray restart delegates to the canonical
-supervisor; tray quit requests the same graceful ASGI and application-runtime
-shutdown as `fcc-server`. [cli/desktop_tray.py](src/free_claude_code/cli/desktop_tray.py)
-owns only native status-area presentation and callbacks.
+[cli/desktop.py](src/free_claude_code/cli/desktop.py) owns an optional
+platform-neutral desktop lifecycle. It is not the supported terminal-only
+startup path and must not be used as evidence for the Muse release gate. The
+canonical release entrypoint is [cli/entrypoints.py](src/free_claude_code/cli/entrypoints.py);
+it reports readiness in the terminal and never opens a browser. The optional
+desktop/tray modules own only their native presentation and callbacks.
 
 [runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
 supervisor supplies one settings snapshot and its restart callback; bootstrap
@@ -1601,4 +1644,3 @@ Update this file when a change adds or meaningfully changes:
 Docs-only changes to this file do not require a semver bump. Production code
 changes still follow the versioning rules in [AGENTS.md](AGENTS.md) and
 [CLAUDE.md](CLAUDE.md).
-

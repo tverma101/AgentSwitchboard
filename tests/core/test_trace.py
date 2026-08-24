@@ -9,6 +9,7 @@ from loguru import logger
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.core.trace import (
     TRACE_PAYLOAD_BINDING,
+    extract_claude_session_id_from_headers,
     trace_event,
     traced_async_stream,
 )
@@ -89,6 +90,51 @@ def test_sanitize_masks_nested_api_key_strings() -> None:
     )
     assert out["outer"]["api_key"] == "<redacted>"
     assert out["outer"]["text"] == "visible"
+
+
+def test_sanitize_masks_image_data_urls_and_base64_sources() -> None:
+    from free_claude_code.core.trace import (
+        provider_chat_body_snapshot,
+        sanitize_trace_value,
+    )
+
+    encoded = "A" * 64
+    out = sanitize_trace_value(
+        {
+            "url": f"data:image/png;base64,{encoded}",
+            "source": {"type": "base64", "data": encoded},
+        }
+    )
+
+    assert encoded not in str(out)
+    assert "redacted-image-data" in str(out)
+    snapshot = provider_chat_body_snapshot(
+        {
+            "model": "vision-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert encoded not in str(snapshot)
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["x-claude-code-session-id", "x-claude-session-id", "anthropic-session-id"],
+)
+def test_extract_claude_session_id_accepts_client_session_headers(header: str) -> None:
+    assert extract_claude_session_id_from_headers({header: "session_stable"}) == (
+        "session_stable"
+    )
 
 
 @pytest.mark.asyncio

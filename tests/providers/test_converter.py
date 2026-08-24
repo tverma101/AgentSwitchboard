@@ -11,6 +11,9 @@ from free_claude_code.core.anthropic import (
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
 
+VALID_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+VALID_WEBP_BASE64 = "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA="
+
 # --- Mock Classes ---
 
 
@@ -407,6 +410,36 @@ def test_convert_user_message_tool_result_list():
     assert result[0]["role"] == "tool"
     assert result[0]["tool_call_id"] == "tool_456"
     assert result[0]["content"] == "Line 1\nLine 2"
+
+
+def test_convert_user_message_rejects_media_inside_tool_result() -> None:
+    """Unsupported tool-result media must not be flattened into JSON text."""
+    messages = [
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="tool_image",
+                    content=[
+                        {"type": "text", "text": "screenshot"},
+                        {
+                            "metadata": {
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://example.test/shot.png",
+                                },
+                            }
+                        },
+                    ],
+                )
+            ],
+        )
+    ]
+
+    with pytest.raises(OpenAIConversionError, match=r"media blocks.*tool_result"):
+        AnthropicToOpenAIConverter.convert_messages(messages)
 
 
 def test_convert_user_message_mixed_text_and_tool_result():
@@ -1072,8 +1105,12 @@ def test_assistant_redacted_thinking_omitted_from_openai_chat():
     "source,expected_url",
     [
         (
-            {"type": "base64", "media_type": "image/png", "data": "AAAA"},
-            "data:image/png;base64,AAAA",
+            {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": VALID_PNG_BASE64,
+            },
+            f"data:image/png;base64,{VALID_PNG_BASE64}",
         ),
         (
             {"type": "url", "url": "https://example.com/image.png"},
@@ -1103,8 +1140,8 @@ def test_convert_user_message_preserves_interleaved_image_text_order():
                     type="image",
                     source={
                         "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": "FIRST",
+                        "media_type": "image/png",
+                        "data": VALID_PNG_BASE64,
                     },
                 ),
                 MockBlock(type="text", text="Compare the first image with this one."),
@@ -1125,7 +1162,7 @@ def test_convert_user_message_preserves_interleaved_image_text_order():
             "content": [
                 {
                     "type": "image_url",
-                    "image_url": {"url": "data:image/jpeg;base64,FIRST"},
+                    "image_url": {"url": f"data:image/png;base64,{VALID_PNG_BASE64}"},
                 },
                 {
                     "type": "text",
@@ -1650,7 +1687,7 @@ def test_openai_build_converts_validated_anthropic_image_block() -> None:
                             "source": {
                                 "type": "base64",
                                 "media_type": "image/webp",
-                                "data": "AAAA",
+                                "data": VALID_WEBP_BASE64,
                             },
                         },
                         {"type": "text", "text": "What is shown?"},
@@ -1668,7 +1705,7 @@ def test_openai_build_converts_validated_anthropic_image_block() -> None:
             "content": [
                 {
                     "type": "image_url",
-                    "image_url": {"url": "data:image/webp;base64,AAAA"},
+                    "image_url": {"url": f"data:image/webp;base64,{VALID_WEBP_BASE64}"},
                 },
                 {"type": "text", "text": "What is shown?"},
             ],

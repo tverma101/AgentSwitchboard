@@ -6,9 +6,17 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from free_claude_code.core.visual_attachments import (
+    VisualAttachmentError,
+    validate_base64_source,
+)
+
 from .content import get_block_attr, get_block_type
 from .models import MessagesRequest
-from .request_serialization import serialize_tool_result_content
+from .request_serialization import (
+    serialize_tool_result_content,
+    tool_result_media_block_types,
+)
 from .utils import set_if_not_none
 
 
@@ -206,6 +214,10 @@ def _openai_user_image_part(block: Any) -> dict[str, Any]:
         data = get_block_attr(source, "data")
         if not isinstance(data, str) or not data.strip():
             raise OpenAIConversionError("Base64 image source requires non-empty data.")
+        try:
+            validate_base64_source(source)
+        except VisualAttachmentError as exc:
+            raise OpenAIConversionError(str(exc)) from exc
         url = f"data:{media_type};base64,{data}"
     elif source_type == "url":
         url = get_block_attr(source, "url")
@@ -354,10 +366,17 @@ class _OpenAIChatHistoryLedger:
     def _record_tool_result(self, block: Any) -> None:
         tuid = get_block_attr(block, "tool_use_id")
         tuid_s = str(tuid) if tuid is not None else ""
+        tool_content = get_block_attr(block, "content", "")
+        media_types = tool_result_media_block_types(tool_content)
+        if media_types:
+            raise OpenAIConversionError(
+                "OpenAI chat conversion cannot represent structured media blocks "
+                f"{media_types} inside tool_result {tuid_s!r}; refusing lossy text "
+                "serialization."
+            )
         if not tuid_s:
             self.add_plain(AnthropicToOpenAIConverter._convert_user_message([block]))
             return
-        tool_content = get_block_attr(block, "content", "")
         serialized = serialize_tool_result_content(tool_content)
         tool_message = {
             "role": "tool",
@@ -680,6 +699,13 @@ class AnthropicToOpenAIConverter:
             elif block_type == "tool_result":
                 flush_content()
                 tool_content = get_block_attr(block, "content", "")
+                media_types = tool_result_media_block_types(tool_content)
+                if media_types:
+                    raise OpenAIConversionError(
+                        "OpenAI chat conversion cannot represent structured media "
+                        f"blocks {media_types} inside tool_result; refusing lossy "
+                        "text serialization."
+                    )
                 serialized = serialize_tool_result_content(tool_content)
                 result.append(
                     {

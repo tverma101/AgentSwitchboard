@@ -25,6 +25,7 @@ from free_claude_code.providers.openai_chat.usage import (
     is_stream_usage_rejection,
     request_stream_usage,
     usage_int,
+    usage_nested_int,
 )
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import immediate_admission
@@ -45,6 +46,7 @@ class _UsageTestProvider(OpenAIChatProvider):
                     reasoning_replay=ReasoningReplayMode.DISABLED,
                 ),
                 NO_REASONING,
+                usage_fields=cache_usage_fields,
             ),
             admission=immediate_admission(),
         )
@@ -146,16 +148,72 @@ def test_usage_int_reads_dict_object_and_model_extra():
     assert usage_int({"prompt_tokens": True}, "prompt_tokens") is None
 
 
-def test_cache_usage_fields_maps_opencode_counters_to_anthropic_usage():
+def test_usage_nested_int_reads_sdk_and_mapping_shapes():
+    assert (
+        usage_nested_int(
+            {"prompt_tokens_details": {"cached_tokens": 31}},
+            "prompt_tokens_details",
+            "cached_tokens",
+        )
+        == 31
+    )
+    assert (
+        usage_nested_int(
+            SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=29)),
+            "prompt_tokens_details",
+            "cached_tokens",
+        )
+        == 29
+    )
+
+
+def test_cache_usage_fields_maps_hit_and_miss_to_disjoint_anthropic_usage():
     usage = SimpleNamespace(
+        prompt_tokens=40,
         prompt_cache_hit_tokens=31,
         prompt_cache_miss_tokens=9,
     )
 
     assert cache_usage_fields(usage) == {
         "cache_read_input_tokens": 31,
-        "cache_creation_input_tokens": 9,
+        "input_tokens": 9,
     }
+
+
+def test_cache_usage_fields_preserves_explicit_cache_write_counter():
+    usage = {
+        "prompt_tokens": 40,
+        "prompt_cache_hit_tokens": 31,
+        "prompt_cache_miss_tokens": 9,
+        "prompt_cache_write_tokens": 3,
+    }
+
+    assert cache_usage_fields(usage) == {
+        "cache_read_input_tokens": 31,
+        "input_tokens": 9,
+        "cache_creation_input_tokens": 3,
+    }
+
+
+def test_cache_usage_fields_supports_openai_nested_cached_tokens():
+    usage = SimpleNamespace(
+        prompt_tokens=40,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=31),
+    )
+
+    assert cache_usage_fields(usage) == {
+        "cache_read_input_tokens": 31,
+        "input_tokens": 9,
+    }
+
+
+def test_cache_usage_fields_does_not_invent_uncached_count_from_invalid_total():
+    usage = {
+        "prompt_tokens": 10,
+        "prompt_tokens_details": {"cached_tokens": 20},
+    }
+
+    assert cache_usage_fields(usage) == {"cache_read_input_tokens": 20}
 
 
 def test_stream_usage_rejection_matches_usage_option_400():
@@ -211,6 +269,80 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
     )
     assert start_usage["input_tokens"] == 7
     assert final_usage == {"input_tokens": 22, "output_tokens": 4}
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_stream_does_not_double_count_cached_prompt_tokens():
+    provider = _UsageTestProvider()
+    request = make_messages_request(model="m")
+    usage = SimpleNamespace(
+        prompt_tokens=40,
+        completion_tokens=4,
+        prompt_cache_hit_tokens=31,
+        prompt_cache_miss_tokens=9,
+    )
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [event async for event in provider.stream_response(request)]
+
+    final_usage = next(
+        event.data["usage"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "message_delta"
+    )
+    assert final_usage == {
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 31,
+    }
+    assert final_usage["input_tokens"] + final_usage["cache_read_input_tokens"] == 40
+    assert "cache_creation_input_tokens" not in final_usage
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_stream_reports_explicit_cache_write_separately():
+    provider = _UsageTestProvider()
+    request = make_messages_request(model="m")
+    usage = SimpleNamespace(
+        prompt_tokens=40,
+        completion_tokens=4,
+        prompt_cache_hit_tokens=31,
+        prompt_cache_miss_tokens=9,
+        prompt_cache_write_tokens=3,
+    )
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [event async for event in provider.stream_response(request)]
+
+    final_usage = next(
+        event.data["usage"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "message_delta"
+    )
+    assert final_usage == {
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 31,
+        "cache_creation_input_tokens": 3,
+    }
 
 
 @pytest.mark.asyncio

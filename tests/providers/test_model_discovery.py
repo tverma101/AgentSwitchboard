@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    CapabilityEvidenceStatus,
+    ProviderModelInfo,
+    ReasoningCapabilityEvidence,
+    ReasoningCapabilityStatus,
+)
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
     DEEPSEEK_DEFAULT_BASE,
@@ -194,8 +200,32 @@ async def test_openrouter_lists_only_tool_capable_models() -> None:
     ) as mock_list:
         assert await provider.list_model_infos() == frozenset(
             {
-                ProviderModelInfo("tool-model", supports_thinking=False),
-                ProviderModelInfo("tool-choice-model", supports_thinking=False),
+                ProviderModelInfo(
+                    "tool-model",
+                    supports_thinking=False,
+                    capability_evidence=CapabilityEvidence(
+                        statuses=(
+                            (
+                                "native_tools",
+                                CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                            ),
+                        ),
+                        evidence_source="provider_metadata",
+                    ),
+                ),
+                ProviderModelInfo(
+                    "tool-choice-model",
+                    supports_thinking=False,
+                    capability_evidence=CapabilityEvidence(
+                        statuses=(
+                            (
+                                "named_tool_choice",
+                                CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                            ),
+                        ),
+                        evidence_source="provider_metadata",
+                    ),
+                ),
             }
         )
 
@@ -237,8 +267,40 @@ async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
 
     assert infos == frozenset(
         {
-            ProviderModelInfo("reasoning-tool-model", supports_thinking=True),
-            ProviderModelInfo("plain-tool-model", supports_thinking=False),
+            ProviderModelInfo(
+                "reasoning-tool-model",
+                supports_thinking=True,
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "native_tools",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                        (
+                            "reasoning_effort",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                ),
+                reasoning=ReasoningCapabilityEvidence(
+                    status=ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED,
+                    evidence_source="provider_metadata",
+                ),
+            ),
+            ProviderModelInfo(
+                "plain-tool-model",
+                supports_thinking=False,
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "named_tool_choice",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                ),
+            ),
         }
     )
 
@@ -547,6 +609,10 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
     }
     assert result.refreshed_provider_ids == ("open_router", "lmstudio")
     assert result.failed_provider_ids == ()
+    observed = runtime.cached_model_info("open_router", "anthropic/claude-sonnet")
+    assert observed is not None
+    assert observed.capability_evidence.observed_at is not None
+    assert observed.capability_evidence.observed_at.endswith("Z")
 
 
 @pytest.mark.asyncio
@@ -629,10 +695,17 @@ async def test_runtime_refresh_model_list_cache_keeps_prior_cache_on_failure() -
 
 def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
     cache = ProviderModelCache()
+    reasoning = ReasoningCapabilityEvidence(
+        status=ReasoningCapabilityStatus.SUPPORTED,
+        effort_evidence=(("high", ReasoningCapabilityStatus.SUPPORTED),),
+        evidence_source="deterministic_fixture",
+    )
     cache.cache_model_infos(
         "open_router",
         {
-            ProviderModelInfo("reasoning-model", supports_thinking=True),
+            ProviderModelInfo(
+                "reasoning-model", supports_thinking=True, reasoning=reasoning
+            ),
             ProviderModelInfo("plain-model", supports_thinking=False),
         },
     )
@@ -644,9 +717,16 @@ def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
         cache.cached_model_supports_thinking("open_router", "reasoning-model") is True
     )
     assert cache.cached_model_supports_thinking("open_router", "plain-model") is False
+    plain_info = cache.cached_model_info("open_router", "plain-model")
+    assert plain_info is not None
+    assert plain_info.supports_thinking is False
     assert cache.cached_prefixed_model_infos() == (
         ProviderModelInfo("open_router/plain-model", supports_thinking=False),
-        ProviderModelInfo("open_router/reasoning-model", supports_thinking=True),
+        ProviderModelInfo(
+            "open_router/reasoning-model",
+            supports_thinking=True,
+            reasoning=reasoning,
+        ),
     )
 
 

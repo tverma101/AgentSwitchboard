@@ -8,16 +8,24 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.request_serialization import (
     serialize_tool_result_content,
+    tool_result_media_block_types,
 )
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
+from free_claude_code.core.visual_attachments import (
+    VisualAttachmentError,
+    validate_base64_source,
+)
 
 from .errors import ResponsesConversionError
+
+_REASONING_SUMMARIES = frozenset({"auto", "concise", "detailed"})
 
 
 def build_responses_provider_request(
     request: MessagesRequest,
     *,
     reasoning: ReasoningPolicy,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, Any]:
     """Build a stateless Responses request without silently dropping fields."""
 
@@ -53,6 +61,12 @@ def build_responses_provider_request(
         "store": False,
         "include": ["reasoning.encrypted_content"],
     }
+    if cache_key := _select_prompt_cache_key(
+        explicit=request.prompt_cache_key,
+        session=prompt_cache_key or request.claude_session_id,
+        metadata=request.metadata,
+    ):
+        body["prompt_cache_key"] = cache_key
     if instructions:
         body["instructions"] = "\n\n".join(instructions)
     if request.max_tokens is not None:
@@ -76,9 +90,42 @@ def build_responses_provider_request(
         ]
     if request.tool_choice is not None:
         body["tool_choice"] = _tool_choice(request.tool_choice, tool_names=tool_names)
-    if reasoning_config := _reasoning_config(reasoning):
+    if reasoning_config := _reasoning_config(
+        reasoning,
+        summary=_requested_reasoning_summary(request.output_config),
+    ):
         body["reasoning"] = reasoning_config
     return body
+
+
+def _select_prompt_cache_key(
+    *,
+    explicit: str | None,
+    session: str | None,
+    metadata: dict[str, Any] | None,
+) -> str | None:
+    """Choose a stable Responses affinity key without touching prompt input.
+
+    A caller-supplied key wins.  The session/header key is the normal Claude
+    Code path, and ``metadata.user_id`` is only a compatibility fallback for
+    clients that cannot forward a session header.  Invalid/non-string values
+    are ignored instead of becoming unstable cache identity.
+    """
+
+    for candidate in (explicit, session, _metadata_user_id(metadata)):
+        if not isinstance(candidate, str):
+            continue
+        normalized = candidate.strip()
+        if normalized and len(normalized) <= 512 and "\n" not in normalized:
+            return normalized
+    return None
+
+
+def _metadata_user_id(metadata: dict[str, Any] | None) -> str | None:
+    if metadata is None:
+        return None
+    user_id = metadata.get("user_id")
+    return user_id if isinstance(user_id, str) else None
 
 
 def _validate_supported_request(request: MessagesRequest) -> None:
@@ -102,6 +149,7 @@ def _validate_supported_request(request: MessagesRequest) -> None:
         unsupported.append("top_k")
     if not _is_noop_context_management(request.context_management):
         unsupported.append("context_management")
+    _validate_reasoning_summary(request.output_config)
     unsupported.extend(_unsupported_output_config_paths(request.output_config))
     if request.mcp_servers:
         unsupported.append("mcp_servers")
@@ -119,7 +167,21 @@ def _unsupported_output_config_paths(
 ) -> list[str]:
     if not output_config:
         return []
-    return [f"output_config.{key}" for key in sorted(output_config) if key != "effort"]
+    return [
+        f"output_config.{key}"
+        for key in sorted(output_config)
+        if key not in {"effort", "summary"}
+    ]
+
+
+def _validate_reasoning_summary(output_config: dict[str, Any] | None) -> None:
+    if not output_config or "summary" not in output_config:
+        return
+    summary = output_config["summary"]
+    if not isinstance(summary, str) or summary not in _REASONING_SUMMARIES:
+        raise ResponsesConversionError(
+            "output_config.summary must be one of: auto, concise, detailed."
+        )
 
 
 def _is_noop_context_management(
@@ -259,14 +321,21 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
         elif block_type == "image":
             message_parts.append(_image_part(block))
         elif block_type == "tool_result":
+            tool_use_id = str(get_block_attr(block, "tool_use_id", ""))
+            tool_content = get_block_attr(block, "content")
+            media_types = tool_result_media_block_types(tool_content)
+            if media_types:
+                raise ResponsesConversionError(
+                    "OpenAI Responses cannot represent structured media blocks "
+                    f"{media_types} inside tool_result {tool_use_id!r}; refusing "
+                    "lossy text serialization."
+                )
             flush_message()
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": str(get_block_attr(block, "tool_use_id", "")),
-                    "output": serialize_tool_result_content(
-                        get_block_attr(block, "content")
-                    ),
+                    "call_id": tool_use_id,
+                    "output": serialize_tool_result_content(tool_content),
                 }
             )
         elif block_type == "document":
@@ -291,6 +360,10 @@ def _image_part(block: Any) -> dict[str, Any]:
         data = get_block_attr(source, "data")
         if not isinstance(media_type, str) or not isinstance(data, str):
             raise ResponsesConversionError("Base64 images require media_type and data.")
+        try:
+            validate_base64_source(source)
+        except VisualAttachmentError as exc:
+            raise ResponsesConversionError(str(exc)) from exc
         url = f"data:{media_type};base64,{data}"
     else:
         raise ResponsesConversionError(
@@ -340,11 +413,26 @@ def _tool_choice(
     raise ResponsesConversionError(f"Unsupported tool_choice type {choice_type!r}.")
 
 
-def _reasoning_config(reasoning: ReasoningPolicy) -> dict[str, str]:
+def _requested_reasoning_summary(output_config: dict[str, Any] | None) -> str | None:
+    _validate_reasoning_summary(output_config)
+    if not output_config:
+        return None
+    summary = output_config.get("summary")
+    return summary if isinstance(summary, str) else None
+
+
+def _reasoning_config(
+    reasoning: ReasoningPolicy,
+    *,
+    summary: str | None,
+) -> dict[str, str]:
     if reasoning.control is ReasoningControl.OFF:
         return {"effort": "none"}
+    config = {"summary": summary} if summary is not None else {}
     if reasoning.effort is not None:
-        return {"effort": reasoning.effort.value, "summary": "auto"}
+        config["effort"] = reasoning.effort.value
+        config.setdefault("summary", "auto")
+        return config
     if reasoning.requests_reasoning:
-        return {"summary": "auto"}
-    return {}
+        config.setdefault("summary", "auto")
+    return config

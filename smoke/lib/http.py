@@ -9,6 +9,8 @@ from free_claude_code.core.anthropic.stream_contracts import SSEEvent, parse_sse
 from .config import SmokeConfig, auth_headers, redacted
 from .server import RunningServer
 
+REASONING_SAFE_OUTPUT_TOKENS = 4_096
+
 
 def message_payload(
     text: str,

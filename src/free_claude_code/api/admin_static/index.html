@@ -6,6 +6,7 @@
     <title>Free Claude Code Admin</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <link rel="stylesheet" href="/admin/assets/admin-v2.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -29,9 +30,35 @@
 
         <div id="adminViews" class="admin-views">
           <section id="view-providers" class="admin-view active" data-view="providers">
+            <div class="provider-toolbar" aria-label="Provider controls">
+              <label class="provider-search" for="providerSearch">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+                  <path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" />
+                </svg>
+                <input
+                  id="providerSearch"
+                  type="search"
+                  placeholder="Search providers or configuration"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </label>
+              <div class="provider-filter" role="group" aria-label="Filter providers">
+                <button class="provider-filter-button active" type="button" data-provider-filter="all">
+                  All <span id="providerCountAll">0</span>
+                </button>
+                <button class="provider-filter-button" type="button" data-provider-filter="configured">
+                  Configured <span id="providerCountConfigured">0</span>
+                </button>
+                <button class="provider-filter-button" type="button" data-provider-filter="setup">
+                  Needs setup <span id="providerCountSetup">0</span>
+                </button>
+              </div>
+            </div>
+
             <section
               id="connectedAccountsSection"
-              class="provider-strip"
+              class="provider-strip connected-accounts-strip"
               aria-label="Connected accounts"
               hidden
             >
@@ -43,11 +70,15 @@
               </div>
               <div id="connectedAccountGrid" class="provider-grid"></div>
             </section>
-            <section class="provider-strip" aria-label="Provider status">
-              <div class="strip-header">
+            <section class="provider-strip provider-status-strip" aria-label="Provider status">
+              <div class="strip-header provider-list-heading">
                 <h3>Providers</h3>
+                <span class="provider-list-hint">/ focuses search</span>
               </div>
               <div id="providerGrid" class="provider-grid"></div>
+              <p id="providerEmptyState" class="provider-empty-state" hidden>
+                No providers match this filter.
+              </p>
             </section>
             <div
               id="providersSections"
@@ -107,5 +138,6 @@
       </footer>
     </div>
     <script src="/admin/assets/admin.js"></script>
+    <script src="/admin/assets/admin-ui-v2.js"></script>
   </body>
 </html>

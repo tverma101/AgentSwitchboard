@@ -187,6 +187,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_url="https://opencode.ai/auth",
         credential_attr="opencode_api_key",
         default_base_url=OPENCODE_GO_DEFAULT_BASE,
+        base_url_attr="opencode_go_base_url",
         proxy_attr="opencode_go_proxy",
     ),
     "vercel": ProviderDescriptor(

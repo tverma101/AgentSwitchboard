@@ -1,13 +1,16 @@
 """Provider construction from declarative profiles and exceptional adapters."""
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 
 from free_claude_code.application.errors import (
     ApplicationUnavailableError,
     UnknownProviderError,
 )
+from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.provider_policy import ProviderEgressGuard, ProviderPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.openai_chat import (
@@ -145,6 +148,27 @@ def _create_groq(
     return GroqProvider(config, admission=admission)
 
 
+def _create_opencode_go(
+    config: ProviderConfig,
+    settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.opencode_go import OpenCodeGoProvider
+
+    configured_model = "configured"
+    if parse_provider_type(settings.model) == "opencode_go":
+        configured_model = parse_model_name(settings.model)
+    policy = ProviderPolicy(
+        primary_provider="opencode_go",
+        primary_model=configured_model,
+    )
+    guarded_config = replace(
+        config,
+        egress_guard=ProviderEgressGuard(policy),
+    )
+    return OpenCodeGoProvider(guarded_config, admission=admission)
+
+
 _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -157,14 +181,20 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "vertex": _create_vertex,
     "github_models": _create_github_models,
     "groq": _create_groq,
+    "opencode_go": _create_opencode_go,
 }
 _INJECTED_PROVIDER_IDS = {"openai"}
+# OpenCode Go remains in OPENAI_CHAT_PROFILES solely as the internal profile for
+# its chat/completions sub-adapter. Construction ownership belongs to the native
+# multi-protocol provider above.
+_PROFILE_SUBADAPTER_IDS = {"opencode_go"}
 
-_profiled_ids = set(OPENAI_CHAT_PROFILES)
+_profiled_ids = set(OPENAI_CHAT_PROFILES) - _PROFILE_SUBADAPTER_IDS
 _special_ids = set(_SPECIAL_PROVIDER_FACTORIES)
 _construction_ids = _profiled_ids | _special_ids | _INJECTED_PROVIDER_IDS
 if (
-    _profiled_ids & _special_ids
+    _PROFILE_SUBADAPTER_IDS - _special_ids
+    or _profiled_ids & _special_ids
     or _profiled_ids & _INJECTED_PROVIDER_IDS
     or _special_ids & _INJECTED_PROVIDER_IDS
     or _construction_ids != set(PROVIDER_CATALOG)

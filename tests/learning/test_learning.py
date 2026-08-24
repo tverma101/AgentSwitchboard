@@ -1,0 +1,555 @@
+"""Tests for FCC Learning memory and Claude hook integration."""
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from free_claude_code.learning import cli as learning_cli
+from free_claude_code.learning.engine import apply_learning_result
+from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
+from free_claude_code.learning.stop_hook import drain_queue, enqueue_stop, handle_stop
+from free_claude_code.learning.store import LearningStore, format_memory_context
+
+
+def test_store_deduplicates_and_scopes_memories(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    assert store.remember(
+        scope="global",
+        project_key="/repo",
+        text="Prefer concise implementation notes.",
+        confidence=0.95,
+        source="user_explicit",
+    )
+    assert not store.remember(
+        scope="global",
+        project_key="/other",
+        text="Prefer concise implementation notes.",
+        confidence=0.99,
+        source="user_explicit",
+    )
+    assert store.remember(
+        scope="project",
+        project_key="/repo",
+        text="The project uses uv for Python dependencies.",
+        confidence=0.96,
+        source="verified_fact",
+    )
+
+    rows = store.relevant_memories(
+        project_key="/repo", prompt="Which Python dependencies tool does this use?"
+    )
+    context = format_memory_context(rows)
+    assert "Prefer concise implementation notes." in context
+    assert "uses uv" in context
+
+    other = format_memory_context(
+        store.relevant_memories(project_key="/different", prompt="dependencies")
+    )
+    assert "uses uv" not in other
+    assert "Prefer concise implementation notes." in other
+
+
+def test_prompt_state_round_trip(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    store.record_prompt(session_id="session-1", cwd="/repo", prompt="Fix the parser")
+    assert store.prompt_for_session("session-1") == ("/repo", "Fix the parser")
+
+
+def test_hook_install_is_idempotent_and_preserves_existing_hooks(
+    tmp_path: Path,
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "model": "haiku",
+                "hooks": {
+                    "Stop": [
+                        {"hooks": [{"type": "command", "command": "printf existing"}]}
+                    ]
+                },
+            }
+        )
+    )
+
+    assert install_hooks(tmp_path)
+    assert not install_hooks(tmp_path)
+
+    payload = json.loads(settings.read_text())
+    assert payload["model"] == "haiku"
+    stop_commands = [
+        hook["command"] for group in payload["hooks"]["Stop"] for hook in group["hooks"]
+    ]
+    assert "printf existing" in stop_commands
+    assert any(
+        "free_claude_code.learning.stop_hook" in command for command in stop_commands
+    )
+    assert (tmp_path / "settings.json.fcc-learning.bak").exists()
+    assert (tmp_path / "skills").is_dir()
+
+    assert uninstall_hooks(tmp_path)
+    restored = json.loads(settings.read_text())
+    stop_commands = [
+        hook["command"]
+        for group in restored["hooks"]["Stop"]
+        for hook in group["hooks"]
+    ]
+    assert stop_commands == ["printf existing"]
+    assert "SessionStart" not in restored["hooks"]
+    assert "UserPromptSubmit" not in restored["hooks"]
+
+
+def test_apply_learning_result_rejects_low_confidence_and_writes_global_skill(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "fcc"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    store = LearningStore(tmp_path / "learning.db")
+
+    result = {
+        "memories": [
+            {
+                "scope": "global",
+                "text": "Use uv for Python package management.",
+                "confidence": 0.97,
+                "evidence_kind": "user_explicit",
+            },
+            {
+                "scope": "project",
+                "text": "A temporary browser failure means browser tools never work.",
+                "confidence": 0.4,
+                "evidence_kind": "successful_workflow",
+            },
+        ],
+        "skill": {
+            "name": "verify-before-durable-learning",
+            "description": "Validate durable learning before saving it.",
+            "instructions": (
+                "Check that the procedure actually succeeded. Reject temporary "
+                "failures and unverified guesses. Save only reusable steps and "
+                "include a concrete validation step before considering the skill complete."
+            ),
+            "scope": "global",
+            "confidence": 0.97,
+            "evidence_kind": "successful_workflow",
+        },
+    }
+
+    counts = apply_learning_result(result=result, cwd=str(tmp_path), store=store)
+    assert counts == {"memories": 1, "skills": 1}
+    assert store.counts() == {"memories": 1, "skills": 1}
+    skill = (
+        tmp_path
+        / "claude"
+        / "skills"
+        / "fcc-auto-verify-before-durable-learning"
+        / "SKILL.md"
+    )
+    assert skill.exists()
+    assert "temporary failures" in skill.read_text()
+
+
+def test_project_skill_uses_repo_scope_without_leaking_local_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "personal-claude"))
+    store = LearningStore(tmp_path / "learning.db")
+    result = {
+        "memories": [],
+        "skill": {
+            "name": "project-bootstrap",
+            "description": "Reuse the verified project bootstrap procedure.",
+            "instructions": (
+                "Run the documented bootstrap command, verify dependencies resolve, "
+                "then execute the project's smallest smoke test before continuing."
+            ),
+            "scope": "project",
+            "confidence": 0.98,
+            "evidence_kind": "successful_workflow",
+        },
+    }
+
+    assert apply_learning_result(result=result, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    learned = list((tmp_path / ".claude" / "skills").glob("fcc-auto-*/SKILL.md"))
+    assert len(learned) == 1
+    skill_text = learned[0].read_text()
+    assert "Apply only within this repository." in skill_text
+    assert str(tmp_path) not in skill_text
+    assert not (tmp_path / "personal-claude" / "skills").exists()
+
+
+def test_apply_learning_result_rejects_secret_like_memory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    store = LearningStore(tmp_path / "learning.db")
+    result = {
+        "memories": [
+            {
+                "scope": "global",
+                "text": "API_KEY=supersecretvalue12345",
+                "confidence": 0.99,
+                "evidence_kind": "user_explicit",
+            }
+        ],
+        "skill": None,
+    }
+    assert apply_learning_result(result=result, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 0,
+    }
+
+
+def test_stop_hook_ignores_missing_prompt_state(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    handle_stop(
+        {
+            "session_id": "unknown",
+            "cwd": str(tmp_path),
+            "last_assistant_message": "Completed successfully.",
+        },
+        store,
+    )
+    assert store.counts() == {"memories": 0, "skills": 0}
+
+
+def test_memory_replace_remove_and_history_are_scoped_and_audited(
+    tmp_path: Path,
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    project = str(tmp_path / "repo")
+    memory_id, inserted = store.add_memory(
+        scope="project",
+        project_key=project,
+        text="The project uses uv.",
+        confidence=0.9,
+        source="verified_fact",
+    )
+    assert inserted
+    assert store.replace_memory(
+        memory_id=memory_id,
+        project_key=project,
+        scope="project",
+        text="The project uses uv and Python 3.14.",
+        confidence=0.98,
+        source="verified_fact",
+        reason="verified project inspection",
+        evidence="verified_fact",
+    )
+    assert store.get_memory(memory_id, project_key=str(tmp_path / "other")) is None
+    assert store.remove_memory(
+        memory_id,
+        project_key=project,
+        reason="user asked to forget it",
+        evidence="user_explicit",
+    )
+    assert store.get_memory(memory_id, project_key=project) is None
+    assert [
+        row["action"] for row in store.memory_history(memory_id, project_key=project)
+    ] == [
+        "add",
+        "replace",
+        "remove",
+    ]
+
+
+def test_learning_actions_require_explicit_safe_evidence(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    memory_id, _ = store.add_memory(
+        scope="global",
+        project_key=str(tmp_path),
+        text="Preference A is current.",
+        confidence=0.96,
+        source="user_explicit",
+    )
+    assert apply_learning_result(
+        result={
+            "memory_actions": [
+                {
+                    "action": "remove",
+                    "memory_id": memory_id,
+                    "evidence_kind": "verified_fact",
+                }
+            ],
+            "skill": None,
+        },
+        cwd=str(tmp_path),
+        store=store,
+    ) == {"memories": 0, "skills": 0}
+    assert store.get_memory(memory_id, project_key=str(tmp_path)) is not None
+    assert apply_learning_result(
+        result={
+            "memory_actions": [
+                {
+                    "action": "replace",
+                    "memory_id": memory_id,
+                    "scope": "global",
+                    "text": "Preference B is current.",
+                    "confidence": 0.99,
+                    "evidence_kind": "user_explicit",
+                    "reason": "user correction",
+                }
+            ],
+            "skill": None,
+        },
+        cwd=str(tmp_path),
+        store=store,
+    ) == {"memories": 1, "skills": 0}
+    replaced_memory = store.get_memory(memory_id, project_key=str(tmp_path))
+    assert replaced_memory is not None
+    assert replaced_memory["text"] == "Preference B is current."
+
+
+def test_memory_scope_cannot_be_changed_or_read_without_project_context(
+    tmp_path: Path,
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    project = str(tmp_path / "repo")
+    memory_id, _ = store.add_memory(
+        scope="project",
+        project_key=project,
+        text="The project uses uv.",
+        confidence=0.96,
+        source="verified_fact",
+    )
+
+    assert store.get_memory(memory_id) is None
+    assert not store.replace_memory(
+        memory_id=memory_id,
+        project_key=project,
+        scope="global",
+        text="The project uses uv globally.",
+        confidence=0.98,
+        source="verified_fact",
+        reason="invalid scope transition",
+        evidence="verified_fact",
+    )
+    assert store.get_memory(memory_id, project_key=project) is not None
+
+
+def test_memory_cli_list_search_show_remove_and_history_are_deterministic(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "home"))
+    store = LearningStore(tmp_path / "home" / "learning.db")
+    memory_id, _ = store.add_memory(
+        scope="global",
+        project_key=str(tmp_path),
+        text="Prefer small verified changes.",
+        confidence=0.99,
+        source="user_explicit",
+    )
+
+    def run(*args: str) -> Any:
+        monkeypatch.setattr(sys, "argv", ["fcc-learning", *args])
+        learning_cli.main()
+        return json.loads(capsys.readouterr().out)
+
+    assert run("memory", "list", "--cwd", str(tmp_path))[0]["id"] == memory_id
+    assert (
+        run("memory", "search", "verified", "--cwd", str(tmp_path))[0]["id"]
+        == memory_id
+    )
+    assert (
+        run("memory", "show", str(memory_id), "--cwd", str(tmp_path))["id"] == memory_id
+    )
+    assert run("memory", "remove", str(memory_id), "--cwd", str(tmp_path)) == {
+        "removed": memory_id
+    }
+    history = run("memory", "history", str(memory_id), "--cwd", str(tmp_path))
+    assert history[-1]["action"] == "remove"
+
+
+def test_skill_revisions_preserve_previous_bytes_and_rollback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    store = LearningStore(tmp_path / "learning.db")
+    first = {
+        "memory_actions": [],
+        "skill": {
+            "action": "create",
+            "name": "review-work",
+            "description": "Review the work before handing it off.",
+            "instructions": "Run the focused tests, verify the diff, and check the final status before handoff.",
+            "scope": "global",
+            "confidence": 0.98,
+            "evidence_kind": "successful_workflow",
+        },
+    }
+    assert apply_learning_result(result=first, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    path = tmp_path / "claude" / "skills" / "fcc-auto-review-work" / "SKILL.md"
+    old = path.read_text()
+    second = {
+        "memory_actions": [],
+        "skill": {
+            **first["skill"],
+            "action": "update",
+            "instructions": "Run focused tests, verify the diff, check the final status, and record the receipt before handoff.",
+        },
+    }
+    assert apply_learning_result(result=second, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    assert path.read_text() != old
+    assert len(store.skill_revisions("fcc-auto-review-work")) == 2
+    assert store.rollback_skill("fcc-auto-review-work", 1) == path
+    assert path.read_text() == old
+
+
+def test_skill_update_rejects_dropped_validation_step(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    store = LearningStore(tmp_path / "learning.db")
+    first = {
+        "memory_actions": [],
+        "skill": {
+            "action": "create",
+            "name": "safe-release",
+            "description": "Release a change only after validation.",
+            "instructions": (
+                "Run the focused tests, verify the diff, and check the final status "
+                "before handoff."
+            ),
+            "scope": "global",
+            "confidence": 0.98,
+            "evidence_kind": "successful_workflow",
+        },
+    }
+    assert apply_learning_result(result=first, cwd=str(tmp_path), store=store) == {
+        "memories": 0,
+        "skills": 1,
+    }
+    path = tmp_path / "claude" / "skills" / "fcc-auto-safe-release" / "SKILL.md"
+    original = path.read_text()
+
+    dropped_step = {
+        "memory_actions": [],
+        "skill": {
+            **first["skill"],
+            "action": "update",
+            "instructions": "Run focused tests and verify the diff before handoff.",
+        },
+    }
+    assert apply_learning_result(
+        result=dropped_step, cwd=str(tmp_path), store=store
+    ) == {"memories": 0, "skills": 0}
+    assert path.read_text() == original
+
+
+def test_stop_enqueue_is_idempotent_redacted_and_recovered(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    store.record_prompt(
+        session_id="session-1",
+        cwd=str(tmp_path),
+        prompt="Fix the parser API_KEY=secretvalue123",
+    )
+    payload = {
+        "session_id": "session-1",
+        "cwd": str(tmp_path),
+        "last_assistant_message": "Completed the parser. bearer abcdefghijklmnop",
+    }
+    first = enqueue_stop(payload, store)
+    second = enqueue_stop(payload, store)
+    assert first == second
+    assert store.queue_counts() == {"pending": 1}
+    monkeypatch.setattr(
+        "free_claude_code.learning.stop_hook.learn_from_turn", lambda **_: {}
+    )
+    assert drain_queue(store, max_items=2) == 1
+    assert store.queue_counts() == {"completed": 1}
+
+
+def test_learning_queue_redacts_image_payloads(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    store.record_prompt(session_id="session-image", cwd=str(tmp_path), prompt="Attach")
+    encoded = "A" * 64
+    queue_id = enqueue_stop(
+        {
+            "session_id": "session-image",
+            "last_assistant_message": f"data:image/png;base64,{encoded}",
+        },
+        store,
+    )
+    assert queue_id is not None
+    with store._connect() as connection:
+        row = connection.execute(
+            "SELECT assistant_message FROM learning_queue WHERE queue_id = ?",
+            (queue_id,),
+        ).fetchone()
+    assert row is not None
+    assert encoded not in str(row["assistant_message"])
+    assert "REDACTED_IMAGE_DATA" in str(row["assistant_message"])
+
+
+def test_queue_reclaims_abandoned_worker_and_dead_letters_after_bounded_retries(
+    tmp_path: Path,
+) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    store.record_prompt(session_id="session-1", cwd=str(tmp_path), prompt="Keep safe")
+    queue_id = enqueue_stop(
+        {
+            "session_id": "session-1",
+            "last_assistant_message": "done",
+            "fault_attribution": {"note": "token=secretvalue12345"},
+        },
+        store,
+    )
+    assert queue_id is not None
+    claimed = store.claim_learning(lease_seconds=0)
+    assert claimed is not None
+    assert store.queue_counts() == {"processing": 1}
+
+    # A new session can reclaim a row whose worker disappeared.
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE learning_queue SET leased_at = 0 WHERE queue_id = ?",
+            (queue_id,),
+        )
+    reclaimed = store.claim_learning(lease_seconds=0)
+    assert reclaimed is not None
+    assert reclaimed["queue_id"] == queue_id
+    assert "secretvalue12345" not in str(reclaimed["attribution_json"])
+
+    assert (
+        store.fail_learning(queue_id, error="permanent", max_attempts=1)
+        == "dead_letter"
+    )
+    assert store.queue_counts() == {"dead_letter": 1}
+
+
+def test_fault_attribution_blocks_infrastructure_learning(tmp_path: Path) -> None:
+    store = LearningStore(tmp_path / "learning.db")
+    result = {
+        "memory_actions": [
+            {
+                "action": "add",
+                "scope": "global",
+                "text": "Never use the provider after one timeout.",
+                "confidence": 0.99,
+                "evidence_kind": "successful_workflow",
+            }
+        ],
+        "skill": None,
+    }
+    assert apply_learning_result(
+        result=result,
+        cwd=str(tmp_path),
+        store=store,
+        attribution={"fault_domain": "opencode_gateway", "success": False},
+    ) == {"memories": 0, "skills": 0}
+    assert store.counts() == {"memories": 0, "skills": 0}
