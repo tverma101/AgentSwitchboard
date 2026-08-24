@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The release head is version
-`4.30.3`; examples below describe this checkout, not every feature proposed in
+`4.30.4`; examples below describe this checkout, not every feature proposed in
 the open design backlog.
 
 ## What You Get

@@ -82,6 +82,9 @@ that source.
   and fails closed if proxy auth or the context cap is missing.
   Inspect the current state without launching Claude with
   `fcc-learning claude-compat`.
+  Managed Claude sessions (including resume/fork tasks) apply the same
+  compatibility check before spawning a child; an uncertified executable exits
+  with a typed compatibility failure instead of bypassing the FCC policy.
 - `/v1/models` exposes explicit reasoning evidence when the provider's model
   catalog supplies it: overall support, individually evidenced effort levels,
   provider default, reasoning-token reporting, visible-summary and opaque-

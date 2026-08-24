@@ -2,12 +2,17 @@
 
 import asyncio
 import os
+import shutil
 from collections.abc import AsyncGenerator
 
 from loguru import logger
 
 from free_claude_code.cli.claude_env import settings_env_routing_conflict_message
-from free_claude_code.cli.claude_firewall import ensure_process_wrapper
+from free_claude_code.cli.claude_firewall import (
+    ClaudeCompatibilityError,
+    enforce_claude_compatibility,
+    ensure_process_wrapper,
+)
 from free_claude_code.cli.process_registry import (
     kill_pid_tree_best_effort,
     register_pid,
@@ -111,6 +116,7 @@ class ManagedClaudeSession:
             process: asyncio.subprocess.Process | None = None
             termination_confirmed = False
             routing_conflict_message: str | None = None
+            compatibility_error: str | None = None
             try:
                 async with self._lifecycle_lock:
                     if self._closed:
@@ -121,34 +127,55 @@ class ManagedClaudeSession:
                         cwd=self.config.workspace_path,
                     )
                     if routing_conflict_message is None:
-                        ensure_process_wrapper()
-                        invocation = build_managed_claude_invocation(
-                            config=self.config,
-                            request=ManagedClaudeTaskRequest(
-                                prompt=prompt,
-                                session_id=session_id,
-                                fork_session=fork_session,
-                            ),
-                            base_env=os.environ,
-                        )
+                        try:
+                            wrapper_path = ensure_process_wrapper()
+                            binary_path = (
+                                shutil.which(self.claude_bin) or self.claude_bin
+                            )
+                            if os.path.isfile(binary_path):
+                                compatibility = enforce_claude_compatibility(
+                                    binary_path,
+                                    base_env=os.environ,
+                                    wrapper_path=wrapper_path,
+                                )
+                                trace_event(
+                                    stage="claude_cli",
+                                    event="claude_cli.compatibility",
+                                    source="claude_cli",
+                                    claude_version=compatibility.version,
+                                    compatibility_state=compatibility.state,
+                                    wrapper_valid=compatibility.wrapper_valid,
+                                    managed_session=True,
+                                )
+                            invocation = build_managed_claude_invocation(
+                                config=self.config,
+                                request=ManagedClaudeTaskRequest(
+                                    prompt=prompt,
+                                    session_id=session_id,
+                                    fork_session=fork_session,
+                                ),
+                                base_env=os.environ,
+                            )
 
-                        trace_event(
-                            stage="claude_cli",
-                            event="claude_cli.process.launch",
-                            source="claude_cli",
-                            **invocation.trace_metadata,
-                        )
+                            trace_event(
+                                stage="claude_cli",
+                                event="claude_cli.process.launch",
+                                source="claude_cli",
+                                **invocation.trace_metadata,
+                            )
 
-                        process = await asyncio.create_subprocess_exec(
-                            *invocation.argv,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                            cwd=invocation.cwd,
-                            env=invocation.env,
-                        )
-                        self.process = process
-                        if process.pid:
-                            register_pid(process.pid)
+                            process = await asyncio.create_subprocess_exec(
+                                *invocation.argv,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                                cwd=invocation.cwd,
+                                env=invocation.env,
+                            )
+                            self.process = process
+                            if process.pid:
+                                register_pid(process.pid)
+                        except ClaudeCompatibilityError as exc:
+                            compatibility_error = str(exc)
 
                 if routing_conflict_message is not None:
                     logger.error(
@@ -162,6 +189,21 @@ class ManagedClaudeSession:
                         "type": "exit",
                         "code": 2,
                         "stderr": routing_conflict_message,
+                    }
+                    return
+
+                if compatibility_error is not None:
+                    logger.error(
+                        "Managed Claude launch blocked by compatibility firewall"
+                    )
+                    yield {
+                        "type": "error",
+                        "error": {"message": compatibility_error},
+                    }
+                    yield {
+                        "type": "exit",
+                        "code": 78,
+                        "stderr": compatibility_error,
                     }
                     return
 
