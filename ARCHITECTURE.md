@@ -200,7 +200,10 @@ new places to add unrelated behavior:
   Its usage normalizer maps provider cache reads, uncached input, and explicit
   cache-write counters into disjoint Anthropic usage buckets; a cache miss is
   never treated as a cache write. The Responses adapter applies the same
-  normalization and preserves an explicit upstream cache-write counter.
+  normalization and preserves an explicit upstream cache-write counter. Invalid
+  or incomplete cache breakdowns are omitted rather than combined with a total
+  prompt count, while the usage receipt keeps the routed provider and gateway
+  model attribution.
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new

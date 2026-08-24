@@ -90,6 +90,7 @@ def cache_usage_fields(usage_info: Any) -> dict[str, int]:
     """
 
     usage_fields: dict[str, int] = {}
+    prompt_total = usage_int(usage_info, "prompt_tokens")
     cache_read = _first_usage_int(
         usage_info, "prompt_cache_hit_tokens", "cache_read_input_tokens"
     )
@@ -99,14 +100,35 @@ def cache_usage_fields(usage_info: Any) -> dict[str, int]:
             "prompt_tokens_details",
             "cached_tokens",
         )
+    uncached = _first_usage_int(usage_info, "prompt_cache_miss_tokens")
+    if (
+        uncached is not None
+        and prompt_total is not None
+        and (prompt_total < 0 or uncached > prompt_total)
+    ):
+        # Do not let a malformed miss counter inflate the uncached bucket.
+        uncached = None
+    if cache_read is not None:
+        if prompt_total is not None and (prompt_total < 0 or cache_read > prompt_total):
+            # Keep the reported total, but do not expose an impossible cache
+            # breakdown that would make the downstream receipt double-count
+            # input.
+            cache_read = None
+        elif prompt_total is None and uncached is None:
+            # The normal stream path falls back to a full prompt estimate when
+            # no provider total or miss count exists. Do not add a cache read
+            # to that estimate without a disjoint uncached bucket.
+            cache_read = None
     if cache_read is not None:
         usage_fields["cache_read_input_tokens"] = cache_read
 
-    uncached = _first_usage_int(usage_info, "prompt_cache_miss_tokens")
-    if uncached is None and cache_read is not None:
-        prompt_total = usage_int(usage_info, "prompt_tokens")
-        if prompt_total is not None and prompt_total >= cache_read:
-            uncached = prompt_total - cache_read
+    if (
+        uncached is None
+        and cache_read is not None
+        and prompt_total is not None
+        and prompt_total >= cache_read
+    ):
+        uncached = prompt_total - cache_read
     if uncached is not None:
         # ``AnthropicStreamLedger.message_delta`` merges provider fields last,
         # so this intentionally replaces the OpenAI total prompt count.
@@ -135,7 +157,7 @@ def cache_usage_fields(usage_info: Any) -> dict[str, int]:
 def _first_usage_int(usage_info: Any, *keys: str) -> int | None:
     for key in keys:
         value = usage_int(usage_info, key)
-        if value is not None:
+        if value is not None and value >= 0:
             return value
     return None
 
@@ -143,7 +165,7 @@ def _first_usage_int(usage_info: Any, *keys: str) -> int | None:
 def _first_nested_usage_int(usage_info: Any, parent: str, *keys: str) -> int | None:
     for key in keys:
         value = usage_nested_int(usage_info, parent, key)
-        if value is not None:
+        if value is not None and value >= 0:
             return value
     return None
 

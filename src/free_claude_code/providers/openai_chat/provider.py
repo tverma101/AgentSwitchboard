@@ -747,11 +747,13 @@ class _OpenAIChatStreamRunner:
             yield event
 
         completion = usage_int(usage_info, "completion_tokens")
-        if isinstance(completion, int):
+        if isinstance(completion, int) and completion >= 0:
             output_tokens = completion
         else:
             output_tokens = ledger.estimate_output_tokens()
         provider_input = usage_int(usage_info, "prompt_tokens")
+        if provider_input is not None and provider_input < 0:
+            provider_input = None
         if provider_input is not None:
             logger.debug(
                 "TOKEN_ESTIMATE: our={} provider={} diff={:+d}",

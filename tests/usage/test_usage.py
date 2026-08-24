@@ -93,3 +93,48 @@ def test_usage_stream_observer_handles_split_sse_and_only_records_counters(tmp_p
         "web_search_requests": 1,
         "web_fetch_requests": 2,
     }
+
+
+def test_usage_stream_observer_preserves_disjoint_opencode_receipt_attribution(
+    tmp_path,
+):
+    store = UsageStore(tmp_path / "usage.db")
+    observer = UsageStreamObserver(
+        store,
+        request_id="opencode-receipt-1",
+        provider_id="opencode_go",
+        model="opencode_go/muse-spark-1.2-contributor",
+        wire_api="responses",
+    )
+    observer.feed(
+        'event: message_delta\ndata: {"usage":{"input_tokens":9,'
+        '"output_tokens":4,"cache_read_input_tokens":31}}\n\n'
+        "event: message_stop\ndata: {}\n\n"
+    )
+    observer.finish()
+
+    summary = store.summary(days=1)
+    assert summary["totals"] == {
+        "requests": 1,
+        "successful_requests": 1,
+        "failed_requests": 0,
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 31,
+        "cache_creation_input_tokens": 0,
+        "web_search_requests": 0,
+        "web_fetch_requests": 0,
+    }
+    assert summary["models"] == [
+        {
+            "provider_id": "opencode_go",
+            "model": "opencode_go/muse-spark-1.2-contributor",
+            "requests": 1,
+            "successful_requests": 1,
+            "failed_requests": 0,
+            "input_tokens": 9,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 31,
+            "cache_creation_input_tokens": 0,
+        }
+    ]
