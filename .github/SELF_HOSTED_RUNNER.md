@@ -31,7 +31,8 @@ the persistent Mac runner.
 
 The runner is registered only for `tverma101/Harness`, with the custom label
 `harness-local`. It runs as the user LaunchAgent
-`com.tverma101.harness-actions-runner`.
+`com.tverma101.harness-actions-runner` and keeps its warm workspace and
+toolchain caches outside the repository checkout.
 
 Check service state:
 
