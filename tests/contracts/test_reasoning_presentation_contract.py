@@ -6,7 +6,9 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
-from free_claude_code.core.openai_responses.provider_stream import ResponsesProviderStream
+from free_claude_code.core.openai_responses.provider_stream import (
+    ResponsesProviderStream,
+)
 
 
 def _complete(stream: ResponsesProviderStream, *, output_tokens: int = 2) -> list[str]:
