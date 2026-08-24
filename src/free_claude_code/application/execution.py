@@ -74,6 +74,8 @@ class ProviderExecutor:
             "provider_model": routed.resolved.provider_model,
             "provider_model_ref": routed.resolved.provider_model_ref,
             "gateway_model": gateway_model,
+            "route_source": routed.resolved.route_source,
+            "alias_applied": routed.resolved.alias_applied,
             "virtual_context_window": routed.resolved.virtual_context_window,
             "reasoning_control": routed.reasoning.control.value,
             "reasoning_effort": (
@@ -158,6 +160,8 @@ class ProviderExecutor:
             "request_id": request_id,
             "provider_id": routed.resolved.provider_id,
             "gateway_model": gateway_model,
+            "route_source": routed.resolved.route_source,
+            "alias_applied": routed.resolved.alias_applied,
         }
         if self._generation_id is not None:
             stream_trace["generation_id"] = self._generation_id
