@@ -3,6 +3,8 @@
 import hashlib
 import json
 import os
+import stat
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,7 @@ from .models import Message, MessagesRequest
 DEFAULT_TOOL_RESULT_MAX_BYTES = 16 * 1024
 MAX_TOOL_RESULT_MAX_BYTES = 1_000_000
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+_OPEN_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 class ContextGovernanceError(ValueError):
@@ -229,22 +232,70 @@ def _write_artifact(text: str, *, artifact_dir: Path) -> tuple[str, str]:
         )
     digest = hashlib.sha256(encoded).hexdigest()
     directory = artifact_dir.expanduser()
-    path = directory / f"tool-result-{digest[:24]}.txt"
     try:
+        directory = directory.resolve()
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if stat.S_IMODE(directory.stat().st_mode) & 0o077:
+            raise ContextGovernanceError(
+                "FCC context artifact directory must not be group or world accessible"
+            )
+        path = directory / f"tool-result-{digest[:24]}.txt"
         try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd = os.open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _OPEN_NOFOLLOW,
+                0o600,
+            )
         except FileExistsError:
-            pass
-        else:
+            if _existing_artifact_matches(path, digest=digest, size=len(encoded)):
+                return str(path), digest
+            raise ContextGovernanceError(
+                "FCC context artifact path already exists with different content"
+            ) from None
+        try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(encoded)
-    except OSError as exc:
+        except OSError:
+            with suppress(OSError):
+                path.unlink()
+            raise
+    except ContextGovernanceError:
+        raise
+    except (OSError, RuntimeError) as exc:
         raise ContextGovernanceError(
             "FCC could not create the local context artifact; refusing to "
             "truncate the tool result"
         ) from exc
     return str(path), digest
+
+
+def _existing_artifact_matches(path: Path, *, digest: str, size: int) -> bool:
+    """Accept an existing artifact only when it is private and byte-identical."""
+
+    try:
+        fd = os.open(path, os.O_RDONLY | _OPEN_NOFOLLOW)
+        try:
+            metadata = os.fstat(fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                return False
+            if stat.S_IMODE(metadata.st_mode) & 0o077:
+                raise ContextGovernanceError(
+                    "FCC context artifact already exists with non-private permissions"
+                )
+            if metadata.st_size != size:
+                return False
+            actual = hashlib.sha256()
+            while chunk := os.read(fd, 64 * 1024):
+                actual.update(chunk)
+        finally:
+            os.close(fd)
+    except ContextGovernanceError:
+        raise
+    except OSError as exc:
+        raise ContextGovernanceError(
+            "FCC could not verify the existing local context artifact"
+        ) from exc
+    return actual.hexdigest() == digest
 
 
 def _redirected_text(
