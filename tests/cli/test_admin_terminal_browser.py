@@ -1,123 +1,49 @@
-"""Tests for terminal-native FCC Admin presentation."""
+"""Tests for the personal fork's terminal-only Admin readiness reporting."""
 
-import subprocess
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 from free_claude_code.cli import commands
-
-ADMIN_URL = "http://127.0.0.1:8080/admin"
-
-
-def _long_running_process() -> MagicMock:
-    process = MagicMock()
-    process.wait.side_effect = subprocess.TimeoutExpired(
-        cmd="terminal-browser",
-        timeout=commands.TERMINAL_BROWSER_STARTUP_PROBE_SECONDS,
-    )
-    return process
+from free_claude_code.config.settings import Settings
 
 
-def test_auto_mode_prefers_terminal_browser_in_interactive_terminal() -> None:
-    process = _long_running_process()
-    with (
-        patch.dict(commands.os.environ, {}, clear=True),
-        patch.object(commands, "_interactive_terminal_available", return_value=True),
-        patch.object(
-            commands.shutil,
-            "which",
-            return_value="/opt/bin/terminal-browser",
-        ),
-        patch.object(commands.subprocess, "Popen", return_value=process) as popen,
-        patch.object(commands.webbrowser, "open") as browser_open,
-    ):
-        assert commands.open_admin_surface(ADMIN_URL) is True
-
-    popen.assert_called_once_with(
-        ["/opt/bin/terminal-browser", "open", ADMIN_URL, "--app-mode"]
-    )
-    browser_open.assert_not_called()
+def _settings() -> Settings:
+    return Settings.model_construct(host="0.0.0.0", port=8082)
 
 
-def test_auto_mode_falls_back_to_system_browser_when_terminal_browser_missing() -> None:
-    with (
-        patch.dict(commands.os.environ, {}, clear=True),
-        patch.object(commands, "_interactive_terminal_available", return_value=True),
-        patch.object(commands.shutil, "which", return_value=None),
-        patch.object(commands.webbrowser, "open", return_value=True) as browser_open,
-    ):
-        assert commands.open_admin_surface(ADMIN_URL) is True
+def test_report_admin_when_ready_never_launches_a_browser(
+    capsys,
+) -> None:
+    settings = _settings()
+    with patch.object(commands, "preflight_proxy", return_value=None):
+        assert commands.report_admin_when_ready(settings) is True
 
-    browser_open.assert_called_once_with(ADMIN_URL)
-
-
-def test_auto_mode_falls_back_when_terminal_browser_exits_with_error() -> None:
-    process = MagicMock()
-    process.wait.return_value = 2
-    with (
-        patch.dict(commands.os.environ, {}, clear=True),
-        patch.object(commands, "_interactive_terminal_available", return_value=True),
-        patch.object(
-            commands.shutil,
-            "which",
-            return_value="/opt/bin/terminal-browser",
-        ),
-        patch.object(commands.subprocess, "Popen", return_value=process),
-        patch.object(commands.webbrowser, "open", return_value=True) as browser_open,
-    ):
-        assert commands.open_admin_surface(ADMIN_URL) is True
-
-    browser_open.assert_called_once_with(ADMIN_URL)
+    output = capsys.readouterr().out
+    assert "terminal-only mode" in output
+    assert "http://127.0.0.1:8082/admin" in output
 
 
-def test_terminal_mode_never_surprise_opens_system_browser() -> None:
-    with (
-        patch.dict(
-            commands.os.environ,
-            {commands.ADMIN_OPEN_MODE_ENV: "terminal"},
-            clear=True,
-        ),
-        patch.object(commands, "_interactive_terminal_available", return_value=False),
-        patch.object(commands.shutil, "which", return_value=None),
-        patch.object(commands.webbrowser, "open") as browser_open,
-    ):
-        assert commands.open_admin_surface(ADMIN_URL) is False
+def test_schedule_report_admin_ready_uses_a_terminal_named_worker() -> None:
+    settings = _settings()
+    started: list[tuple[str, object]] = []
 
-    browser_open.assert_not_called()
+    class ImmediateThread:
+        def __init__(self, *, target, args, name, daemon) -> None:
+            started.append((name, target))
+            assert args == (settings,)
+            assert daemon is True
 
+        def start(self) -> None:
+            return None
 
-def test_browser_mode_preserves_original_system_browser_behavior() -> None:
-    with (
-        patch.dict(
-            commands.os.environ,
-            {commands.ADMIN_OPEN_MODE_ENV: "browser"},
-            clear=True,
-        ),
-        patch.object(commands.shutil, "which") as which,
-        patch.object(commands.webbrowser, "open", return_value=True) as browser_open,
-    ):
-        assert commands.open_admin_surface(ADMIN_URL) is True
+    with patch.object(commands.threading, "Thread", ImmediateThread):
+        commands.schedule_report_admin_ready(settings)
 
-    which.assert_not_called()
-    browser_open.assert_called_once_with(ADMIN_URL)
+    assert started == [("fcc-report-admin-ready", commands.report_admin_when_ready)]
 
 
-def test_auto_mode_uses_browser_for_noninteractive_desktop_launches() -> None:
-    with (
-        patch.dict(commands.os.environ, {}, clear=True),
-        patch.object(commands, "_interactive_terminal_available", return_value=False),
-        patch.object(commands.shutil, "which") as which,
-        patch.object(commands.webbrowser, "open", return_value=True) as browser_open,
-    ):
-        assert commands.open_admin_surface(ADMIN_URL) is True
+def test_terminal_only_module_does_not_retain_browser_launcher_imports() -> None:
+    source = Path(commands.__file__).read_text(encoding="utf-8")
 
-    which.assert_not_called()
-    browser_open.assert_called_once_with(ADMIN_URL)
-
-
-def test_invalid_open_mode_degrades_to_auto() -> None:
-    with patch.dict(
-        commands.os.environ,
-        {commands.ADMIN_OPEN_MODE_ENV: "definitely-not-a-mode"},
-        clear=True,
-    ):
-        assert commands._admin_open_mode() is commands.AdminOpenMode.AUTO
+    assert "import webbrowser" not in source
+    assert "terminal-browser" not in source

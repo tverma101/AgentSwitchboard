@@ -80,14 +80,21 @@ Windows, left-clicking the tray icon opens Admin directly.
 To print the installed Free Claude Code version without starting the server,
 run `fcc-server --version`.
 
-When using `fcc-server`, keep the terminal open. The Admin UI opens in your
-browser after startup by default. Its address is also shown in the log:
+When using `fcc-server`, keep the terminal open. This personal fork is
+terminal-only: startup never launches a desktop browser or a terminal-browser
+child. The server reports its local control endpoint for terminal clients:
 
 ```text
-INFO:     Admin UI: http://127.0.0.1:8082/admin (local-only)
+INFO:     FCC control endpoint: http://127.0.0.1:8082/admin (terminal-only; browser launch disabled)
 ```
 
 Use the port shown in your terminal if it differs from `8082`.
+
+`fcc-server --terminal` and `fcc-server --no-browser` are accepted as explicit
+terminal-only compatibility flags. Browser-opening flags and presentation
+environment variables are intentionally unsupported. If another FCC server
+is already healthy on the configured port, a second `fcc-server` invocation
+reports that instance and exits instead of attempting a second bind.
 
 <a id="nvidia-nim-provider"></a>
 

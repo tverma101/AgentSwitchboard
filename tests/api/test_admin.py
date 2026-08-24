@@ -51,7 +51,6 @@ def _clear_process_config(monkeypatch) -> None:
         "SAMBANOVA_API_KEY",
         "HOST",
         "PORT",
-        "FCC_OPEN_BROWSER",
         "VOICE_NOTE_ENABLED",
         "WHISPER_DEVICE",
         "LOG_FILE",
@@ -398,7 +397,6 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "CEREBRAS_API_KEY" in keys
     assert "OLLAMA_API_KEY" in keys
     assert "NVIDIA_NIM_MODEL_ALLOWLIST" in keys
-    assert "FCC_OPEN_BROWSER" in keys
     assert "ZAI_BASE_URL" not in keys
     assert "CLAUDE_WORKSPACE" not in keys
     assert "CLAUDE_CLI_BIN" not in keys
@@ -413,12 +411,6 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         field for field in body["fields"] if field["key"] == "TELEGRAM_PROXY_URL"
     )
     assert telegram_proxy_field["secret"] is True
-    open_browser_field = next(
-        field for field in body["fields"] if field["key"] == "FCC_OPEN_BROWSER"
-    )
-    assert open_browser_field["type"] == "boolean"
-    assert open_browser_field["value"] == "true"
-    assert open_browser_field["restart_required"] is False
     model_field_types = {
         field["key"]: field["type"]
         for field in body["fields"]
@@ -610,30 +602,6 @@ def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_pat
     model_field = next(field for field in body["fields"] if field["key"] == "MODEL")
     assert model_field["source"] == "managed_env"
     assert model_field["locked"] is False
-
-
-def test_admin_apply_persists_open_browser_for_next_launch(monkeypatch, tmp_path):
-    _set_home(monkeypatch, tmp_path)
-    _clear_process_config(monkeypatch)
-    app = create_test_app()
-
-    response = _local_client(app).post(
-        "/admin/api/config/apply",
-        json={"values": {"FCC_OPEN_BROWSER": False}},
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["applied"] is True
-    assert body["pending_fields"] == []
-    assert body["restart"] == {
-        "required": False,
-        "automatic": False,
-        "admin_url": None,
-        "fields": [],
-    }
-    managed_env = tmp_path / ".fcc" / ".env"
-    assert "FCC_OPEN_BROWSER=false" in managed_env.read_text(encoding="utf-8")
 
 
 def test_admin_apply_masks_telegram_proxy_credentials(monkeypatch, tmp_path):

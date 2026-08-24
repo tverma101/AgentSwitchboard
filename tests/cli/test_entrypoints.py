@@ -20,14 +20,12 @@ def _launcher_settings(
     *,
     port: int = 8082,
     token: str = "freecc",
-    open_admin_browser: bool = True,
 ) -> Settings:
     return Settings.model_construct(
         host="0.0.0.0",
         port=port,
         anthropic_auth_token=token,
         model="nvidia_nim/test-model",
-        open_admin_browser=open_admin_browser,
     )
 
 
@@ -145,48 +143,108 @@ def test_version_entrypoint_does_not_import_command_runtime() -> None:
 def test_non_version_entrypoint_delegates_to_server_command() -> None:
     from free_claude_code.cli import commands, entrypoints
 
-    with patch.object(commands, "serve") as command:
+    settings = _launcher_settings()
+    with (
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch(
+            "free_claude_code.cli.launchers.common.preflight_proxy",
+            return_value="not running",
+        ),
+        patch.object(entrypoints, "_server_port_is_occupied", return_value=False),
+        patch.object(commands, "serve") as command,
+    ):
         entrypoints.serve(())
 
     command.assert_called_once_with()
 
 
-def test_schedule_open_admin_browser_opens_when_health_ready() -> None:
-    """Opening /admin runs after /health preflight succeeds."""
-    from free_claude_code.cli import commands
-    from free_claude_code.config.server_urls import local_admin_url
+@pytest.mark.parametrize(
+    "args",
+    [
+        (),
+        ("--terminal",),
+        ("--no-browser",),
+    ],
+)
+def test_fcc_server_options_are_terminal_only(args) -> None:
+    from free_claude_code.cli.entrypoints import _parse_server_options
+
+    assert _parse_server_options(args) is None
+
+
+def test_fcc_server_rejects_browser_option() -> None:
+    from free_claude_code.cli.entrypoints import _parse_server_options
+
+    with pytest.raises(SystemExit, match="2"):
+        _parse_server_options(("--open-browser",))
+
+
+def test_entrypoint_reports_existing_server_without_second_bind(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import commands, entrypoints
 
     settings = _launcher_settings(port=31337)
-    opened_urls: list[str] = []
-
-    class ImmediateThread:
-        def __init__(self, target=None, args=(), **_kwargs: object) -> None:
-            self._target = target
-            self._args = args
-
-        def start(self) -> None:
-            assert self._target is not None
-            self._target(*self._args)
-
     with (
-        patch.object(commands.threading, "Thread", ImmediateThread),
-        patch.object(commands, "preflight_proxy", return_value=None),
-        patch.object(
-            commands.webbrowser,
-            "open",
-            side_effect=lambda url: opened_urls.append(url),
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch(
+            "free_claude_code.cli.launchers.common.preflight_proxy",
+            return_value=None,
         ),
-        patch.object(commands.time, "sleep"),
+        patch.object(commands, "serve") as run_server,
+        patch.object(entrypoints, "_server_port_is_occupied") as port_probe,
     ):
-        commands.schedule_open_admin_browser(settings)
+        entrypoints.serve(())
 
-    assert opened_urls == [local_admin_url(settings)]
+    run_server.assert_not_called()
+    port_probe.assert_not_called()
+    assert "FCC server is already running" in capsys.readouterr().out
 
 
-def test_serve_skips_admin_browser_when_setting_is_disabled() -> None:
+def test_explicit_terminal_mode_is_a_no_op_compatibility_flag() -> None:
+    from free_claude_code.cli import commands, entrypoints
+
+    settings = _launcher_settings(port=31338)
+    with (
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch(
+            "free_claude_code.cli.launchers.common.preflight_proxy",
+            return_value="not running",
+        ),
+        patch.object(entrypoints, "_server_port_is_occupied", return_value=False),
+        patch.object(commands, "serve") as run_server,
+    ):
+        entrypoints.serve(("--terminal",))
+
+    run_server.assert_called_once_with()
+
+
+def test_entrypoint_reports_unrelated_port_occupant(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import commands, entrypoints
+
+    settings = _launcher_settings(port=31339)
+    with (
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch(
+            "free_claude_code.cli.launchers.common.preflight_proxy",
+            return_value="returned HTTP 404",
+        ),
+        patch.object(entrypoints, "_server_port_is_occupied", return_value=True),
+        patch.object(commands, "serve") as run_server,
+        pytest.raises(SystemExit, match="1"),
+    ):
+        entrypoints.serve(())
+
+    run_server.assert_not_called()
+    assert "not an FCC health endpoint" in capsys.readouterr().err
+
+
+def test_serve_is_terminal_only() -> None:
     from free_claude_code.cli import commands
 
-    settings = _launcher_settings(open_admin_browser=False)
+    settings = _launcher_settings()
     get_settings = MagicMock(return_value=settings)
     get_settings.cache_clear = MagicMock()
 
@@ -201,7 +259,6 @@ def test_serve_skips_admin_browser_when_setting_is_disabled() -> None:
 
     run_server.assert_called_once_with(
         settings,
-        open_admin_browser=False,
         restart_generation=0,
     )
 
@@ -243,13 +300,11 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
-        patch.object(commands, "schedule_open_admin_browser") as schedule_open_admin,
         patch.object(commands, "kill_all_best_effort") as kill_all,
     ):
         commands.serve()
 
     assert len(servers) == 2
-    schedule_open_admin.assert_called_once_with(settings)
     get_settings.cache_clear.assert_called_once()
     kill_all.assert_called_once()
 
@@ -285,7 +340,6 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
-        patch.object(commands, "schedule_open_admin_browser"),
         patch.object(commands, "kill_all_best_effort") as kill_all,
     ):
         commands.serve()

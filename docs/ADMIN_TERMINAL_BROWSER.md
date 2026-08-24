@@ -1,48 +1,22 @@
-# Terminal-native Admin UI
+# Terminal-only FCC startup
 
-FCC can present its local Admin web UI through Zenbu Labs' `terminal-browser` instead of opening a separate desktop browser window.
-
-The Admin surface remains the same local `http://127.0.0.1:<port>/admin` application. FCC does not reimplement the page as a text TUI. When available, it launches the real Chromium-rendered page with:
-
-```bash
-terminal-browser open http://127.0.0.1:<port>/admin --app-mode
-```
-
-`--app-mode` removes browser chrome/frame/shortcuts, allows clipboard reads, and keeps links that would create new tabs in terminal-browser's popup stack. See the upstream project for supported terminals and current installation instructions:
-
-- https://github.com/zenbu-labs/terminal-browser
-
-## Selection policy
-
-Set `FCC_ADMIN_OPEN_MODE` to one of:
-
-- `auto` (default): prefer terminal-browser when FCC is running in an interactive terminal and the executable is installed; otherwise use the operating-system browser.
-- `terminal`: use terminal-browser only. If it is missing or fails during startup, print the Admin URL and **do not** surprise-open a desktop browser.
-- `browser`: always retain the historical `webbrowser.open(...)` behavior.
-
-For a terminal-only personal setup:
+This personal fork does not launch a desktop browser, `terminal-browser`, or
+any other browser presentation for the local Admin surface. `fcc-server` is a
+terminal process and reports readiness in the terminal.
 
 ```bash
-FCC_ADMIN_OPEN_MODE=terminal
+fcc-server
 ```
 
-The existing `FCC_OPEN_BROWSER=false` switch still disables automatic Admin presentation entirely.
+If another FCC instance already owns the configured port, the command reports
+the healthy instance and exits. If an unrelated process owns the port, FCC
+reports that conflict without emitting a Uvicorn bind traceback.
 
-## Failure behavior
+`fcc-server --terminal` and `fcc-server --no-browser` are accepted as explicit
+terminal-only compatibility flags. Browser-opening flags and the old
+`FCC_OPEN_BROWSER`/`FCC_ADMIN_OPEN_MODE` presentation settings are not part of
+this fork's startup contract.
 
-FCC probes a terminal-browser child briefly. An immediate non-zero exit is treated as a startup failure. In `auto` mode FCC falls back to the system browser; in `terminal` mode it leaves the URL in the terminal and does not open anything else.
-
-Desktop/tray launches remain browser-oriented in `auto` mode because they do not inherit an interactive terminal.
-
-## Why this is separate from the Admin UI
-
-The provider/configuration frontend and the presentation mechanism are intentionally independent:
-
-```text
-FCC Admin web app
-      |
-      +-- desktop browser
-      `-- terminal-browser --app-mode
-```
-
-That keeps provider/auth/model behavior unchanged and lets the dense Admin redesign evolve separately from the local-window routing policy.
+The local HTTP Admin API remains an implementation surface for explicitly
+scripted local tooling. It is never opened automatically by FCC. Normal agent
+work stays in the terminal through `fcc-claude`, `fcc-codex`, or `fcc-pi`.

@@ -2,11 +2,9 @@
 
 import os
 import shutil
-import subprocess
 import sys
 import threading
 import time
-import webbrowser
 from enum import StrEnum
 from pathlib import Path
 
@@ -27,17 +25,6 @@ from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.runtime.bootstrap import build_asgi_app
 
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
-ADMIN_OPEN_MODE_ENV = "FCC_ADMIN_OPEN_MODE"
-TERMINAL_BROWSER_COMMAND = "terminal-browser"
-TERMINAL_BROWSER_STARTUP_PROBE_SECONDS = 0.35
-
-
-class AdminOpenMode(StrEnum):
-    """Where FCC should present its local Admin surface."""
-
-    AUTO = "auto"
-    TERMINAL = "terminal"
-    BROWSER = "browser"
 
 
 def serve() -> None:
@@ -90,7 +77,7 @@ class ServerSupervisor:
             self._run_scheduled = True
             return True
 
-    def run(self, *, open_admin_browser: bool | None = None) -> None:
+    def run(self) -> None:
         """Block until stopped, applying only fully closed Admin restarts."""
 
         with self._lock:
@@ -101,25 +88,17 @@ class ServerSupervisor:
                 return
             self._running = True
 
-        opened_admin_browser = False
         try:
             try:
                 while not self._is_stop_requested():
                     with self._lock:
                         restart_generation = self._restart_generation
                     settings = load_server_settings()
-                    should_open_admin = (
-                        settings.open_admin_browser
-                        if open_admin_browser is None
-                        else open_admin_browser
-                    ) and not opened_admin_browser
                     if not self._run_once(
                         settings,
-                        open_admin_browser=should_open_admin,
                         restart_generation=restart_generation,
                     ):
                         return
-                    opened_admin_browser = opened_admin_browser or should_open_admin
                     get_settings.cache_clear()
             except KeyboardInterrupt:
                 return
@@ -162,7 +141,6 @@ class ServerSupervisor:
         self,
         settings: Settings,
         *,
-        open_admin_browser: bool,
         restart_generation: int,
     ) -> bool:
         asgi_app = build_asgi_app(
@@ -185,8 +163,6 @@ class ServerSupervisor:
             if self._stop_requested or self._restart_generation != restart_generation:
                 server.should_exit = True
 
-        if open_admin_browser:
-            schedule_open_admin_browser(settings)
         server.run()
 
         with self._lock:
@@ -208,91 +184,30 @@ def load_server_settings() -> Settings:
     return get_settings()
 
 
-def _admin_open_mode(
-    env: dict[str, str] | os._Environ[str] | None = None,
-) -> AdminOpenMode:
-    """Resolve the presentation mode without making invalid values fatal."""
-
-    source = os.environ if env is None else env
-    raw = source.get(ADMIN_OPEN_MODE_ENV, AdminOpenMode.AUTO.value).strip().lower()
-    try:
-        return AdminOpenMode(raw)
-    except ValueError:
-        return AdminOpenMode.AUTO
-
-
-def _interactive_terminal_available() -> bool:
-    """Return whether inheriting stdio can safely host terminal-browser."""
-
-    return sys.stdin.isatty() and sys.stdout.isatty()
-
-
-def _try_terminal_browser(admin_url: str) -> bool:
-    """Launch Zenbu terminal-browser App Mode and detect immediate startup failures."""
-
-    executable = shutil.which(TERMINAL_BROWSER_COMMAND)
-    if executable is None:
-        return False
-    try:
-        process = subprocess.Popen(
-            [executable, "open", admin_url, "--app-mode"],
-        )
-    except OSError:
-        return False
-
-    try:
-        return process.wait(timeout=TERMINAL_BROWSER_STARTUP_PROBE_SECONDS) == 0
-    except subprocess.TimeoutExpired:
-        # A process that remains alive past the startup probe has taken ownership
-        # of the terminal/browser session successfully.
-        return True
-
-
-def open_admin_surface(admin_url: str) -> bool:
-    """Prefer terminal-browser for CLI sessions while retaining explicit fallback modes."""
-
-    mode = _admin_open_mode()
-    if mode is AdminOpenMode.BROWSER:
-        return webbrowser.open(admin_url)
-
-    should_try_terminal = (
-        mode is AdminOpenMode.TERMINAL or _interactive_terminal_available()
-    )
-    if should_try_terminal and _try_terminal_browser(admin_url):
-        return True
-
-    if mode is AdminOpenMode.TERMINAL:
-        print(
-            "FCC Admin is ready at "
-            f"{admin_url}, but terminal-browser could not be started. "
-            "The system browser was not opened because FCC_ADMIN_OPEN_MODE=terminal.",
-            file=sys.stderr,
-        )
-        return False
-
-    return webbrowser.open(admin_url)
-
-
-def open_admin_when_ready(settings: Settings) -> bool:
-    """Wait briefly for /health, then open the current Admin UI."""
+def report_admin_when_ready(settings: Settings) -> bool:
+    """Wait briefly for /health, then report the terminal-only Admin endpoint."""
 
     admin_url = local_admin_url(settings)
     proxy_root_url = local_proxy_root_url(settings)
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
         if preflight_proxy(proxy_root_url) is None:
-            return open_admin_surface(admin_url)
+            print(
+                "FCC server is ready at "
+                f"{proxy_root_url}; terminal-only mode leaves Admin at {admin_url}."
+            )
+            return True
         time.sleep(0.15)
     return False
 
 
-def schedule_open_admin_browser(settings: Settings) -> None:
-    """Open Admin after health succeeds without blocking the caller."""
+def schedule_report_admin_ready(settings: Settings) -> None:
+    """Report Admin readiness after health succeeds without blocking the caller."""
 
     threading.Thread(
-        target=open_admin_when_ready,
+        target=report_admin_when_ready,
         args=(settings,),
-        name="fcc-open-admin-browser",
+        name="fcc-report-admin-ready",
         daemon=True,
     ).start()
 
