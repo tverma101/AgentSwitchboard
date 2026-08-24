@@ -11,10 +11,14 @@ env:
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+      - "review/**"
+  # Run on every PR target, including chained release-train and design PRs.
   pull_request:
-    branches: [main, master]
   merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
