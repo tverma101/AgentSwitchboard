@@ -108,8 +108,18 @@ class ProviderEgressGuard:
                 "provider egress URL must use http(s) and include a host"
             )
         if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
-            if category != "local_tool":
+            if category != "local_tool" and (
+                provider_family is None
+                or provider_family.strip().lower()
+                != self.policy.primary_provider.lower()
+            ):
                 raise ProviderPolicyError("local URL is only valid for local tools")
+            if category != "local_tool":
+                return self.authorize(
+                    provider_family or self.policy.primary_provider,
+                    category=category,
+                    destination_host=parsed.hostname,
+                )
             return self.authorize(
                 "local",
                 category="local_tool",

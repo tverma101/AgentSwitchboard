@@ -206,6 +206,13 @@ class TestSettings:
         settings = Settings()
         assert settings.lm_studio_base_url == "http://custom:5678/v1"
 
+    def test_opencode_go_base_url_from_env(self, monkeypatch):
+        """OPENCODE_GO_BASE_URL can point Go at an explicit local fixture."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("OPENCODE_GO_BASE_URL", "http://127.0.0.1:5678/v1")
+        assert Settings().opencode_go_base_url == "http://127.0.0.1:5678/v1"
+
     def test_ollama_base_url_defaults_to_root(self, monkeypatch):
         """OLLAMA_BASE_URL keeps the customer-facing Ollama root default."""
         from free_claude_code.config.settings import Settings

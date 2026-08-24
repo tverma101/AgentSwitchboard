@@ -50,6 +50,18 @@ def test_localhost_model_url_is_not_treated_as_a_local_tool() -> None:
         guard.authorize_url("http://localhost:9222/json", category="model")
 
 
+def test_primary_provider_may_use_an_explicit_local_fixture_endpoint() -> None:
+    guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
+
+    guard.authorize_url(
+        "http://127.0.0.1:9222/v1",
+        category="model",
+        provider_family="opencode_go",
+    )
+
+    assert guard.receipt()["counts"] == {"opencode_go": 1}
+
+
 def test_configured_provider_family_can_use_an_explicit_proxy_host() -> None:
     guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
 

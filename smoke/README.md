@@ -67,6 +67,23 @@ Default targets do not send real bot messages or load voice backends:
 | `llamacpp` | local `/models` plus OpenAI-chat-backed Messages through proxy | running llama-server |
 | `ollama` | local `/v1/models` plus OpenAI-chat-backed Messages through proxy | running Ollama server |
 
+The `cli` target also includes the zero-provider thinking characterization
+fixture from #55. It launches the literal installed Claude executable through
+FCC and serves synthetic Anthropic Messages SSE from a loopback OpenCode Go
+endpoint. The fixture records only structural follow-up request receipts and
+never calls Anthropic, OpenAI, or OpenCode Go. Run it with:
+
+```bash
+FCC_LIVE_SMOKE=1 FCC_SMOKE_TARGETS=cli uv run pytest \
+  smoke/product/test_claude_synthetic_thinking_product_live.py -n 0 -s --tb=short
+```
+
+The checked-in fixture matrix covers visible thinking, redacted thinking,
+interleaved thinking, late/malformed signatures, additive deltas, and a tool
+continuation. The installed-client canary runs the safe visible, redacted, and
+tool-roundtrip cases; expected client rendering/rejection is recorded in
+`.smoke-results/` rather than treated as Muse/provider evidence.
+
 Heavy/side-effectful targets are opt-in:
 
 | Target | Product scenarios | Required environment |

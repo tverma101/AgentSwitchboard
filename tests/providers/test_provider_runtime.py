@@ -359,6 +359,16 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
     assert config.api_key == "shared-opencode-token"
 
 
+def test_build_provider_config_opencode_go_accepts_explicit_base_url() -> None:
+    descriptor = PROVIDER_CATALOG["opencode_go"]
+    settings = _make_settings(opencode_api_key="shared-opencode-token")
+    settings.opencode_go_base_url = "http://127.0.0.1:5678/v1"
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.base_url == "http://127.0.0.1:5678/v1"
+
+
 def test_vercel_descriptor_uses_openai_chat_gateway() -> None:
     descriptor = PROVIDER_CATALOG["vercel"]
 

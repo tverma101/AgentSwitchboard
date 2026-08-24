@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # ==================== OpenCode Zen / OpenCode Go ====================
     # Same key from opencode.ai/auth; Zen uses ``opencode_zen/``, Go uses ``opencode_go/``.
     opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
+    opencode_go_base_url: str = Field(
+        default="", validation_alias="OPENCODE_GO_BASE_URL"
+    )
 
     # ==================== Vercel AI Gateway ====================
     vercel_ai_gateway_api_key: str = Field(

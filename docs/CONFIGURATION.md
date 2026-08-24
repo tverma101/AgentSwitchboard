@@ -44,6 +44,7 @@ MODEL=opencode_go/muse-spark-1.2-contributor
 MODEL_ALIASES=fast=opencode_go/minimax-m2.7
 MODEL_CATALOG_MODE=curated
 MODEL_CATALOG_ALLOWLIST=opencode_go/muse-spark-1.2-contributor,opencode_go/minimax-m2.7
+OPENCODE_GO_BASE_URL=""
 ```
 
 Aliases are client-facing names only. Receipts, provider dispatch, and upstream
@@ -55,6 +56,12 @@ The provider table and credential names are maintained in
 `src/free_claude_code/config/provider_catalog.py` and `.env.example`. Do not
 copy a model name from an old screenshot or design document without checking
 that source.
+
+`OPENCODE_GO_BASE_URL` is optional and defaults to OpenCode Go's documented
+endpoint. When set, it is an explicit endpoint override for the configured Go
+provider; it is useful for a private gateway or a zero-cost local synthetic
+fixture. The strict provider policy still attributes the request to
+`opencode_go` and does not enable another provider family.
 
 ## Context and reasoning
 
