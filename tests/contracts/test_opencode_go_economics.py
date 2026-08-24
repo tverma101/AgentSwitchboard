@@ -12,6 +12,7 @@ from smoke.lib.opencode_go_economics import (
     load_receipt,
     pricing_for,
     stable_prefix_hash,
+    summarize_phases,
 )
 
 
@@ -82,6 +83,39 @@ def test_usage_rejects_overlapping_or_invalid_negative_counts() -> None:
                 "cache_read_tokens": 10,
                 "cache_write_tokens": 0,
                 "output_tokens": 1,
+            }
+        )
+
+
+def test_compaction_phase_receipts_are_validated_and_summarized_separately() -> None:
+    rows = [
+        _muse(uncached=620, cached=71_400),
+        _muse(uncached=650, cached=71_370),
+        _muse(uncached=700, cached=71_320),
+    ]
+    rows = [
+        replace(rows[0], phase="pre_compact", compact_boundary_hash="boundary-1"),
+        replace(rows[1], phase="compact_turn", compact_boundary_hash="boundary-1"),
+        replace(rows[2], phase="resume", compact_boundary_hash="boundary-1"),
+    ]
+
+    summaries = summarize_phases(rows)
+
+    assert list(summaries) == ["compact_turn", "pre_compact", "resume"]
+    assert summaries["resume"]["requests"] == 1
+    assert summaries["resume"]["compact_boundary_hash_count"] == 1
+
+
+def test_compaction_phase_rejects_unknown_phase() -> None:
+    with pytest.raises(ValueError, match="compaction phase"):
+        GoUsage.from_mapping(
+            {
+                "model": "muse-spark-1.2-contributor",
+                "uncached_input_tokens": 1,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "output_tokens": 1,
+                "phase": "after_everything",
             }
         )
 

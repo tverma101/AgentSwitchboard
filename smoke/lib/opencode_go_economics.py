@@ -12,6 +12,7 @@ from typing import Any
 
 PRICING_SOURCE_DATE = "2026-08-23"
 PRICING_SOURCE_URL = "https://dev.opencode.ai/docs/go/"
+COMPACTION_PHASES = frozenset({"pre_compact", "compact_turn", "post_compact", "resume"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,9 @@ class GoUsage:
     duration_ms: float | None = None
     bytes_in: int | None = None
     bytes_out: int | None = None
+    phase: str | None = None
+    compact_boundary_hash: str | None = None
+    reasoning_tokens: int | None = None
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> GoUsage:
@@ -119,6 +123,23 @@ class GoUsage:
             ):
                 raise ValueError(f"{key} must be a non-negative integer")
             byte_counts[key] = raw
+        phase = value.get("phase")
+        if phase is not None and (
+            not isinstance(phase, str) or phase not in COMPACTION_PHASES
+        ):
+            raise ValueError("phase must be a supported compaction phase")
+        compact_boundary_hash = value.get("compact_boundary_hash")
+        if compact_boundary_hash is not None and not isinstance(
+            compact_boundary_hash, str
+        ):
+            raise ValueError("compact_boundary_hash must be a string")
+        reasoning_tokens = value.get("reasoning_tokens")
+        if reasoning_tokens is not None and (
+            not isinstance(reasoning_tokens, int)
+            or isinstance(reasoning_tokens, bool)
+            or reasoning_tokens < 0
+        ):
+            raise ValueError("reasoning_tokens must be a non-negative integer")
         return cls(
             model=model,
             context_tokens=context_tokens,
@@ -134,6 +155,9 @@ class GoUsage:
             duration_ms=timings["duration_ms"],
             bytes_in=byte_counts["bytes_in"],
             bytes_out=byte_counts["bytes_out"],
+            phase=phase,
+            compact_boundary_hash=compact_boundary_hash,
+            reasoning_tokens=reasoning_tokens,
             uncached_input_tokens=counts["uncached_input_tokens"],
             cache_read_tokens=counts["cache_read_tokens"],
             cache_write_tokens=counts["cache_write_tokens"],
@@ -343,12 +367,18 @@ def summarize(rows: list[GoUsage]) -> dict[str, float | int | str]:
     input_side = uncached + cache_read
     attempts = sum(row.upstream_attempts for row in rows)
     protocols = sorted({row.protocol for row in rows if row.protocol is not None})
+    phases = sorted({row.phase for row in rows if row.phase is not None})
+    compact_boundaries = [
+        row.compact_boundary_hash for row in rows if row.compact_boundary_hash
+    ]
     prefix_hashes = [row.stable_prefix_hash for row in rows if row.stable_prefix_hash]
     return {
         "requests": len(rows),
         "upstream_attempts": attempts,
         "retry_amplification": attempts / len(rows),
         "protocols": ",".join(protocols),
+        "phases": ",".join(phases),
+        "compact_boundary_hash_count": len(set(compact_boundaries)),
         "uncached_input_tokens": uncached,
         "cache_read_tokens": cache_read,
         "cache_write_tokens": cache_write,
@@ -383,7 +413,7 @@ def compare_receipts(
     cache_read_share_gap = (
         float(native["cache_read_share"]) - float(fcc["cache_read_share"])
     ) * 100.0
-    return {
+    comparison = {
         "native": native,
         "fcc": fcc,
         "estimated_cost_regression_pct": regression_pct,
@@ -396,6 +426,23 @@ def compare_receipts(
         "attempt_delta": fcc_attempts - native_attempts,
         "stable_prefix_match_rate": _prefix_match_rate(native_rows, fcc_rows),
     }
+    if any(row.phase is not None for row in native_rows + fcc_rows):
+        comparison["native_by_phase"] = summarize_phases(native_rows)
+        comparison["fcc_by_phase"] = summarize_phases(fcc_rows)
+    return comparison
+
+
+def summarize_phases(rows: list[GoUsage]) -> dict[str, dict[str, Any]]:
+    """Summarize compact-boundary phases without mixing them together."""
+
+    grouped: dict[str, list[GoUsage]] = {}
+    for row in rows:
+        if row.phase is None:
+            continue
+        grouped.setdefault(row.phase, []).append(row)
+    if not grouped:
+        raise ValueError("receipt contains no compaction phases")
+    return {phase: summarize(group) for phase, group in sorted(grouped.items())}
 
 
 def _prefix_match_rate(

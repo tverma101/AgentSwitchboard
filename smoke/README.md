@@ -206,6 +206,19 @@ absolute override. It never stores or requires prompt content. Native-reference
 and live Go receipts remain opt-in human-supplied artifacts; deterministic unit
 tests cover the bridge-side serialization guard.
 
+Compaction-boundary rows may additionally include `phase` (`pre_compact`,
+`compact_turn`, `post_compact`, or `resume`) and a metadata-only
+`compact_boundary_hash`. `summarize_phases()` keeps those economics separate so
+the compaction turn and resume turn cannot hide a post-compact token increase.
+The deterministic semantic gate in
+[`smoke/lib/compaction_continuity.py`](lib/compaction_continuity.py) records
+provider/model/protocol, system/tool and message-shape hashes, tool/result ids,
+reasoning-state type/hash, media type/count, memory/skill ids, committed tool
+ids, and attempts. It rejects prompt, image, tool-result, and reasoning payload
+fields before a receipt can be written.
+The checked-in [synthetic continuity receipt](receipts/compaction-continuity-synthetic.json)
+is a schema/regression fixture, not live provider evidence.
+
 ## Failure Classes
 
 Smoke artifacts are written to `.smoke-results/` and redact env values whose
