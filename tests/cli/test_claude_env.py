@@ -10,6 +10,7 @@ from free_claude_code.cli.claude_env import (
     effective_context_window,
     model_context_window,
     resolved_model_id,
+    settings_env_routing_conflict_message,
 )
 
 
@@ -171,3 +172,64 @@ def test_conflicting_settings_env_keys_ignores_invalid_settings(tmp_path) -> Non
 def test_conflicting_settings_env_keys_ignores_missing_settings(tmp_path) -> None:
     base_env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing")}
     assert conflicting_settings_env_keys(base_env) == ()
+
+
+def test_conflicting_settings_env_keys_covers_project_and_local_sources(
+    tmp_path,
+) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://project.invalid"}})
+    )
+    (settings_dir / "settings.local.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "secret"}})
+    )
+
+    conflicts = conflicting_settings_env_keys(
+        {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing-user")},
+        cwd=tmp_path,
+    )
+
+    assert conflicts == ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN")
+
+
+def test_setting_sources_filter_does_not_inspect_disabled_project_layers(
+    tmp_path,
+) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://project.invalid"}})
+    )
+
+    assert (
+        conflicting_settings_env_keys(
+            {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing-user")},
+            cwd=tmp_path,
+            argv=["--setting-sources", "user"],
+        )
+        == ()
+    )
+
+
+def test_explicit_settings_overlay_is_checked_without_leaking_values(tmp_path) -> None:
+    overlay = json.dumps(
+        {
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_AUTH_TOKEN": "do-not-print",
+            }
+        }
+    )
+    message = settings_env_routing_conflict_message(
+        {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing-user")},
+        cwd=tmp_path,
+        argv=["--settings", overlay],
+    )
+
+    assert message is not None
+    assert "ANTHROPIC_BASE_URL" in message
+    assert "ANTHROPIC_AUTH_TOKEN" in message
+    assert "do-not-print" not in message
+    assert "--settings overlay" in message

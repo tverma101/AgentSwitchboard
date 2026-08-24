@@ -4,6 +4,7 @@ from free_claude_code.core.provider_policy import (
     ProviderEgressGuard,
     ProviderPolicy,
     ProviderPolicyError,
+    ProviderPolicyMode,
 )
 
 
@@ -40,6 +41,20 @@ def test_configured_provider_family_can_use_an_explicit_proxy_host() -> None:
         provider_family="opencode_go",
     )
     assert guard.receipt()["counts"] == {"opencode_go": 1}
+
+
+def test_diagnostic_policy_records_blocked_destinations_without_authorizing_them() -> (
+    None
+):
+    guard = ProviderEgressGuard(
+        ProviderPolicy("opencode_go", "model", mode=ProviderPolicyMode.DIAGNOSTIC)
+    )
+
+    assert guard.authorize("anthropic") is False
+
+    receipt = guard.receipt()
+    assert receipt["counts"] == {}
+    assert receipt["blocked_counts"] == {"anthropic": 1}
 
 
 def test_strict_policy_cannot_enable_paid_fallback() -> None:

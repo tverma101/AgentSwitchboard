@@ -24,6 +24,8 @@ class ModelResponse(BaseModel):
     display_name: str
     id: str
     type: Literal["model"] = "model"
+    supports_vision: bool | None = None
+    accepted_image_types: tuple[str, ...] = ()
 
 
 class ModelsListResponse(BaseModel):
@@ -86,14 +88,20 @@ def build_models_list_response(
     seen: set[str] = set()
 
     for ref in configured_chat_model_refs(settings):
-        supports_thinking = runtime.cached_model_supports_thinking(
-            ref.provider_id, ref.model_id
-        )
+        model_info = runtime.cached_model_info(ref.provider_id, ref.model_id)
         _append_provider_model_variants(
             models,
             seen,
             ref.model_ref,
-            supports_thinking=supports_thinking,
+            supports_thinking=(
+                model_info.supports_thinking if model_info is not None else None
+            ),
+            supports_vision=(
+                model_info.supports_vision if model_info is not None else None
+            ),
+            accepted_image_types=(
+                model_info.accepted_image_types if model_info is not None else ()
+            ),
         )
 
     for model_info in filter_cached_model_infos(
@@ -104,6 +112,8 @@ def build_models_list_response(
             seen,
             model_info.model_id,
             supports_thinking=model_info.supports_thinking,
+            supports_vision=model_info.supports_vision,
+            accepted_image_types=model_info.accepted_image_types,
         )
 
     for model in SUPPORTED_CLAUDE_MODELS:
@@ -117,11 +127,19 @@ def build_models_list_response(
     )
 
 
-def _discovered_model_response(model_id: str, *, display_name: str) -> ModelResponse:
+def _discovered_model_response(
+    model_id: str,
+    *,
+    display_name: str,
+    supports_vision: bool | None = None,
+    accepted_image_types: tuple[str, ...] = (),
+) -> ModelResponse:
     return ModelResponse(
         id=model_id,
         display_name=display_name,
         created_at=DISCOVERED_MODEL_CREATED_AT,
+        supports_vision=supports_vision,
+        accepted_image_types=accepted_image_types,
     )
 
 
@@ -140,6 +158,8 @@ def _append_provider_model_variants(
     provider_model_ref: str,
     *,
     supports_thinking: bool | None = None,
+    supports_vision: bool | None = None,
+    accepted_image_types: tuple[str, ...] = (),
 ) -> None:
     if supports_thinking is not False:
         _append_unique_model(
@@ -148,6 +168,8 @@ def _append_provider_model_variants(
             _discovered_model_response(
                 gateway_model_id(provider_model_ref),
                 display_name=provider_model_ref,
+                supports_vision=supports_vision,
+                accepted_image_types=accepted_image_types,
             ),
         )
     _append_unique_model(
@@ -156,5 +178,7 @@ def _append_provider_model_variants(
         _discovered_model_response(
             no_thinking_gateway_model_id(provider_model_ref),
             display_name=f"{provider_model_ref} (no thinking)",
+            supports_vision=supports_vision,
+            accepted_image_types=accepted_image_types,
         ),
     )

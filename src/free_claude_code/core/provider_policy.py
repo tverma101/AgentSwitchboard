@@ -42,6 +42,7 @@ class ProviderEgressGuard:
 
     policy: ProviderPolicy
     _counts: dict[str, int] = field(default_factory=dict)
+    _blocked_counts: dict[str, int] = field(default_factory=dict)
 
     def authorize(self, provider_family: str, *, category: str = "model") -> bool:
         family = provider_family.strip().lower()
@@ -54,11 +55,15 @@ class ProviderEgressGuard:
             allowed = allowed or family in {
                 helper.lower() for helper in self.policy.allowed_helpers
             }
-        elif self.policy.mode is ProviderPolicyMode.DIAGNOSTIC:
-            return allowed
         if family in {item.lower() for item in self.policy.forbidden_provider_families}:
             allowed = False
         if not allowed:
+            receipt_family = "local" if category == "local_tool" else family
+            self._blocked_counts[receipt_family] = (
+                self._blocked_counts.get(receipt_family, 0) + 1
+            )
+            if self.policy.mode is ProviderPolicyMode.DIAGNOSTIC:
+                return False
             raise ProviderPolicyError(
                 f"provider egress blocked before network I/O: {provider_family} ({category})"
             )
@@ -95,4 +100,5 @@ class ProviderEgressGuard:
             "mode": self.policy.mode.value,
             "paid_fallback": self.policy.paid_fallback,
             "counts": dict(sorted(self._counts.items())),
+            "blocked_counts": dict(sorted(self._blocked_counts.items())),
         }

@@ -48,7 +48,11 @@ def launch(argv: Sequence[str] | None = None) -> None:
         install_hint=_INSTALL_HINT,
     )
     args = list(sys.argv[1:] if argv is None else argv)
-    if conflict_message := settings_env_routing_conflict_message(os.environ):
+    if conflict_message := settings_env_routing_conflict_message(
+        os.environ,
+        cwd=os.getcwd(),
+        argv=args,
+    ):
         print(conflict_message, file=sys.stderr)
         raise SystemExit(2)
     run_client_process(

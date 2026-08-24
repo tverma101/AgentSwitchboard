@@ -116,7 +116,8 @@ class ManagedClaudeSession:
                         raise RuntimeError("Managed Claude session is closed.")
                     self._is_busy = True
                     routing_conflict_message = settings_env_routing_conflict_message(
-                        os.environ
+                        os.environ,
+                        cwd=self.config.workspace_path,
                     )
                     if routing_conflict_message is None:
                         invocation = build_managed_claude_invocation(

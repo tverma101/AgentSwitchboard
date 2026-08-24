@@ -58,7 +58,11 @@ class LocalToolPlane:
 
         args = arguments or {}
         if self.egress_guard is not None:
-            self.egress_guard.authorize("local", category="local_tool")
+            allowed = self.egress_guard.authorize("local", category="local_tool")
+            if not allowed:
+                raise LocalToolError(
+                    "local tool egress blocked before network I/O by diagnostic policy"
+                )
 
         if tool_name == "computer.screenshot":
             if self.computer is None:

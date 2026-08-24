@@ -644,6 +644,9 @@ def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
         cache.cached_model_supports_thinking("open_router", "reasoning-model") is True
     )
     assert cache.cached_model_supports_thinking("open_router", "plain-model") is False
+    plain_info = cache.cached_model_info("open_router", "plain-model")
+    assert plain_info is not None
+    assert plain_info.supports_thinking is False
     assert cache.cached_prefixed_model_infos() == (
         ProviderModelInfo("open_router/plain-model", supports_thinking=False),
         ProviderModelInfo("open_router/reasoning-model", supports_thinking=True),

@@ -148,6 +148,13 @@ class ProviderRuntimeManager:
         self._synchronize_model_cache_scope()
         return self._model_cache.cached_model_supports_thinking(provider_id, model_id)
 
+    def cached_model_info(
+        self, provider_id: str, model_id: str
+    ) -> ProviderModelInfo | None:
+        """Return complete cached capability metadata for one model."""
+        self._synchronize_model_cache_scope()
+        return self._model_cache.cached_model_info(provider_id, model_id)
+
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         self._synchronize_model_cache_scope()
         return self._model_cache.cached_prefixed_model_infos()

@@ -288,16 +288,22 @@ Providers that do not support a selected control retain their own behavior.
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
 
 FCC owns Claude's gateway routing. Do not set `ANTHROPIC_BASE_URL`,
-`ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` in the `env` block of
-`CLAUDE_CONFIG_DIR/settings.json`: Claude Code applies those settings over the
+`ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` in any active Claude settings
+`env` block: user `CLAUDE_CONFIG_DIR/settings.json`, project
+`.claude/settings.json`, project-local `.claude/settings.local.json`, or an
+explicit `--settings` overlay. Claude Code applies those settings over the
 process environment. Both `fcc-claude` and the managed desktop session fail
-closed with the conflicting key names instead of launching a session that could
-bypass FCC.
+closed with the source and conflicting key names instead of launching a session
+that could bypass FCC. If you use `--setting-sources` to disable a layer, FCC
+honors that explicit filter.
 
 ### Visual attachments and Appshots
 
 FCC validates PNG, JPEG, and WebP image bytes before forwarding them and exposes
 metadata-only attachment receipts (hash, dimensions, size, and media type). The
+model catalog exposes known vision support and accepted image types; a known
+non-vision model rejects image input before provider I/O, while unknown metadata
+remains permissive so stale discovery data does not break requests. The
 terminal fallback is a compact `[img ... · attached]` card; Kitty and iTerm2
 capability detection is available to the wrapper without emitting escape codes
 to unsupported terminals. `fcc-appshot` exposes a demand-only macOS

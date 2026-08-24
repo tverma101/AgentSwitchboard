@@ -67,6 +67,12 @@ class ProviderModelCache:
             return None
         return info.supports_thinking
 
+    def cached_model_info(
+        self, provider_id: str, model_id: str
+    ) -> ProviderModelInfo | None:
+        """Return the complete cached capability record for one model."""
+        return self._model_infos_by_provider.get(provider_id, {}).get(model_id)
+
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         """Return cached provider models with user-selectable prefixed ids."""
         infos: list[ProviderModelInfo] = []

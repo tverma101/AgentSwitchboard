@@ -1,5 +1,7 @@
 """OpenAI Responses API product flow for Codex clients."""
 
+from collections.abc import Callable
+
 from fastapi.responses import JSONResponse
 
 from free_claude_code.api.request_errors import (
@@ -15,8 +17,10 @@ from free_claude_code.api.response_streams import (
 )
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter
+from free_claude_code.application.visual_capabilities import validate_visual_capability
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.diagnostics import safe_exception_message
@@ -28,6 +32,8 @@ from free_claude_code.core.openai_responses import (
     openai_failure_payload,
 )
 from free_claude_code.usage import UsageStore
+
+ModelInfoResolver = Callable[[str, str], ProviderModelInfo | None]
 
 
 class ResponsesHandler:
@@ -41,12 +47,14 @@ class ResponsesHandler:
         model_router: ModelRouter | None = None,
         responses_adapter: OpenAIResponsesAdapter | None = None,
         provider_executor: ProviderExecutor | None = None,
+        model_info_resolver: ModelInfoResolver | None = None,
         generation_id: int | None = None,
         usage_store: UsageStore | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
         self._responses_adapter = responses_adapter or OpenAIResponsesAdapter()
+        self._model_info_resolver = model_info_resolver
         self._provider_executor = provider_executor or ProviderExecutor(
             provider_resolver,
             generation_id=generation_id,
@@ -72,6 +80,15 @@ class ResponsesHandler:
             response_request = MessagesRequest(**anthropic_payload)
             require_non_empty_messages(response_request.messages)
             routed = self._model_router.resolve_messages_request(response_request)
+            if self._model_info_resolver is not None:
+                validate_visual_capability(
+                    routed.request,
+                    model_info=self._model_info_resolver(
+                        routed.resolved.provider_id,
+                        routed.resolved.provider_model,
+                    ),
+                    model_ref=routed.resolved.provider_model_ref,
+                )
 
             streamed = self._provider_executor.stream(
                 routed,

@@ -115,6 +115,39 @@ def test_models_list_uses_cached_metadata_for_configured_refs():
     assert ids[0] == "claude-3-freecc-no-thinking/open_router/plain-model"
 
 
+def test_models_list_exposes_cached_visual_metadata_for_configured_refs():
+    app = create_test_app(
+        _settings(
+            model="open_router/vision-model",
+            model_opus=None,
+            model_haiku=None,
+        )
+    )
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "vision-model",
+                supports_vision=True,
+                accepted_image_types=("image/jpeg", "image/png"),
+            )
+        },
+    )
+
+    response = TestClient(app).get("/v1/models")
+
+    models = {item["id"]: item for item in response.json()["data"]}
+    for model_id in (
+        "anthropic/open_router/vision-model",
+        "claude-3-freecc-no-thinking/open_router/vision-model",
+    ):
+        assert models[model_id]["supports_vision"] is True
+        assert models[model_id]["accepted_image_types"] == [
+            "image/jpeg",
+            "image/png",
+        ]
+
+
 def test_models_list_includes_cached_wafer_models():
     app = create_test_app(
         _settings(
@@ -148,3 +181,38 @@ def test_models_list_works_with_empty_discovery_catalog():
         "claude-3-freecc-no-thinking/open_router/anthropic/claude-opus",
     ]
     assert "claude-sonnet-4-20250514" in ids
+
+
+def test_known_nonvision_model_rejects_image_before_provider_resolution():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    manager = provider_manager_for_app(app)
+    manager.cache_model_infos(
+        "deepseek",
+        {ProviderModelInfo("deepseek-chat", supports_vision=False)},
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/messages",
+            json={
+                "model": "deepseek/deepseek-chat",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://example.test/image.png",
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "max_tokens": 8,
+            },
+        )
+
+    assert response.status_code == 400
+    assert "image input" in response.json()["error"]["message"]

@@ -125,6 +125,41 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
 
 
 @pytest.mark.asyncio
+async def test_messages_handler_rejects_image_for_known_nonvision_model() -> None:
+    provider = FakeProvider()
+    handler = MessagesHandler(
+        Settings(),
+        provider_resolver=lambda _: provider,
+        model_info_resolver=lambda _provider, _model: ProviderModelInfo(
+            "test-model", supports_vision=False
+        ),
+    )
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.test/image.png",
+                        },
+                    }
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(InvalidRequestError, match="before upstream I/O"):
+        await handler.create(request)
+
+    assert provider.preflight_calls == []
+    assert provider.requests == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stream", [True, False])
 async def test_messages_handler_preflight_invalid_request_stays_http_error(
     stream: bool,

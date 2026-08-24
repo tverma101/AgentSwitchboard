@@ -33,8 +33,10 @@ from free_claude_code.api.web_tools.request import (
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
+from free_claude_code.application.visual_capabilities import validate_visual_capability
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
@@ -64,6 +66,7 @@ class _MessagesCompleteResult:
 
 _MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
 MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
+ModelInfoResolver = Callable[[str, str], ProviderModelInfo | None]
 
 
 class MessagesHandler:
@@ -77,12 +80,14 @@ class MessagesHandler:
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
         provider_executor: ProviderExecutor | None = None,
+        model_info_resolver: ModelInfoResolver | None = None,
         generation_id: int | None = None,
         usage_store: UsageStore | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
+        self._model_info_resolver = model_info_resolver
         self._provider_executor = provider_executor or ProviderExecutor(
             provider_resolver,
             token_counter=token_counter,
@@ -105,6 +110,15 @@ class MessagesHandler:
             routed = self._model_router.resolve_messages_request(request_data)
             routed = self._apply_message_routing_policies(routed)
             self._reject_unsupported_server_tools(routed)
+            if self._model_info_resolver is not None:
+                validate_visual_capability(
+                    routed.request,
+                    model_info=self._model_info_resolver(
+                        routed.resolved.provider_id,
+                        routed.resolved.provider_model,
+                    ),
+                    model_ref=routed.resolved.provider_model_ref,
+                )
 
             result = self._run_message_intercepts(routed)
             if result is None:

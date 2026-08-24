@@ -13,7 +13,10 @@ from free_claude_code.core.diagnostics import (
     exception_cause_types,
     redacted_exception_traceback,
 )
-from free_claude_code.core.provider_policy import ProviderEgressGuard
+from free_claude_code.core.provider_policy import (
+    ProviderEgressGuard,
+    ProviderPolicyError,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 
@@ -107,11 +110,15 @@ class BaseProvider(ABC):
         guard = self._config.egress_guard
         if guard is None:
             return
-        guard.authorize_url(
+        allowed = guard.authorize_url(
             url,
             category=category,
             provider_family=self._config.provider_family or None,
         )
+        if not allowed:
+            raise ProviderPolicyError(
+                "provider egress blocked before network I/O by diagnostic policy"
+            )
 
     @abstractmethod
     async def cleanup(self) -> None:

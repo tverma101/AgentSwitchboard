@@ -119,6 +119,35 @@ async def test_settings_routing_override_blocks_managed_launch(
 
 
 @pytest.mark.asyncio
+async def test_project_settings_routing_override_blocks_managed_launch(
+    tmp_path,
+) -> None:
+    settings_dir = tmp_path / ".claude"
+    settings_dir.mkdir()
+    (settings_dir / "settings.local.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://api.anthropic.com"}})
+    )
+    session = ManagedClaudeSession(str(tmp_path), "http://127.0.0.1:8082")
+
+    with (
+        patch.dict(
+            os.environ, {"CLAUDE_CONFIG_DIR": str(tmp_path / "missing")}, clear=False
+        ),
+        patch(
+            "free_claude_code.cli.managed.session.asyncio.create_subprocess_exec",
+            new=AsyncMock(),
+        ) as create_process,
+    ):
+        events = [event async for event in session.start_task("must stay on FCC")]
+
+    assert events[0]["type"] == "error"
+    assert "ANTHROPIC_BASE_URL" in events[0]["error"]["message"]
+    assert "local .claude/settings.local.json" in events[0]["error"]["message"]
+    create_process.assert_not_awaited()
+    assert session.is_busy is False
+
+
+@pytest.mark.asyncio
 async def test_launch_publication_wins_before_concurrent_stop() -> None:
     session = ManagedClaudeSession("/tmp", "http://127.0.0.1:8082")
     launch_entered = asyncio.Event()
