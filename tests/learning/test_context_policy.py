@@ -1,6 +1,7 @@
 """Tests for the explicit global Claude context-policy manager."""
 
 import json
+import stat
 import sys
 from pathlib import Path
 
@@ -40,6 +41,10 @@ def test_install_is_idempotent_and_preserves_user_instructions(tmp_path: Path) -
     assert (tmp_path / "CLAUDE.md.fcc-context-policy.bak").read_text(
         encoding="utf-8"
     ) == original
+    assert (
+        stat.S_IMODE((tmp_path / "CLAUDE.md.fcc-context-policy.bak").stat().st_mode)
+        == 0o600
+    )
 
 
 def test_update_replaces_only_the_managed_block(tmp_path: Path) -> None:
@@ -91,6 +96,75 @@ def test_duplicate_markers_fail_closed_without_mutation(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="markers are missing or duplicated"):
         install_context_policy(tmp_path)
     assert path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    "document",
+    (
+        f"prefix {POLICY_BEGIN}\nbody\n{POLICY_END}\n",
+        f"{POLICY_BEGIN}\nbody\n{POLICY_END} suffix\n",
+        f"{POLICY_END}\nbody\n{POLICY_BEGIN}\n",
+        f"{POLICY_BEGIN}\nbody\n",
+    ),
+)
+def test_conflicting_markers_fail_closed_without_mutation(
+    tmp_path: Path, document: str
+) -> None:
+    path = tmp_path / "CLAUDE.md"
+    path.write_text(document, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot safely update"):
+        install_context_policy(tmp_path)
+    assert path.read_text(encoding="utf-8") == document
+    assert not (tmp_path / "CLAUDE.md.fcc-context-policy.bak").exists()
+
+
+def test_uninstall_creates_recovery_copy_before_first_mutation(tmp_path: Path) -> None:
+    original = f"# User rules\n\n{policy_block()}\n\n# Tail\n"
+    path = tmp_path / "CLAUDE.md"
+    path.write_text(original, encoding="utf-8")
+
+    assert uninstall_context_policy(tmp_path)
+    assert path.read_text(encoding="utf-8") == "# User rules\n\n\n\n# Tail\n"
+    assert (tmp_path / "CLAUDE.md.fcc-context-policy.bak").read_text(
+        encoding="utf-8"
+    ) == original
+
+
+def test_symlink_target_fails_closed_without_mutation(tmp_path: Path) -> None:
+    target = tmp_path / "real-claude.md"
+    target.write_text("# Keep this content\n", encoding="utf-8")
+    path = tmp_path / "CLAUDE.md"
+    try:
+        path.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        install_context_policy(tmp_path)
+    assert path.is_symlink()
+    assert target.read_text(encoding="utf-8") == "# Keep this content\n"
+    assert not (tmp_path / "CLAUDE.md.fcc-context-policy.bak").exists()
+
+
+def test_existing_policy_file_preserves_mode_and_status_does_not_expose_user_text(
+    tmp_path: Path,
+) -> None:
+    secret = "API_KEY=do-not-print-this-value"
+    path = tmp_path / "CLAUDE.md"
+    path.write_text(f"# Private rules\n{secret}\n", encoding="utf-8")
+    path.chmod(0o640)
+
+    assert install_context_policy(tmp_path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    status = context_policy_status(tmp_path)
+    assert secret not in json.dumps(status, sort_keys=True)
+    assert secret not in policy_block()
+
+
+def test_new_policy_file_is_private(tmp_path: Path) -> None:
+    assert install_context_policy(tmp_path)
+    assert stat.S_IMODE((tmp_path / "CLAUDE.md").stat().st_mode) == 0o600
 
 
 def test_cli_context_policy_status_uses_explicit_path(
