@@ -20,7 +20,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--session-id",
-        default=os.environ.get("FCC_CLAUDE_SESSION_ID", ""),
+        default=None,
         help="explicit opaque Claude session id (or FCC_CLAUDE_SESSION_ID)",
     )
     parser.add_argument(
@@ -45,16 +45,18 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     """Capture one Appshot and print only local metadata."""
     args = _parser().parse_args(argv)
-    if not args.session_id:
+    session_id = args.session_id or os.environ.get("FCC_CLAUDE_SESSION_ID", "")
+    if not session_id:
         raise SystemExit("fcc-appshot requires --session-id or FCC_CLAUDE_SESSION_ID")
     if args.list:
-        for receipt in pending_appshots(args.session_id, root=args.queue):
+        for receipt in pending_appshots(session_id, root=args.queue):
             print(receipt.name)
         return
     try:
         attachment, receipt = capture_and_enqueue_appshot(
-            session_id=args.session_id,
+            session_id=session_id,
             root=args.queue,
+            session_source="explicit" if args.session_id else "environment",
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Appshot failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -64,14 +66,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             print(
                 render_terminal_preview(
-                    attachment.image_path.read_bytes(),
+                    attachment.image_bytes,
                     media_type=attachment.visual.media_type,
                     label=attachment.visual.label,
                 )
             )
         except (OSError, ValueError) as exc:
             print(f"Preview unavailable: {type(exc).__name__}: {exc}", file=sys.stderr)
-    print(f"queued: {receipt.name}")
+    if isinstance(receipt, Path):
+        print(f"queued: {receipt.name}")
+    else:
+        print(f"queued: in-memory-only:{receipt.attachment_id}")
 
 
 if __name__ == "__main__":

@@ -48,15 +48,23 @@ class VisualAttachmentReceipt:
 
 
 def validate_image_bytes(
-    data: bytes, *, media_type: str, label: str = "clipboard-image"
+    data: bytes,
+    *,
+    media_type: str,
+    label: str = "clipboard-image",
+    max_bytes: int = MAX_IMAGE_BYTES,
 ) -> VisualAttachmentReceipt:
     """Validate bytes and return a redacted receipt suitable for logs/UI."""
     if media_type not in SUPPORTED_IMAGE_TYPES:
         raise VisualAttachmentError(f"Unsupported image media type: {media_type}")
+    if not 1 <= max_bytes <= MAX_IMAGE_BYTES:
+        raise ValueError(f"max_bytes must be between 1 and {MAX_IMAGE_BYTES}")
     if not data:
         raise VisualAttachmentError("Image data is empty")
-    if len(data) > MAX_IMAGE_BYTES:
-        raise VisualAttachmentError("Image exceeds the 20 MiB limit")
+    if len(data) > max_bytes:
+        raise VisualAttachmentError(
+            f"Image exceeds the {max_bytes / (1024 * 1024):g} MiB limit"
+        )
     try:
         with Image.open(io.BytesIO(data)) as image:
             image.verify()
