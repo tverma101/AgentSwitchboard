@@ -55,6 +55,12 @@ _MISSING_ENV_MARKERS = (
     "authentication",
     "permission denied",
 )
+_HARD_CONTEXT_FAILURE_MARKERS = (
+    "prompt is too long",
+    "context window exceeded",
+    "context_window_exceeded",
+    "maximum context length",
+)
 _EMPTY_MCP_CONFIG = '{"mcpServers":{}}'
 CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 CLAUDE_REASONING_EFFORT_OPTIONS = CLAUDE_REASONING_EFFORTS
@@ -944,6 +950,10 @@ def token_evidence(
         "compact_result_success": bool(
             re.search(r'"compact_result"\s*:\s*"success"', combined)
         ),
+        "hard_context_error_markers": _hard_context_failure_markers(
+            run.combined_output
+        ),
+        "hard_context_error": _has_hard_context_failure(run.combined_output),
         "reasoning_effort_values": _metadata_values(combined, "reasoning_effort"),
         "requested_context_tokens": run.requested_context_tokens,
         "effective_context_tokens": run.effective_context_tokens,
@@ -983,6 +993,8 @@ def classify_probe(
         return "failed", "probe_timeout"
     if requires_agent and not _tool_catalog_has(log_delta, "Agent"):
         return "failed", "harness_bug"
+    if requires_compact and _has_hard_context_failure(run.combined_output):
+        return "failed", "model_feature_failure"
 
     marker_ok = not marker or marker in combined
     tool_ok = not requires_tool_result or (
@@ -1649,6 +1661,35 @@ def _has_upstream_unavailable_text(text: str) -> bool:
     return any(
         re.search(pattern, text, flags=re.IGNORECASE) for pattern in _HTTP_429_PATTERNS
     )
+
+
+def _has_hard_context_failure(text: str) -> bool:
+    """Return whether the client hit a hard context failure before continuing."""
+    lower = text.casefold()
+    boundary_positions = [
+        position
+        for marker in ("compact_boundary", "compact_metadata")
+        if (position := lower.find(marker)) >= 0
+    ]
+    first_boundary = min(boundary_positions, default=-1)
+    prompt_too_long = lower.find("prompt is too long")
+    if prompt_too_long >= 0 and (
+        first_boundary < 0 or prompt_too_long < first_boundary
+    ):
+        return True
+    return (
+        any(
+            marker in lower
+            for marker in _HARD_CONTEXT_FAILURE_MARKERS
+            if marker != "prompt is too long"
+        )
+        and first_boundary < 0
+    )
+
+
+def _hard_context_failure_markers(text: str) -> tuple[str, ...]:
+    lower = text.casefold()
+    return tuple(marker for marker in _HARD_CONTEXT_FAILURE_MARKERS if marker in lower)
 
 
 def _request_count(log_delta: str) -> int:

@@ -197,6 +197,42 @@ wrapper, background, and upgrade surfaces. It is deliberately explicit about
 `unverified` and `skipped` boundaries; a receipt row is not a claim that the
 underlying client surface is certified unless its status is `passed`.
 
+## Claude automatic-compaction conformance
+
+The compact gate has two deliberately separate evidence lanes:
+
+1. The deterministic contract lane validates compact-boundary shape, explicit
+   automatic triggering, continuation, metadata-only receipts, and negative
+   hard-context cases. It does not execute Claude and cannot certify a client.
+2. The opt-in live lane runs the persisted-session probe with the literal
+   installed Claude executable against a configured provider. It is the only
+   lane that can produce live installed-client/provider evidence, and it must
+   observe an automatic compact boundary, successful post-boundary Bash/tool
+   execution, and a usable resumed turn. Environment injection alone is not a
+   pass.
+
+Run the live provider lane only when its provider credentials are explicitly
+configured:
+
+```bash
+FCC_LIVE_SMOKE=1 FCC_SMOKE_TARGETS=cli \
+FCC_SMOKE_AUTO_COMPACT_MODEL=opencode_go/muse-spark-1.2-contributor \
+uv run pytest smoke/prereq/test_cli_prereq_live.py::test_claude_cli_auto_compact_resume_when_requested \
+  -n 0 -s --tb=short
+```
+
+The existing zero-provider Claude fixtures characterize thinking/tool protocol
+shapes, but do not claim automatic-compaction proof. The metadata-only compact
+receipt contract is
+[`smoke/lib/auto_compact_receipt.py`](lib/auto_compact_receipt.py). The checked-in
+[Muse receipt](receipts/muse-auto-compact-2026-08-24.json) is historical live
+installed-Claude evidence, not a synthetic fixture. Its explicit
+`unverified_boundaries` are retained because a receipt must not invent a source
+commit, numeric pre/post context estimates, or a duplicate-tool-call count that
+the capture did not record. The synthetic
+[contract fixture](fixtures/claude-auto-compact-contract.json) is intentionally
+rejected by the live receipt validator.
+
 The metadata-only [media conformance corpus](fixtures/media-conformance-v1.json)
 enumerates the supported image/tool-result protocol boundaries, deterministic
 rejection cases, retry identity, and native/provider route pairs. It contains
