@@ -26,7 +26,9 @@ def test_checked_in_muse_receipt_proves_only_the_minimal_live_gate() -> None:
     assert summary["evidence_kind"] == "live_installed_claude"
     assert summary["requested_context_tokens"] == 50_000
     assert summary["effective_context_tokens"] == 50_000
-    assert "harness_commit_sha_at_capture" in summary["unverified_boundaries"]
+    boundaries = summary["unverified_boundaries"]
+    assert isinstance(boundaries, tuple)
+    assert "harness_commit_sha_at_capture" in boundaries
 
 
 def test_synthetic_contract_fixture_cannot_be_used_as_live_evidence() -> None:
