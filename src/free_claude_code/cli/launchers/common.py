@@ -28,9 +28,7 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
     request = Request(url, method="GET")
     body: bytes | None = None
     try:
-        with open_local_request(
-            request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
-        ) as response:
+        with open_local_request(request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS) as response:
             status_code = response.getcode()
             if 200 <= status_code < 300:
                 body = response.read()
