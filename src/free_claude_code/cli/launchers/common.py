@@ -29,8 +29,7 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
     body: bytes | None = None
     try:
         with open_local_request(
-            request,
-            timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+            request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
         ) as response:
             status_code = response.getcode()
             if 200 <= status_code < 300:
@@ -55,17 +54,12 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
 
     running_version = payload.get("version")
     expected_version = package_version()
-    if running_version != expected_version:
-        display_version = (
-            running_version
-            if isinstance(running_version, str) and running_version
-            else "unknown"
-        )
-        return (
-            f"{_PROXY_VERSION_MISMATCH_PREFIX} running {display_version}, "
-            f"installed {expected_version}"
-        )
-    return None
+    if running_version == expected_version:
+        return None
+    if not isinstance(running_version, str) or not running_version:
+        running_version = "unknown"
+    prefix = f"{_PROXY_VERSION_MISMATCH_PREFIX} running {running_version}"
+    return f"{prefix}, installed {expected_version}"
 
 
 def is_proxy_version_mismatch(error: str | None) -> bool:
