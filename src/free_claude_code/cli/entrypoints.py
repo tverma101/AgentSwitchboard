@@ -36,29 +36,17 @@ def _run_server_entrypoint() -> None:
 
     # Keep the server composition root off metadata-only command paths.
     from free_claude_code.cli import commands
-    from free_claude_code.cli.launchers.common import (
-        is_proxy_version_mismatch,
-        preflight_proxy,
-    )
+    from free_claude_code.cli.launchers.common import preflight_proxy
     from free_claude_code.config.server_urls import local_proxy_root_url
 
     settings = commands.load_server_settings()
-    proxy_root_url = local_proxy_root_url(settings)
-    preflight_error = preflight_proxy(proxy_root_url)
+    preflight_error = preflight_proxy(local_proxy_root_url(settings))
     if preflight_error is None:
         print(
             "FCC server is already running at "
-            f"{proxy_root_url}; terminal-only mode is active."
+            f"{local_proxy_root_url(settings)}; terminal-only mode is active."
         )
         return
-
-    if is_proxy_version_mismatch(preflight_error):
-        print(
-            f"FCC cannot reuse the server at {proxy_root_url}: {preflight_error}. "
-            "Stop the existing FCC daemon, then rerun fcc-server.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
 
     if _server_port_is_occupied(settings.host, settings.port):
         print(
