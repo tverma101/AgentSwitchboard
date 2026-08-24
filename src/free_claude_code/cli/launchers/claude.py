@@ -7,8 +7,8 @@ from collections.abc import Sequence
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
     build_claude_proxy_env,
-    conflicting_settings_env_keys,
     resolved_model_id,
+    settings_env_routing_conflict_message,
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
@@ -48,20 +48,8 @@ def launch(argv: Sequence[str] | None = None) -> None:
         install_hint=_INSTALL_HINT,
     )
     args = list(sys.argv[1:] if argv is None else argv)
-    conflicts = conflicting_settings_env_keys(os.environ)
-    if conflicts:
-        keys = ", ".join(conflicts)
-        print(
-            f"Free Claude Code proxy routing is overridden by Claude "
-            f"settings.json env keys: {keys}",
-            file=sys.stderr,
-        )
-        print(
-            "Remove these keys from the 'env' block of your Claude "
-            "settings.json (CLAUDE_CONFIG_DIR/settings.json) so the FCC "
-            "launcher can route through the local proxy.",
-            file=sys.stderr,
-        )
+    if conflict_message := settings_env_routing_conflict_message(os.environ):
+        print(conflict_message, file=sys.stderr)
         raise SystemExit(2)
     run_client_process(
         command=build_claude_launcher_command(binary_path=binary_path, argv=args),

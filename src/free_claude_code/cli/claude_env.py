@@ -125,6 +125,24 @@ def conflicting_settings_env_keys(base_env: Mapping[str, str]) -> tuple[str, ...
     return tuple(key for key in SETTINGS_ENV_ROUTING_KEYS if key in env)
 
 
+def settings_env_routing_conflict_message(
+    base_env: Mapping[str, str],
+) -> str | None:
+    """Return the user-facing error for a settings-based routing override."""
+
+    conflicts = conflicting_settings_env_keys(base_env)
+    if not conflicts:
+        return None
+    keys = ", ".join(conflicts)
+    return (
+        "Free Claude Code proxy routing is overridden by Claude "
+        f"settings.json env keys: {keys}. Remove these keys from the "
+        "'env' block of your Claude settings.json "
+        "(CLAUDE_CONFIG_DIR/settings.json) so the FCC launcher can route "
+        "through the local proxy."
+    )
+
+
 def build_claude_proxy_env(
     *,
     proxy_root_url: str,

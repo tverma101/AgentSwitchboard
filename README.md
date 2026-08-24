@@ -287,6 +287,13 @@ Providers that do not support a selected control retain their own behavior.
 
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
 
+FCC owns Claude's gateway routing. Do not set `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` in the `env` block of
+`CLAUDE_CONFIG_DIR/settings.json`: Claude Code applies those settings over the
+process environment. Both `fcc-claude` and the managed desktop session fail
+closed with the conflicting key names instead of launching a session that could
+bypass FCC.
+
 ### Visual attachments and Appshots
 
 FCC validates PNG, JPEG, and WebP image bytes before forwarding them and exposes

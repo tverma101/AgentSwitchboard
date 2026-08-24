@@ -47,11 +47,9 @@ class ProviderEgressGuard:
         family = provider_family.strip().lower()
         allowed = family == self.policy.primary_provider.lower()
         if category == "local_tool":
-            allowed = (
-                family == "local"
-                or family
-                in {tool.lower() for tool in self.policy.allowed_local_tools}
-            )
+            allowed = family == "local" or family in {
+                tool.lower() for tool in self.policy.allowed_local_tools
+            }
         elif self.policy.mode is ProviderPolicyMode.ALLOW_LISTED:
             allowed = allowed or family in {
                 helper.lower() for helper in self.policy.allowed_helpers

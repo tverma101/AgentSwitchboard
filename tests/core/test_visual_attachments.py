@@ -19,14 +19,24 @@ def _png() -> bytes:
 
 def test_receipt_is_safe_and_order_independent() -> None:
     data = _png()
-    receipt = validate_base64_source({"media_type": "image/png", "data": base64.b64encode(data).decode()})
+    receipt = validate_base64_source(
+        {"media_type": "image/png", "data": base64.b64encode(data).decode()}
+    )
     assert receipt.width == 3 and receipt.height == 2
     assert receipt.attachment_id in receipt.card()
     assert base64.b64encode(data).decode() not in receipt.card()
 
 
-@pytest.mark.parametrize("source", [{"media_type": "image/png", "data": "bad"}, {"media_type": "image/gif", "data": "x"}])
-def test_invalid_or_unsupported_images_fail_before_upstream(source: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"media_type": "image/png", "data": "bad"},
+        {"media_type": "image/gif", "data": "x"},
+    ],
+)
+def test_invalid_or_unsupported_images_fail_before_upstream(
+    source: dict[str, str],
+) -> None:
     with pytest.raises(VisualAttachmentError):
         validate_base64_source(source)
 

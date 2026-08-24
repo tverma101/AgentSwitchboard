@@ -9,7 +9,11 @@ def test_openai_model_listing_preserves_explicit_vision_capabilities() -> None:
                     "id": "vision-model",
                     "capabilities": {
                         "vision": True,
-                        "accepted_image_types": ["image/png", "image/webp", "image/gif"],
+                        "accepted_image_types": [
+                            "image/png",
+                            "image/webp",
+                            "image/gif",
+                        ],
                     },
                 },
                 {"id": "text-only", "capabilities": {"vision": False}},

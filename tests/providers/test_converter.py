@@ -11,9 +11,7 @@ from free_claude_code.core.anthropic import (
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
 
-VALID_PNG_BASE64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-)
+VALID_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 VALID_WEBP_BASE64 = "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA="
 
 # --- Mock Classes ---
@@ -1134,9 +1132,7 @@ def test_convert_user_message_preserves_interleaved_image_text_order():
             "content": [
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{VALID_PNG_BASE64}"
-                    },
+                    "image_url": {"url": f"data:image/png;base64,{VALID_PNG_BASE64}"},
                 },
                 {
                     "type": "text",
@@ -1679,9 +1675,7 @@ def test_openai_build_converts_validated_anthropic_image_block() -> None:
             "content": [
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/webp;base64,{VALID_WEBP_BASE64}"
-                    },
+                    "image_url": {"url": f"data:image/webp;base64,{VALID_WEBP_BASE64}"},
                 },
                 {"type": "text", "text": "What is shown?"},
             ],

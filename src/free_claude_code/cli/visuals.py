@@ -94,7 +94,9 @@ def capture_focused_window(output_dir: Path) -> Path:
         text=True,
     )
     if result.returncode != 0 or not destination.is_file():
-        raise RuntimeError("Focused-window capture failed; grant Screen Recording access")
+        raise RuntimeError(
+            "Focused-window capture failed; grant Screen Recording access"
+        )
     return destination
 
 
@@ -104,7 +106,9 @@ def focused_window_metadata() -> dict[str, str]:
         'tell application "System Events" to tell first process whose frontmost is true '
         'to return name & linefeed & (value of attribute "AXTitle" of front window)'
     )
-    result = subprocess.run(["osascript", "-e", script], check=True, text=True, capture_output=True)
+    result = subprocess.run(
+        ["osascript", "-e", script], check=True, text=True, capture_output=True
+    )
     parts = result.stdout.splitlines()
     app = parts[0].strip() if parts else "Unknown app"
     title = parts[1].strip() if len(parts) > 1 else ""
@@ -174,7 +178,9 @@ def enqueue_appshot(attachment: AppshotAttachment, *, root: Path | None = None) 
     """Persist metadata for a wrapper/session consumer without storing image bytes."""
     queue = appshot_queue_dir(root)
     queue.mkdir(parents=True, exist_ok=True)
-    destination = queue / f"{attachment.session_id}-{attachment.visual.attachment_id}.json"
+    destination = (
+        queue / f"{attachment.session_id}-{attachment.visual.attachment_id}.json"
+    )
     temporary = destination.with_suffix(".tmp")
     temporary.write_text(
         json.dumps(attachment.as_dict(), sort_keys=True) + "\n", encoding="utf-8"

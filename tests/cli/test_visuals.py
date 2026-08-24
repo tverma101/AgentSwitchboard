@@ -28,7 +28,9 @@ def test_fallback_card_is_compact() -> None:
     output = io.BytesIO()
     Image.new("RGB", (3, 2), "red").save(output, format="PNG")
 
-    card = render_attachment_card(output.getvalue(), media_type="image/png", label="screenshot.png")
+    card = render_attachment_card(
+        output.getvalue(), media_type="image/png", label="screenshot.png"
+    )
     assert card.startswith("[img ") and "screenshot.png" in card
 
 
@@ -47,7 +49,9 @@ def test_supported_protocol_preview_is_local_and_keeps_confirmation() -> None:
     assert "attached" in rendered
 
 
-def test_appshot_queue_is_explicit_session_scoped_and_metadata_only(tmp_path: Path) -> None:
+def test_appshot_queue_is_explicit_session_scoped_and_metadata_only(
+    tmp_path: Path,
+) -> None:
     image = tmp_path / "appshot.png"
     image.write_bytes(_png_bytes())
     attachment = build_appshot_attachment(

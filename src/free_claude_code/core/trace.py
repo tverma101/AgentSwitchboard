@@ -60,9 +60,7 @@ def sanitize_trace_value(obj: Any) -> Any:
     if isinstance(obj, tuple | list):
         return [sanitize_trace_value(x) for x in obj]
     if isinstance(obj, str):
-        redacted = _IMAGE_DATA_URL_RE.sub(
-            r"data:\1;base64,<redacted-image-data>", obj
-        )
+        redacted = _IMAGE_DATA_URL_RE.sub(r"data:\1;base64,<redacted-image-data>", obj)
         return _IMAGE_SOURCE_DATA_RE.sub(r"\1<redacted-image-data>\2", redacted)
     return obj
 

@@ -351,8 +351,13 @@ def test_memory_cli_list_search_show_remove_and_history_are_deterministic(
         return json.loads(capsys.readouterr().out)
 
     assert run("memory", "list", "--cwd", str(tmp_path))[0]["id"] == memory_id
-    assert run("memory", "search", "verified", "--cwd", str(tmp_path))[0]["id"] == memory_id
-    assert run("memory", "show", str(memory_id), "--cwd", str(tmp_path))["id"] == memory_id
+    assert (
+        run("memory", "search", "verified", "--cwd", str(tmp_path))[0]["id"]
+        == memory_id
+    )
+    assert (
+        run("memory", "show", str(memory_id), "--cwd", str(tmp_path))["id"] == memory_id
+    )
     assert run("memory", "remove", str(memory_id), "--cwd", str(tmp_path)) == {
         "removed": memory_id
     }
@@ -520,7 +525,10 @@ def test_queue_reclaims_abandoned_worker_and_dead_letters_after_bounded_retries(
     assert reclaimed["queue_id"] == queue_id
     assert "secretvalue12345" not in str(reclaimed["attribution_json"])
 
-    assert store.fail_learning(queue_id, error="permanent", max_attempts=1) == "dead_letter"
+    assert (
+        store.fail_learning(queue_id, error="permanent", max_attempts=1)
+        == "dead_letter"
+    )
     assert store.queue_counts() == {"dead_letter": 1}
 
 

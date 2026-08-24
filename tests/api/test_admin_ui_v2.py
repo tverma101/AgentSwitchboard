@@ -26,10 +26,10 @@ def test_admin_v2_assets_are_served_uncached():
 def test_admin_page_loads_density_layer_after_base_assets():
     html = (ADMIN_STATIC / "index.html").read_text(encoding="utf-8")
 
-    base_css = html.index('/admin/assets/admin.css')
-    v2_css = html.index('/admin/assets/admin-v2.css')
-    base_js = html.index('/admin/assets/admin.js')
-    v2_js = html.index('/admin/assets/admin-ui-v2.js')
+    base_css = html.index("/admin/assets/admin.css")
+    v2_css = html.index("/admin/assets/admin-v2.css")
+    base_js = html.index("/admin/assets/admin.js")
+    v2_js = html.index("/admin/assets/admin-ui-v2.js")
 
     assert base_css < v2_css
     assert base_js < v2_js
@@ -44,5 +44,5 @@ def test_admin_v2_filter_is_local_ui_only():
     assert "fetch(" not in script
     assert "MutationObserver" in script
     assert 'event.key !== "/"' in script
-    assert 'card.hidden = !show' in script
+    assert "card.hidden = !show" in script
     assert 'pill?.classList.contains("ok")' in script

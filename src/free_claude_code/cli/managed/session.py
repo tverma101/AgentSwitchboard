@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 
 from loguru import logger
 
+from free_claude_code.cli.claude_env import settings_env_routing_conflict_message
 from free_claude_code.cli.process_registry import (
     kill_pid_tree_best_effort,
     register_pid,
@@ -108,39 +109,61 @@ class ManagedClaudeSession:
         async with self._cli_lock:
             process: asyncio.subprocess.Process | None = None
             termination_confirmed = False
+            routing_conflict_message: str | None = None
             try:
                 async with self._lifecycle_lock:
                     if self._closed:
                         raise RuntimeError("Managed Claude session is closed.")
                     self._is_busy = True
-                    invocation = build_managed_claude_invocation(
-                        config=self.config,
-                        request=ManagedClaudeTaskRequest(
-                            prompt=prompt,
-                            session_id=session_id,
-                            fork_session=fork_session,
-                        ),
-                        base_env=os.environ,
+                    routing_conflict_message = settings_env_routing_conflict_message(
+                        os.environ
                     )
+                    if routing_conflict_message is None:
+                        invocation = build_managed_claude_invocation(
+                            config=self.config,
+                            request=ManagedClaudeTaskRequest(
+                                prompt=prompt,
+                                session_id=session_id,
+                                fork_session=fork_session,
+                            ),
+                            base_env=os.environ,
+                        )
 
-                    trace_event(
-                        stage="claude_cli",
-                        event="claude_cli.process.launch",
-                        source="claude_cli",
-                        **invocation.trace_metadata,
+                        trace_event(
+                            stage="claude_cli",
+                            event="claude_cli.process.launch",
+                            source="claude_cli",
+                            **invocation.trace_metadata,
+                        )
+
+                        process = await asyncio.create_subprocess_exec(
+                            *invocation.argv,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            cwd=invocation.cwd,
+                            env=invocation.env,
+                        )
+                        self.process = process
+                        if process.pid:
+                            register_pid(process.pid)
+
+                if routing_conflict_message is not None:
+                    logger.error(
+                        "Managed Claude launch blocked by settings.json routing override"
                     )
+                    yield {
+                        "type": "error",
+                        "error": {"message": routing_conflict_message},
+                    }
+                    yield {
+                        "type": "exit",
+                        "code": 2,
+                        "stderr": routing_conflict_message,
+                    }
+                    return
 
-                    process = await asyncio.create_subprocess_exec(
-                        *invocation.argv,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=invocation.cwd,
-                        env=invocation.env,
-                    )
-                    self.process = process
-                    if process.pid:
-                        register_pid(process.pid)
-
+                if process is None:
+                    raise RuntimeError("Managed Claude process was not started.")
                 if not process.stdout:
                     yield {"type": "exit", "code": 1}
                     return

@@ -537,8 +537,10 @@ def test_launch_claude_allows_unrelated_settings_env_keys(
             return_value="resolved-claude.cmd",
         ),
         patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
-        patch("free_claude_code.cli.launchers.common.register_pid") as register_pid,
-        patch("free_claude_code.cli.launchers.common.unregister_pid") as unregister_pid,
+        patch("free_claude_code.cli.launchers.common.register_pid") as _register_pid,
+        patch(
+            "free_claude_code.cli.launchers.common.unregister_pid"
+        ) as _unregister_pid,
         pytest.raises(SystemExit) as exc_info,
     ):
         process = popen.return_value

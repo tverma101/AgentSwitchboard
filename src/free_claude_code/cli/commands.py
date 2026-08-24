@@ -208,7 +208,9 @@ def load_server_settings() -> Settings:
     return get_settings()
 
 
-def _admin_open_mode(env: dict[str, str] | os._Environ[str] | None = None) -> AdminOpenMode:
+def _admin_open_mode(
+    env: dict[str, str] | os._Environ[str] | None = None,
+) -> AdminOpenMode:
     """Resolve the presentation mode without making invalid values fatal."""
 
     source = os.environ if env is None else env

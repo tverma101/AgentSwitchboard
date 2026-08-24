@@ -52,7 +52,9 @@ async def test_dispatches_local_computer_and_browser_tools_with_receipts() -> No
     guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
     plane = LocalToolPlane(FakeComputer(), FakeBrowser(), guard)
 
-    assert await plane.invoke("computer.screenshot", {"window_id": "w-1"}) == b"shot:w-1"
+    assert (
+        await plane.invoke("computer.screenshot", {"window_id": "w-1"}) == b"shot:w-1"
+    )
     assert await plane.invoke("computer.perform", {"action": "click"}) == {
         "action": "click",
         "arguments": {},
