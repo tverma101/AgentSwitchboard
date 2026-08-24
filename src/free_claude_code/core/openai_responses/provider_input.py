@@ -8,6 +8,7 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.request_serialization import (
     serialize_tool_result_content,
+    tool_result_media_block_types,
 )
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.core.visual_attachments import (
@@ -320,14 +321,21 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
         elif block_type == "image":
             message_parts.append(_image_part(block))
         elif block_type == "tool_result":
+            tool_use_id = str(get_block_attr(block, "tool_use_id", ""))
+            tool_content = get_block_attr(block, "content")
+            media_types = tool_result_media_block_types(tool_content)
+            if media_types:
+                raise ResponsesConversionError(
+                    "OpenAI Responses cannot represent structured media blocks "
+                    f"{media_types} inside tool_result {tool_use_id!r}; refusing "
+                    "lossy text serialization."
+                )
             flush_message()
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": str(get_block_attr(block, "tool_use_id", "")),
-                    "output": serialize_tool_result_content(
-                        get_block_attr(block, "content")
-                    ),
+                    "call_id": tool_use_id,
+                    "output": serialize_tool_result_content(tool_content),
                 }
             )
         elif block_type == "document":

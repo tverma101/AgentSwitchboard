@@ -1,12 +1,12 @@
 {
   "receipt": "claude-reasoning-effort-matrix",
-  "captured_at": "2026-08-24T06:04:03Z",
+  "captured_at": "2026-08-24T08:27:12Z",
   "claude": {
     "launcher": "claude",
     "version": "2.1.228"
   },
   "harness": {
-    "package_version": "4.30.7",
+    "package_version": "4.30.15",
     "isolated_server": "loopback-isolated",
     "active_user_server_8082_touched": false
   },
@@ -25,27 +25,27 @@
     {
       "requested": "low",
       "effective": "low",
-      "provider_reasoning_tokens": 38
+      "provider_reasoning_tokens": 103
     },
     {
       "requested": "medium",
       "effective": "medium",
-      "provider_reasoning_tokens": 194
+      "provider_reasoning_tokens": 307
     },
     {
       "requested": "high",
       "effective": "high",
-      "provider_reasoning_tokens": 65
+      "provider_reasoning_tokens": 234
     },
     {
       "requested": "xhigh",
       "effective": "xhigh",
-      "provider_reasoning_tokens": 84
+      "provider_reasoning_tokens": 212
     },
     {
       "requested": "max",
       "effective": "xhigh",
-      "provider_reasoning_tokens": 159
+      "provider_reasoning_tokens": 97
     }
   ],
   "translation": {

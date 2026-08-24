@@ -20,12 +20,14 @@ from free_claude_code.core.claude_compatibility import (
     inspect_claude_compatibility,
 )
 
+from .bundle import BundleError, export_from_store, import_bundle, inspect_bundle
+from .config import LearningProfileError
 from .context_policy import (
     context_policy_status,
     install_context_policy,
     uninstall_context_policy,
 )
-from .hooks import install_hooks, run_hook, uninstall_hooks
+from .hooks import claude_config_dir, install_hooks, run_hook, uninstall_hooks
 from .stop_hook import drain_queue
 from .store import LearningStore, learning_home, project_identity
 
@@ -34,6 +36,11 @@ def _cwd(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cwd", default=os.getcwd(), help="project directory for scoped state"
     )
+    parser.add_argument("--profile", help="named FCC Learning profile")
+
+
+def _profile(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--profile", help="named FCC Learning profile")
 
 
 def _row(row: Any) -> dict[str, Any]:
@@ -55,7 +62,8 @@ def _parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("install", help="merge FCC Learning hooks into Claude Code")
     subcommands.add_parser("uninstall", help="remove only FCC Learning hooks")
-    subcommands.add_parser("status", help="show local learning state")
+    status = subcommands.add_parser("status", help="show local learning state")
+    _profile(status)
 
     compatibility = subcommands.add_parser(
         "claude-compat",
@@ -116,21 +124,50 @@ def _parser() -> argparse.ArgumentParser:
     skill_list = skill_commands.add_parser("list")
     _cwd(skill_list)
     skill_history = skill_commands.add_parser("history")
+    _profile(skill_history)
     skill_history.add_argument("skill_key")
     skill_rollback = skill_commands.add_parser("rollback")
+    _profile(skill_rollback)
     skill_rollback.add_argument("skill_key")
     skill_rollback.add_argument("revision", type=int)
+
+    bundle = subcommands.add_parser(
+        "bundle", help="export, inspect, or import portable learning state"
+    )
+    bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
+    bundle_export = bundle_commands.add_parser(
+        "export", help="write a deterministic portable learning bundle"
+    )
+    bundle_export.add_argument("path")
+    _cwd(bundle_export)
+    bundle_export.add_argument("--limit", type=int, default=1000)
+    bundle_inspect = bundle_commands.add_parser(
+        "inspect", help="validate a bundle and print its manifest summary"
+    )
+    bundle_inspect.add_argument("path")
+    bundle_import = bundle_commands.add_parser(
+        "import", help="plan or apply a portable learning bundle"
+    )
+    bundle_import.add_argument("path")
+    _cwd(bundle_import)
+    bundle_import.add_argument(
+        "--conflict", choices=("skip", "replace", "fail"), default="skip"
+    )
+    bundle_import.add_argument("--dry-run", action="store_true")
 
     queue = subcommands.add_parser(
         "queue", help="inspect or drain durable learning jobs"
     )
     queue_commands = queue.add_subparsers(dest="queue_command", required=True)
-    queue_commands.add_parser("status")
+    queue_status = queue_commands.add_parser("status")
+    _profile(queue_status)
     queue_drain = queue_commands.add_parser("drain")
+    _profile(queue_drain)
     queue_drain.add_argument("--limit", type=int, default=2)
 
     hook = subcommands.add_parser("hook", help=argparse.SUPPRESS)
     hook.add_argument("event", choices=("session-start", "user-prompt"))
+    _profile(hook)
     return parser
 
 
@@ -269,12 +306,25 @@ def main() -> None:
         print(json.dumps(status.as_receipt(), indent=2, sort_keys=True))
         return
 
-    store = LearningStore()
+    if args.command == "bundle" and args.bundle_command == "inspect":
+        try:
+            result = inspect_bundle(Path(args.path))
+        except BundleError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+
+    try:
+        store = LearningStore(profile=getattr(args, "profile", None))
+    except LearningProfileError as exc:
+        raise SystemExit(str(exc)) from exc
     if args.command == "status":
         print(
             json.dumps(
                 {
                     "home": str(learning_home()),
+                    "database": str(store.path),
+                    **store.profile_info(),
                     **store.counts(),
                     "queue": store.queue_counts(),
                 },
@@ -288,6 +338,29 @@ def main() -> None:
     if args.command == "skill":
         _skill_command(args, store)
         return
+    if args.command == "bundle":
+        try:
+            if args.bundle_command == "export":
+                result = export_from_store(
+                    Path(args.path),
+                    store=store,
+                    project_key=project_identity(args.cwd),
+                    profile=store.profile,
+                    limit=args.limit,
+                )
+            else:
+                result = import_bundle(
+                    Path(args.path),
+                    store=store,
+                    target_project_key=project_identity(args.cwd),
+                    claude_config_dir=claude_config_dir(),
+                    conflict=args.conflict,
+                    dry_run=args.dry_run,
+                )
+        except BundleError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
     if args.command == "queue":
         if args.queue_command == "status":
             print(json.dumps(store.queue_counts(), indent=2))
@@ -296,7 +369,7 @@ def main() -> None:
         return
     if args.command == "hook":
         try:
-            run_hook(args.event)
+            run_hook(args.event, profile=args.profile)
         except Exception as exc:
             print(f"FCC Learning hook failed: {type(exc).__name__}", file=sys.stderr)
         return

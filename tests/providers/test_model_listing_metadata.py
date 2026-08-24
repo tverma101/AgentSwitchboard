@@ -1,5 +1,13 @@
-from free_claude_code.application.model_metadata import ReasoningCapabilityStatus
-from free_claude_code.providers.model_listing import extract_openai_model_infos
+import pytest
+
+from free_claude_code.application.model_metadata import (
+    CapabilityEvidenceStatus,
+    ReasoningCapabilityStatus,
+)
+from free_claude_code.providers.model_listing import (
+    ModelListResponseError,
+    extract_openai_model_infos,
+)
 
 
 def test_openai_model_listing_preserves_explicit_vision_capabilities() -> None:
@@ -27,6 +35,44 @@ def test_openai_model_listing_preserves_explicit_vision_capabilities() -> None:
     assert by_id["vision-model"].supports_vision is True
     assert by_id["vision-model"].accepted_image_types == ("image/png", "image/webp")
     assert by_id["text-only"].supports_vision is False
+    assert (
+        by_id["vision-model"].capability_evidence.status_for("vision_input")
+        is CapabilityEvidenceStatus.SUPPORTED
+    )
+    assert (
+        by_id["vision-model"].capability_evidence.evidence_source == "provider_metadata"
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {
+            "supports_vision": False,
+            "capabilities": {"vision": True},
+        },
+        {"supports_vision": False, "input_modalities": ["text", "image"]},
+        {
+            "supports_vision": False,
+            "accepted_image_types": ["image/png"],
+        },
+        {
+            "capabilities": {"tools": False},
+            "supported_parameters": ["tools"],
+        },
+    ],
+)
+def test_openai_model_listing_rejects_conflicting_vision_metadata(
+    metadata: dict[str, object],
+) -> None:
+    with pytest.raises(
+        ModelListResponseError,
+        match=r"conflicting .*capability metadata",
+    ):
+        extract_openai_model_infos(
+            {"data": [{"id": "ambiguous-model", **metadata}]},
+            provider_name="TEST",
+        )
 
 
 def test_openai_model_listing_keeps_reasoning_evidence_separate_from_acceptance() -> (

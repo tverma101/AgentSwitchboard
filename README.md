@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The local release head is version
-`4.30.14`; examples below describe this checkout, not every feature proposed in
+`4.30.23`; examples below describe this checkout, not every feature proposed in
 the open design backlog. Live smoke receipts retain the package version that
 was installed when each receipt was captured; read the receipt's own metadata
 before treating it as evidence for a later release head.
@@ -59,9 +59,10 @@ before treating it as evidence for a later release head.
 | Status | Current scope |
 | --- | --- |
 | **Current-source verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
-| **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, and a foreground Agent/subagent loop. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
-| **Partial or unverified** | Top-level Claude `--bg` inheritance (the observed daemon exited before FCC saw a request), live native-vs-FCC economic parity, deep semantic compaction torture, and a live `off`/`minimal` reasoning matrix. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
-| **Planned or design-only** | Capability-aware helper execution, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
+| **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
+| **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
+| **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
+| **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
 <div align="center">
   <img src="assets/pic.png" alt="Claude Code running with Free Claude Code" width="700">
@@ -242,12 +243,22 @@ requested effort and the upstream effective effort.
 The five-level live matrix is recorded in the sanitized
 [reasoning receipt](smoke/receipts/claude-reasoning-effort-matrix-2026-08-24.json).
 
+The direct Anthropic Messages control boundary is recorded in the sanitized
+[reasoning-boundary receipt](smoke/receipts/claude-reasoning-boundaries-2026-08-24.json).
+FCC preserves an explicit `off` request for output suppression and receipts;
+because Muse rejects `effort=none`, the OpenCode Go adapter sends Muse's lowest
+supported `minimal` effort. Both requests completed with opaque provider
+reasoning hidden from the Anthropic stream.
+
 The foreground Agent/subagent route is separately recorded in the sanitized
-[subagent receipt](smoke/receipts/claude-subagent-2026-08-24.json). Background
-self-spawn remains an explicit unverified surface; the current observed
+[subagent receipt](smoke/receipts/claude-subagent-2026-08-24.json). The literal
+top-level `--bg` route is recorded in the sanitized
+[background-subagent receipt](smoke/receipts/claude-background-subagent-2026-08-24.json):
+Claude 2.1.228 returns a handle, attaches through the native terminal path, and
+completes a Bash marker through FCC/OpenCode Go/Muse. The earlier
 [background-session receipt](smoke/receipts/claude-background-session-2026-08-24.json)
-shows Claude 2.1.228 returning a handle and then disappearing before FCC saw a
-request. The complete PASS/UNVERIFIED/SKIPPED map is in the
+is retained as historical failed-probe evidence. The complete
+PASS/UNVERIFIED/SKIPPED map is in the
 [Claude compatibility matrix](smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
 
 ### Inspect usage and model labels
@@ -379,7 +390,7 @@ Set `REASONING_POLICY` and its optional tier overrides in `~/.fcc/.env`.
 | Selection | Behavior |
 | --- | --- |
 | **From client** (default) | Use the effort sent by Claude Code, Codex, or Pi. If none is sent, keep the provider default. |
-| **Off** | Request reasoning to be disabled. |
+| **Off** | Suppress reasoning output and request the provider's no-reasoning behavior. Providers without a native disable value use their lowest supported effort and retain `off` in FCC receipts. |
 | **Low**, **Medium**, **High**, **X-High**, or **Max** | Override the client with the selected reasoning level. |
 | **Inherit** (Fable, Opus, Sonnet, and Haiku only) | Use the root Reasoning selection. |
 
@@ -428,8 +439,25 @@ itself.
 
 For an explicit session-scoped capture, use `fcc-appshot --session-id <id>` (or
 set `FCC_CLAUDE_SESSION_ID`). The helper writes the PNG and a metadata-only
-receipt to the local Appshot queue; a wrapper/session consumer can read that
-receipt and attach the image without injecting keystrokes into the Claude TUI.
+receipt to the local Appshot queue, renders a bounded local preview when the
+terminal supports it, and prints the compact metadata card otherwise. Use
+`--no-preview` for receipt-only output or `--list` to list pending receipts for
+the session. A wrapper/session consumer can read a receipt and attach the image
+without injecting keystrokes into the Claude TUI.
+
+### Optional local browser bridge
+
+The source tree also contains a loopback-only `ChromeCdpBrowserBridge` for
+applications that explicitly inject a `BrowserBridgePort`. It never launches a
+browser, contacts a model provider, or attaches to an existing browser session
+without `allow_existing_session=True`; tab discovery strips cookies and URL
+queries, DOM output is bounded, and arbitrary JavaScript execution is not
+exposed. This is an opt-in tool-plane primitive, not a browser-based FCC UI or
+part of the default terminal launcher. For terminal-only experiments, the
+installed `fcc-browser` command exposes the same bounded operations:
+`list-tabs`, `snapshot-dom <tab_id>`, and `action <tab_id> <navigate|click|type|scroll|query>`.
+Every invocation requires `--allow-existing-session`; without it, no browser
+network call is attempted.
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>

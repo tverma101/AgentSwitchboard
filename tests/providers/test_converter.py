@@ -412,6 +412,36 @@ def test_convert_user_message_tool_result_list():
     assert result[0]["content"] == "Line 1\nLine 2"
 
 
+def test_convert_user_message_rejects_media_inside_tool_result() -> None:
+    """Unsupported tool-result media must not be flattened into JSON text."""
+    messages = [
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="tool_image",
+                    content=[
+                        {"type": "text", "text": "screenshot"},
+                        {
+                            "metadata": {
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://example.test/shot.png",
+                                },
+                            }
+                        },
+                    ],
+                )
+            ],
+        )
+    ]
+
+    with pytest.raises(OpenAIConversionError, match=r"media blocks.*tool_result"):
+        AnthropicToOpenAIConverter.convert_messages(messages)
+
+
 def test_convert_user_message_mixed_text_and_tool_result():
     # Note: Anthropic/OpenAI mapping usually separates these, but the converter handles lists
     # User text usually comes before tool results in a turn, or after.

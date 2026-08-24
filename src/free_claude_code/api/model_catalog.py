@@ -4,7 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from free_claude_code.application.model_metadata import ReasoningCapabilityEvidence
+from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    ReasoningCapabilityEvidence,
+)
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.model_aliases import parse_model_aliases
 from free_claude_code.config.model_refs import (
@@ -32,6 +35,11 @@ class ModelResponse(BaseModel):
     type: Literal["model"] = "model"
     supports_vision: bool | None = None
     accepted_image_types: tuple[str, ...] = ()
+    capability_evidence: dict[str, str] = Field(default_factory=dict)
+    capability_evidence_source: str | None = None
+    capability_evidence_observed_at: str | None = None
+    capability_evidence_version: str | None = None
+    capability_evidence_protocol: str | None = None
     reasoning_support: str | None = None
     reasoning_effort_evidence: dict[str, str] = Field(default_factory=dict)
     reasoning_default_effort: str | None = None
@@ -118,6 +126,9 @@ def build_models_list_response(
             accepted_image_types=(
                 model_info.accepted_image_types if model_info is not None else ()
             ),
+            capability_evidence=(
+                model_info.capability_evidence if model_info is not None else None
+            ),
             reasoning=(model_info.reasoning if model_info is not None else None),
         )
 
@@ -138,6 +149,10 @@ def build_models_list_response(
                 target_info.accepted_image_types if target_info is not None else ()
             ),
         )
+        _apply_capability_fields(
+            alias_model,
+            target_info.capability_evidence if target_info is not None else None,
+        )
         _apply_reasoning_fields(
             alias_model, target_info.reasoning if target_info is not None else None
         )
@@ -153,6 +168,7 @@ def build_models_list_response(
             supports_thinking=model_info.supports_thinking,
             supports_vision=model_info.supports_vision,
             accepted_image_types=model_info.accepted_image_types,
+            capability_evidence=model_info.capability_evidence,
             reasoning=model_info.reasoning,
         )
 
@@ -173,6 +189,7 @@ def _discovered_model_response(
     display_name: str,
     supports_vision: bool | None = None,
     accepted_image_types: tuple[str, ...] = (),
+    capability_evidence: CapabilityEvidence | None = None,
     reasoning: ReasoningCapabilityEvidence | None = None,
 ) -> ModelResponse:
     model = ModelResponse(
@@ -182,8 +199,23 @@ def _discovered_model_response(
         supports_vision=supports_vision,
         accepted_image_types=accepted_image_types,
     )
+    _apply_capability_fields(model, capability_evidence)
     _apply_reasoning_fields(model, reasoning)
     return model
+
+
+def _apply_capability_fields(
+    model: ModelResponse, evidence: CapabilityEvidence | None
+) -> None:
+    if evidence is None:
+        return
+    model.capability_evidence = {
+        capability: status.value for capability, status in evidence.statuses
+    }
+    model.capability_evidence_source = evidence.evidence_source
+    model.capability_evidence_observed_at = evidence.observed_at
+    model.capability_evidence_version = evidence.evidence_version
+    model.capability_evidence_protocol = evidence.evidence_protocol
 
 
 def _apply_reasoning_fields(
@@ -223,6 +255,7 @@ def _append_provider_model_variants(
     supports_thinking: bool | None = None,
     supports_vision: bool | None = None,
     accepted_image_types: tuple[str, ...] = (),
+    capability_evidence: CapabilityEvidence | None = None,
     reasoning: ReasoningCapabilityEvidence | None = None,
 ) -> None:
     if supports_thinking is not False:
@@ -234,6 +267,7 @@ def _append_provider_model_variants(
                 display_name=provider_model_ref,
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
+                capability_evidence=capability_evidence,
                 reasoning=reasoning,
             ),
         )
@@ -245,6 +279,7 @@ def _append_provider_model_variants(
             display_name=f"{provider_model_ref} (no thinking)",
             supports_vision=supports_vision,
             accepted_image_types=accepted_image_types,
+            capability_evidence=capability_evidence,
             reasoning=reasoning,
         ),
     )

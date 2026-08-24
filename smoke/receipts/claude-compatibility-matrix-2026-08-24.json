@@ -1,12 +1,12 @@
 {
   "receipt": "claude-compatibility-matrix",
-  "captured_at": "2026-08-24T06:40:00Z",
+  "captured_at": "2026-08-24T10:10:34Z",
   "claude": {
     "version": "2.1.228",
     "known_good": true
   },
   "harness": {
-    "package_version": "4.30.7",
+    "package_version": "4.30.17",
     "isolated_server": "loopback-isolated",
     "active_user_server_8082_touched": false,
     "receipt_scope": "metadata-only; each referenced receipt retains its own capture metadata"
@@ -59,9 +59,9 @@
     },
     {
       "name": "top_level_background_session",
-      "status": "unverified",
-      "evidence": "smoke/receipts/claude-background-session-2026-08-24.json",
-      "reason": "Claude returned a handle, then its daemon disappeared before FCC observed a request"
+      "status": "passed",
+      "evidence": "smoke/receipts/claude-background-subagent-2026-08-24.json",
+      "reason": "Claude returned a handle, attached through the native terminal path, and completed a routed Bash marker"
     },
     {
       "name": "subagent_around_compaction",

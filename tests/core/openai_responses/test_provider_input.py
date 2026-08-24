@@ -113,6 +113,53 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
     }
 
 
+def test_build_responses_provider_request_rejects_media_inside_tool_result() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_image",
+                            "name": "screenshot",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_image",
+                            "content": [
+                                {
+                                    "payload": {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "url",
+                                            "url": "https://example.test/shot.png",
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    with pytest.raises(ResponsesConversionError, match=r"media blocks.*tool_result"):
+        build_responses_provider_request(
+            request,
+            reasoning=ReasoningPolicy.provider_default(),
+        )
+
+
 def test_responses_prompt_cache_key_prefers_explicit_caller_value() -> None:
     request = MessagesRequest.model_validate(
         {

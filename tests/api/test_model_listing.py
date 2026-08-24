@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
 from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    CapabilityEvidenceStatus,
     ProviderModelInfo,
     ReasoningCapabilityEvidence,
     ReasoningCapabilityStatus,
@@ -135,6 +137,13 @@ def test_models_list_exposes_cached_visual_metadata_for_configured_refs():
                 "vision-model",
                 supports_vision=True,
                 accepted_image_types=("image/jpeg", "image/png"),
+                capability_evidence=CapabilityEvidence(
+                    statuses=(("vision_input", CapabilityEvidenceStatus.SUPPORTED),),
+                    evidence_source="provider_metadata",
+                    observed_at="2026-08-24T08:00:00Z",
+                    evidence_version="catalog-v1",
+                    evidence_protocol="responses",
+                ),
             )
         },
     )
@@ -151,6 +160,13 @@ def test_models_list_exposes_cached_visual_metadata_for_configured_refs():
             "image/jpeg",
             "image/png",
         ]
+        assert models[model_id]["capability_evidence"] == {"vision_input": "supported"}
+        assert models[model_id]["capability_evidence_source"] == "provider_metadata"
+        assert models[model_id]["capability_evidence_observed_at"] == (
+            "2026-08-24T08:00:00Z"
+        )
+        assert models[model_id]["capability_evidence_version"] == "catalog-v1"
+        assert models[model_id]["capability_evidence_protocol"] == "responses"
 
 
 def test_models_list_exposes_reasoning_capability_evidence() -> None:

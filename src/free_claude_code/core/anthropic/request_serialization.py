@@ -25,6 +25,8 @@ _MESSAGES_REQUEST_FIELDS = (
     "extra_body",
 )
 
+_TOOL_RESULT_MEDIA_BLOCK_TYPES = frozenset({"image", "document"})
+
 
 def dump_messages_request(request: MessagesRequest) -> dict[str, Any]:
     """Return JSON-ready public Messages fields without FCC routing state."""
@@ -55,3 +57,27 @@ def serialize_tool_result_content(content: Any) -> str:
                 parts.append(str(item))
         return "\n".join(parts)
     return str(content)
+
+
+def tool_result_media_block_types(content: Any) -> tuple[str, ...]:
+    """Return structured media block types nested in tool-result content.
+
+    OpenAI-compatible tool output fields are not uniformly multimodal. Callers
+    must inspect this before converting structured content to text so an image
+    or document cannot disappear behind a successful-looking JSON request.
+    """
+    found: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            block_type = value.get("type")
+            if block_type in _TOOL_RESULT_MEDIA_BLOCK_TYPES:
+                found.add(block_type)
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(content)
+    return tuple(sorted(found))

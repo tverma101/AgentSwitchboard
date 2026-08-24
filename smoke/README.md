@@ -161,11 +161,20 @@ uv run pytest smoke/product -n 0 -s --tb=short
 - `FCC_SMOKE_CLAUDE_BIN`: Claude CLI executable name, default `claude`.
 - `FCC_SMOKE_AUTO_COMPACT_MODEL`: optional provider/model reference for the
   real automatic-compaction/resume gate; the gate is opt-in and uses a
-  metadata-only report.
+  metadata-only report. Its `token_evidence` also summarizes structured
+  provider-attribution records (provider/protocol, completed turns, attempts,
+  HTTP errors, request/prefix hash counts, TTFT, and duration) without retaining
+  request or response payloads.
 - `FCC_SMOKE_REASONING_MATRIX=1`: opt-in live matrix for Claude's `low`,
   `medium`, `high`, `xhigh`, and `max` effort levels.
 - `FCC_SMOKE_REASONING_MODEL`: optional provider/model reference for that
   reasoning matrix; otherwise the first configured provider model is used.
+- `FCC_SMOKE_REASONING_BOUNDARIES=1`: opt-in direct Messages boundary for
+  explicit `off` and `minimal` reasoning controls through an isolated Muse
+  route. The probe uses the shared 4,096-token safety budget so hidden
+  reasoning cannot manufacture a false `response.incomplete` result.
+- `FCC_SMOKE_REASONING_BOUNDARY_MODEL`: optional provider/model reference for
+  that boundary; otherwise it uses `opencode_go/muse-spark-1.2-contributor`.
 - `FCC_SMOKE_SUBAGENT=1`: opt-in foreground Claude `Agent`/subagent probe.
 - `FCC_SMOKE_SUBAGENT_MODEL`: optional provider/model reference for that probe.
 - `FCC_SMOKE_BACKGROUND_SUBAGENT=1`: opt-in background Claude `Agent`/subagent
@@ -187,6 +196,12 @@ maps the current fresh, resume, fork, compact-resume, foreground-subagent,
 wrapper, background, and upgrade surfaces. It is deliberately explicit about
 `unverified` and `skipped` boundaries; a receipt row is not a claim that the
 underlying client surface is certified unless its status is `passed`.
+
+The metadata-only [media conformance corpus](fixtures/media-conformance-v1.json)
+enumerates the supported image/tool-result protocol boundaries, deterministic
+rejection cases, retry identity, and native/provider route pairs. It contains
+no image bytes or prompt payloads. The corpus is a contract inventory; live
+vision and computer-use round trips remain explicitly separate acceptance gates.
 
 ## OpenCode Go transport benchmark
 

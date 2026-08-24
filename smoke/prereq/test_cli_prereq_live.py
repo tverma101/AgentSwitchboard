@@ -13,6 +13,7 @@ from smoke.lib.child_process import (
     run_captured_text,
 )
 from smoke.lib.claude_cli_matrix import (
+    CLAUDE_REASONING_EFFORT_OPTIONS,
     CLAUDE_REASONING_EFFORTS,
     run_auto_compact_probe,
     run_background_subagent_probe,
@@ -174,6 +175,22 @@ def test_claude_cli_reasoning_effort_matrix_when_requested(
             pytest.skip("no configured provider model available for reasoning matrix")
         provider_model = models[0]
 
+    raw_efforts = os.getenv("FCC_SMOKE_REASONING_EFFORTS")
+    efforts = CLAUDE_REASONING_EFFORTS
+    if raw_efforts:
+        efforts = tuple(
+            dict.fromkeys(
+                item.strip() for item in raw_efforts.split(",") if item.strip()
+            )
+        )
+        unknown = sorted(set(efforts) - set(CLAUDE_REASONING_EFFORT_OPTIONS))
+        if unknown:
+            pytest.skip(
+                "FCC_SMOKE_REASONING_EFFORTS contains unsupported values: "
+                + ", ".join(unknown)
+                + "; Claude 2.1.228 advertises only low, medium, high, xhigh, max"
+            )
+
     with start_server(
         smoke_config,
         env_overrides={
@@ -190,6 +207,7 @@ def test_claude_cli_reasoning_effort_matrix_when_requested(
             provider_model=provider_model,
             model_dir=tmp_path,
             marker_prefix="CLI",
+            efforts=efforts,
         )
         report_path = write_matrix_report(
             smoke_config,
@@ -212,7 +230,7 @@ def test_claude_cli_reasoning_effort_matrix_when_requested(
     assert not failures, (
         f"reasoning effort matrix failed; report={report_path}: {failures}"
     )
-    for effort, outcome in zip(CLAUDE_REASONING_EFFORTS, outcomes, strict=True):
+    for effort, outcome in zip(efforts, outcomes, strict=True):
         assert outcome.token_evidence["reasoning_effort_values"] == [effort], (
             f"{effort} was not traced as the sole requested effort: "
             f"{outcome.token_evidence}; report={report_path}"

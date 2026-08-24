@@ -1,5 +1,6 @@
 """Local terminal visual UX and focused-window Appshot capture."""
 
+import io
 import json
 import os
 import re
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from free_claude_code.core.visual_attachments import (
     VisualAttachmentReceipt,
     validate_image_bytes,
@@ -17,6 +20,8 @@ from free_claude_code.core.visual_attachments import (
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _DEFAULT_APPSHOT_QUEUE = Path.home() / ".fcc" / "appshots"
+_PREVIEW_MAX_EDGE = 1024
+_PREVIEW_MAX_BYTES = 512 * 1024
 
 
 def terminal_image_protocol(env: dict[str, str] | None = None) -> str | None:
@@ -57,6 +62,48 @@ def render_attachment(
     # Sixel support is detected for telemetry, but encoding is intentionally not
     # bundled: emitting a guessed sixel stream is worse than a truthful card.
     return receipt.card()
+
+
+def render_terminal_preview(
+    data: bytes,
+    *,
+    media_type: str,
+    label: str,
+    env: dict[str, str] | None = None,
+) -> str:
+    """Render a bounded local preview followed by the original metadata card.
+
+    Preview bytes are produced only for terminal display and never enter a
+    provider request or receipt. Unsupported terminals receive the same
+    metadata-only card without escape sequences.
+    """
+    receipt = validate_image_bytes(data, media_type=media_type, label=label)
+    protocol = terminal_image_protocol(env)
+    if protocol is None:
+        return receipt.card()
+    preview_data, preview_type = _thumbnail_for_terminal(data, media_type=media_type)
+    if protocol == "iterm2":
+        rendered = _iterm2_image(preview_data, media_type=preview_type)
+    elif protocol == "kitty":
+        rendered = _kitty_image(preview_data)
+    else:
+        # Sixel detection is intentionally truthful but encoding is not bundled.
+        return receipt.card()
+    return f"{rendered}\n{receipt.card()}"
+
+
+def _thumbnail_for_terminal(data: bytes, *, media_type: str) -> tuple[bytes, str]:
+    """Return the original image when small, otherwise a bounded JPEG preview."""
+    with Image.open(io.BytesIO(data)) as source:
+        if len(data) <= _PREVIEW_MAX_BYTES and max(source.size) <= _PREVIEW_MAX_EDGE:
+            return data, media_type
+        image = source.convert("RGB")
+        image.thumbnail(
+            (_PREVIEW_MAX_EDGE, _PREVIEW_MAX_EDGE), Image.Resampling.LANCZOS
+        )
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=80, optimize=True)
+    return output.getvalue(), "image/jpeg"
 
 
 def _iterm2_image(data: bytes, *, media_type: str) -> str:

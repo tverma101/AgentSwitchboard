@@ -48,7 +48,11 @@ from .models import (
     Usage,
 )
 from .openai_tool_names import OpenAIToolNameCodec
-from .request_serialization import dump_messages_request, serialize_tool_result_content
+from .request_serialization import (
+    dump_messages_request,
+    serialize_tool_result_content,
+    tool_result_media_block_types,
+)
 from .request_snapshot import anthropic_request_snapshot
 from .sse_aggregation import aggregate_anthropic_sse_to_message
 from .streaming import (
@@ -119,4 +123,5 @@ __all__ = [
     "read_context_artifact_slice",
     "serialize_tool_result_content",
     "set_if_not_none",
+    "tool_result_media_block_types",
 ]

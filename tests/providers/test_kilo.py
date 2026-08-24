@@ -8,6 +8,8 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    CapabilityEvidenceStatus,
     ProviderModelInfo,
     ReasoningCapabilityEvidence,
     ReasoningCapabilityStatus,
@@ -422,11 +424,45 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
                     status=ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED,
                     evidence_source="provider_metadata",
                 ),
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "native_tools",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                        (
+                            "reasoning_effort",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                ),
             ),
-            ProviderModelInfo("plain-tool", supports_thinking=False),
+            ProviderModelInfo(
+                "plain-tool",
+                supports_thinking=False,
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "named_tool_choice",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                ),
+            ),
             ProviderModelInfo(
                 "missing-optional-metadata",
                 supports_thinking=False,
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "native_tools",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                ),
             ),
         }
     )

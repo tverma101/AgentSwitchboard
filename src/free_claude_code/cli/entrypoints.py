@@ -1,12 +1,18 @@
 """Lightweight entry points for installed Free Claude Code commands."""
 
+import os
 import socket
 import sys
 from collections.abc import Sequence
 
 from free_claude_code.core.version import package_version
+from free_claude_code.learning.config import (
+    PROFILE_ENV,
+    LearningProfileError,
+    extract_profile_argument,
+)
 
-_SERVER_USAGE = "fcc-server [--terminal|--no-browser]"
+_SERVER_USAGE = "fcc-server [--profile <name>] [--terminal|--no-browser]"
 
 
 def serve(argv: Sequence[str] | None = None) -> None:
@@ -14,7 +20,14 @@ def serve(argv: Sequence[str] | None = None) -> None:
     args = tuple(sys.argv[1:] if argv is None else argv)
     if _print_version_if_requested(args):
         return
-    _parse_server_options(args)
+    try:
+        remaining, profile = extract_profile_argument(args)
+    except LearningProfileError as exc:
+        print(f"fcc-server: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    if profile is not None:
+        os.environ[PROFILE_ENV] = profile
+    _parse_server_options(remaining)
     _run_server_entrypoint()
 
 

@@ -203,14 +203,18 @@ def handle_session_start(payload: dict[str, Any], store: LearningStore) -> None:
     cwd = str(payload.get("cwd") or os.getcwd())
     project_key = project_identity(cwd)
     rows = store.relevant_memories(project_key=project_key, limit=12)
+    context = f"FCC Learning active profile: {store.profile}."
+    memory_context = format_memory_context(rows, profile=store.profile)
+    if memory_context:
+        context = f"{context}\n{memory_context}"
     _emit_hook_context(
         "SessionStart",
-        format_memory_context(rows),
+        context,
         reload_skills=True,
     )
     queue_counts = store.queue_counts()
     if queue_counts.get("pending", 0) or queue_counts.get("processing", 0):
-        spawn_queue_worker()
+        spawn_queue_worker(profile=store.profile)
 
 
 def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
@@ -225,16 +229,18 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
         prompt=prompt_text,
         limit=8,
     )
-    _emit_hook_context("UserPromptSubmit", format_memory_context(rows))
+    _emit_hook_context(
+        "UserPromptSubmit", format_memory_context(rows, profile=store.profile)
+    )
 
 
-def run_hook(event: str) -> None:
+def run_hook(event: str, *, profile: str | None = None) -> None:
     """Run one lightweight hook event from Claude Code JSON stdin."""
 
     if not learning_enabled():
         return
     payload = _read_hook_input()
-    store = LearningStore()
+    store = LearningStore(profile=profile)
     if event == "session-start":
         handle_session_start(payload, store)
     elif event == "user-prompt":

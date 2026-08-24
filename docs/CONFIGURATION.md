@@ -57,6 +57,13 @@ The provider table and credential names are maintained in
 copy a model name from an old screenshot or design document without checking
 that source.
 
+`/v1/models` also exposes metadata-only `capability_evidence` for discovered
+models. Each claimed capability is `supported`, `unsupported`, or
+`accepted-but-unverified`, with the evidence source, observation timestamp,
+catalog version, and protocol when available. Missing metadata stays unknown;
+conflicting claims reject the provider model-list response instead of enabling
+a broader route.
+
 `OPENCODE_GO_BASE_URL` is optional and defaults to OpenCode Go's documented
 endpoint. When set, it is an explicit endpoint override for the configured Go
 provider; it is useful for a private gateway or a zero-cost local synthetic
@@ -114,7 +121,10 @@ fixture. The strict provider policy still attributes the request to
 - Provider adapters translate a selected control to the highest documented wire
   value when a provider uses a smaller vocabulary. OpenCode Go accepts `xhigh`
   but not `max`; FCC preserves the client request as `max` and records the
-  upstream effective value as `xhigh`.
+  upstream effective value as `xhigh`. Muse rejects `effort=none`, so an
+  explicit `off` request is sent as Muse's lowest supported `minimal` effort;
+  FCC still suppresses provider reasoning blocks and records the original
+  `off` control in the receipt.
 
 ## Routing isolation
 
@@ -134,7 +144,13 @@ Image/document blocks are never silently discarded. Image requests require
 confirmed vision metadata; models with explicit non-vision metadata or missing
 vision confirmation are rejected at ingress. Provider adapters also fail before
 network I/O when their native protocol cannot consume the attachment. Text and
-tool requests do not require visual capability metadata.
+tool requests do not require visual capability metadata. Conflicting explicit
+vision claims in a provider model-list response are rejected instead of being
+merged permissively; an unclaimed capability remains unknown.
+Native Anthropic Messages preserves structured media inside a tool result. The
+OpenAI Chat and Responses bridges reject image/document blocks inside
+`tool_result` before upstream I/O because their converted tool-output shape is
+text-only; this is fail-closed behavior, not silent media loss.
 
 The application also records a deterministic required-capability set for
 Messages requests. The strict capability policy is controller-preserving and
@@ -142,6 +158,15 @@ has no implicit helper or controller-failover path; smart-local, smart-Go, and
 custom helper plans require an explicit helper allowlist and produce separate
 metadata-only route receipts. Helper execution is not enabled by the terminal
 Muse release path.
+
+Provider fault-attribution receipts also record `duration_ms` and
+`time_to_first_token_ms` when a provider stream is attempted. The first is the
+logical stream duration (including any retry/backoff); the second is the delay
+until the first non-empty streamed output. Either value is `null` when that
+measurement is not available. They are metadata-only and do not include prompt,
+response, tool, or media payloads. They also record `media_count` and an
+ordered `media_type_hash` for image/document blocks, including nested tool
+results. See [terminal diagnostics](DIAGNOSTICS.md).
 
 ## Local state
 

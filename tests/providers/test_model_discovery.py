@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    CapabilityEvidenceStatus,
     ProviderModelInfo,
     ReasoningCapabilityEvidence,
     ReasoningCapabilityStatus,
@@ -198,8 +200,32 @@ async def test_openrouter_lists_only_tool_capable_models() -> None:
     ) as mock_list:
         assert await provider.list_model_infos() == frozenset(
             {
-                ProviderModelInfo("tool-model", supports_thinking=False),
-                ProviderModelInfo("tool-choice-model", supports_thinking=False),
+                ProviderModelInfo(
+                    "tool-model",
+                    supports_thinking=False,
+                    capability_evidence=CapabilityEvidence(
+                        statuses=(
+                            (
+                                "native_tools",
+                                CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                            ),
+                        ),
+                        evidence_source="provider_metadata",
+                    ),
+                ),
+                ProviderModelInfo(
+                    "tool-choice-model",
+                    supports_thinking=False,
+                    capability_evidence=CapabilityEvidence(
+                        statuses=(
+                            (
+                                "named_tool_choice",
+                                CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                            ),
+                        ),
+                        evidence_source="provider_metadata",
+                    ),
+                ),
             }
         )
 
@@ -244,12 +270,37 @@ async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
             ProviderModelInfo(
                 "reasoning-tool-model",
                 supports_thinking=True,
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "native_tools",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                        (
+                            "reasoning_effort",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                ),
                 reasoning=ReasoningCapabilityEvidence(
                     status=ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED,
                     evidence_source="provider_metadata",
                 ),
             ),
-            ProviderModelInfo("plain-tool-model", supports_thinking=False),
+            ProviderModelInfo(
+                "plain-tool-model",
+                supports_thinking=False,
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "named_tool_choice",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                ),
+            ),
         }
     )
 
@@ -558,6 +609,10 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
     }
     assert result.refreshed_provider_ids == ("open_router", "lmstudio")
     assert result.failed_provider_ids == ()
+    observed = runtime.cached_model_info("open_router", "anthropic/claude-sonnet")
+    assert observed is not None
+    assert observed.capability_evidence.observed_at is not None
+    assert observed.capability_evidence.observed_at.endswith("Z")
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,12 @@ from free_claude_code.cli.claude_firewall import (
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
+from free_claude_code.learning.config import (
+    PROFILE_ENV,
+    LearningProfileError,
+    configured_profile,
+    extract_profile_argument,
+)
 from free_claude_code.learning.hooks import ensure_learning_hooks
 
 from .common import preflight_proxy, resolve_client_binary, run_client_process
@@ -31,6 +37,16 @@ _INSTALL_HINT = "Install Claude Code with: npm install -g @anthropic-ai/claude-c
 
 def launch(argv: Sequence[str] | None = None) -> None:
     """Launch Claude Code with Free Claude Code proxy environment variables."""
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args, selected_profile = extract_profile_argument(args)
+        configured_profile()
+    except LearningProfileError as exc:
+        print(f"FCC Learning profile selection failed: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    if selected_profile is not None:
+        os.environ[PROFILE_ENV] = selected_profile
 
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
@@ -56,7 +72,6 @@ def launch(argv: Sequence[str] | None = None) -> None:
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
     )
-    args = list(sys.argv[1:] if argv is None else argv)
     if conflict_message := settings_env_routing_conflict_message(
         os.environ,
         cwd=os.getcwd(),

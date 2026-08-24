@@ -1,5 +1,6 @@
 """Contracts for OpenCode Go native protocol routing."""
 
+import json
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock
 
@@ -30,7 +31,13 @@ from free_claude_code.providers.opencode_go import (
 )
 from free_claude_code.providers.opencode_go.provider import (
     _record_failure,
+    _sse_chunk_has_output,
     _sse_event_types,
+)
+
+_PNG_DATA = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 
@@ -328,8 +335,8 @@ def test_muse_responses_body_translates_each_reasoning_effort(
     assert body["reasoning"] == expected_reasoning
 
 
-def test_muse_responses_body_omits_reasoning_when_off() -> None:
-    """Reasoning off must not name an effort in the outgoing body."""
+def test_muse_responses_body_maps_off_to_lowest_supported_effort() -> None:
+    """Reasoning off suppresses output while using Muse's lowest effort."""
     request = MessagesRequest.model_validate(
         {
             "model": "muse-spark-1.2-contributor",
@@ -343,7 +350,7 @@ def test_muse_responses_body_omits_reasoning_when_off() -> None:
         reasoning=ReasoningPolicy.off(),
     )
 
-    assert body["reasoning"] == {"effort": "none"}
+    assert body["reasoning"] == {"effort": "minimal", "summary": "auto"}
 
 
 @pytest.mark.asyncio
@@ -424,6 +431,153 @@ async def test_responses_stream_retries_pre_payload_transient_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_receipt_records_metadata_only_timing(monkeypatch) -> None:
+    payload_marker = "unique-output-payload-should-not-be-retained"
+    receipts: list[dict[str, object]] = []
+
+    def record_trace(**fields: object) -> None:
+        if fields.get("event") == "provider.fault_attribution":
+            receipts.append(fields)
+
+    monkeypatch.setattr(
+        "free_claude_code.providers.opencode_go.provider.trace_event",
+        record_trace,
+    )
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    provider._responses.responses.create = AsyncMock(
+        return_value=_ResponsesStream(
+            [
+                {"type": "response.output_text.delta", "delta": payload_marker},
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_timing",
+                        "usage": {"input_tokens": 3, "output_tokens": 1},
+                    },
+                },
+            ]
+        )
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "max_tokens": 32,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "inspect this"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": _PNG_DATA,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_timing",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert any(payload_marker in event for event in events)
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert type(receipt["duration_ms"]) is int
+    assert type(receipt["time_to_first_token_ms"]) is int
+    assert receipt["duration_ms"] >= receipt["time_to_first_token_ms"]
+    assert receipt["media_count"] == 1
+    assert type(receipt["media_type_hash"]) is str
+    serialized = json.dumps(receipt)
+    assert "hello" not in serialized
+    assert payload_marker not in serialized
+
+
+@pytest.mark.asyncio
+async def test_messages_receipt_records_output_timing_without_payload(
+    monkeypatch,
+) -> None:
+    payload_marker = "unique-output-payload-should-not-be-retained"
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("minimax-m2.7")
+    upstream_request = _upstream_request("https://example.invalid/v1/messages")
+    response = httpx.Response(
+        200,
+        request=upstream_request,
+        headers={"content-type": "text/event-stream"},
+        content=(
+            b"event: message_start\ndata: {}\n\n"
+            b'event: content_block_delta\ndata: {"delta":{"text":"unique-output-payload-should-not-be-retained"}}\n\n'
+            b"event: message_stop\ndata: {}\n\n"
+        ),
+    )
+    receipts: list[dict[str, object]] = []
+
+    def record_trace(**fields: object) -> None:
+        if fields.get("event") == "provider.fault_attribution":
+            receipts.append(fields)
+
+    monkeypatch.setattr(
+        "free_claude_code.providers.opencode_go.provider.trace_event",
+        record_trace,
+    )
+    provider._native_http.send = AsyncMock(return_value=response)
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_messages_timing",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert len(events) == 1
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert type(receipt["duration_ms"]) is int
+    assert type(receipt["time_to_first_token_ms"]) is int
+    assert receipt["duration_ms"] >= receipt["time_to_first_token_ms"]
+    assert payload_marker not in json.dumps(receipt)
+
+
+@pytest.mark.asyncio
 async def test_messages_stream_retries_pre_payload_transient_status() -> None:
     provider = OpenCodeGoProvider(
         ProviderConfig(
@@ -474,6 +628,48 @@ async def test_messages_stream_retries_pre_payload_transient_status() -> None:
     assert "message_stop" in events[0]
 
 
+@pytest.mark.asyncio
+async def test_messages_stream_accepts_coalesced_small_sse_frames() -> None:
+    """HTTP chunk coalescing must not look like one oversized SSE event."""
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    request = _provider_request("minimax-m2.7")
+    upstream_request = _upstream_request("https://example.invalid/v1/messages")
+    frame = b"event: content_block_delta\ndata: {}\n\n"
+    success_response = httpx.Response(
+        200,
+        request=upstream_request,
+        headers={"content-type": "text/event-stream"},
+        content=frame * 3_000 + b"event: message_stop\ndata: {}\n\n",
+    )
+    provider._native_http.send = AsyncMock(return_value=success_response)
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_messages_coalesced",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert len(events) == 1
+    assert events[0].count("content_block_delta") == 3_000
+    assert "message_stop" in events[0]
+
+
 def test_messages_sse_receipt_extracts_types_without_data() -> None:
     chunk = (
         ": keep-alive\n\n"
@@ -485,3 +681,19 @@ def test_messages_sse_receipt_extracts_types_without_data() -> None:
 
     assert _sse_event_types(chunk) == ("content_block_delta", "message_stop")
     assert "secret" not in _sse_event_types(chunk)
+
+
+def test_messages_sse_ttft_ignores_lifecycle_and_empty_delta_events() -> None:
+    lifecycle = (
+        "event: message_start\n"
+        'data: {"type":"message_start"}\n\n'
+        "event: content_block_delta\n"
+        "data: {}\n\n"
+    )
+    output = (
+        "event: content_block_delta\n"
+        'data: {"delta":{"type":"text_delta","text":"ok"}}\n\n'
+    )
+
+    assert _sse_chunk_has_output(lifecycle) is False
+    assert _sse_chunk_has_output(output) is True

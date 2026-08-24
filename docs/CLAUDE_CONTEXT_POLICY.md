@@ -79,15 +79,17 @@ the advisory leash replaces the hard runtime governor.
 The separate managed-session inheritance check is recorded in the sanitized
 [managed fresh/resume/fork receipt](../smoke/receipts/claude-managed-resume-2026-08-24.json).
 It covers one fresh managed task, one resumed task, and one forked continuation;
-background and subagent inheritance remain unverified in that receipt.
+background and subagent inheritance remain outside that receipt.
 The independent foreground Agent/subagent route has a separate
 [metadata-only receipt](../smoke/receipts/claude-subagent-2026-08-24.json);
-the opt-in top-level background route has an explicit
-[unverified receipt](../smoke/receipts/claude-background-session-2026-08-24.json).
-Claude 2.1.228 returned a background handle but its daemon disappeared before
-any FCC request or tool marker; no routing pass is claimed.
+the opt-in top-level background route has a separate
+[metadata-only receipt](../smoke/receipts/claude-background-subagent-2026-08-24.json).
+It proves Claude 2.1.228 returning a background handle, native terminal attach,
+and a routed Bash marker through FCC/OpenCode Go/Muse. The earlier
+[historical receipt](../smoke/receipts/claude-background-session-2026-08-24.json)
+preserves the failed daemon-lifecycle probe.
 
 The complete execution-surface status map is recorded in the metadata-only
 [Claude compatibility matrix](../smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
 It keeps passed, unverified, and skipped boundaries separate; the matrix does
-not promote the top-level background or subagent-around-compact gaps.
+not promote the remaining subagent-around-compact gap.

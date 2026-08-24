@@ -9,6 +9,7 @@ from free_claude_code.cli.visuals import (
     pending_appshots,
     render_attachment,
     render_attachment_card,
+    render_terminal_preview,
     terminal_image_protocol,
 )
 
@@ -47,6 +48,41 @@ def test_supported_protocol_preview_is_local_and_keeps_confirmation() -> None:
     assert rendered.startswith("\x1b]1337;File=")
     assert base64.b64encode(data).decode() in rendered
     assert "attached" in rendered
+
+
+def test_terminal_preview_downscales_large_images_without_changing_receipt() -> None:
+    import io
+
+    from PIL import Image
+
+    output = io.BytesIO()
+    Image.new("RGB", (1600, 1200), "red").save(output, format="PNG")
+    data = output.getvalue()
+
+    rendered = render_terminal_preview(
+        data,
+        media_type="image/png",
+        label="window-shot",
+        env={"TERM_PROGRAM": "iTerm.app"},
+    )
+
+    assert rendered.startswith("\x1b]1337;File=")
+    assert "window-shot" in rendered
+    assert "1600\u00d71200" in rendered
+    assert base64.b64encode(data).decode() not in rendered
+
+
+def test_terminal_preview_falls_back_to_metadata_for_sixel() -> None:
+    data = _png_bytes()
+    rendered = render_terminal_preview(
+        data,
+        media_type="image/png",
+        label="window-shot",
+        env={"TERM": "xterm-sixel"},
+    )
+
+    assert rendered.startswith("[img ")
+    assert "\x1b" not in rendered
 
 
 def test_appshot_queue_is_explicit_session_scoped_and_metadata_only(

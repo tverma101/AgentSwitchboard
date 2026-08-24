@@ -24,6 +24,21 @@ def test_appshot_cli_uses_explicit_session_and_prints_local_receipt(
     assert "session-1.json" in output
 
 
+def test_appshot_cli_can_list_pending_session_receipts(tmp_path: Path, capsys) -> None:
+    queue = tmp_path / "queue"
+    queue.mkdir()
+    (queue / "session-1-a.json").write_text("{}\n", encoding="utf-8")
+    (queue / "session-1-b.json").write_text("{}\n", encoding="utf-8")
+    (queue / "other-a.json").write_text("{}\n", encoding="utf-8")
+
+    appshot.main(["--session-id", "session-1", "--queue", str(queue), "--list"])
+
+    assert capsys.readouterr().out.splitlines() == [
+        "session-1-a.json",
+        "session-1-b.json",
+    ]
+
+
 def _attachment(session_id: str, image: Path):
     from free_claude_code.cli.visuals import build_appshot_attachment
 

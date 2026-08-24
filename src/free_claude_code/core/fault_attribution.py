@@ -68,6 +68,31 @@ def stable_prefix_hash(body: dict[str, Any]) -> str:
     return canonical_hash(prefix)
 
 
+def media_metadata(value: Any) -> tuple[int, str | None]:
+    """Return count and ordered type hash without retaining media payloads."""
+    descriptors: list[str] = []
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            block_type = item.get("type")
+            if block_type in {"image", "document"}:
+                source = item.get("source")
+                media_type = (
+                    source.get("media_type") if isinstance(source, dict) else None
+                )
+                descriptors.append(
+                    f"{block_type}:{media_type if isinstance(media_type, str) else 'unknown'}"
+                )
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list | tuple):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return len(descriptors), canonical_hash(descriptors) if descriptors else None
+
+
 @dataclass(slots=True)
 class AttemptEvidence:
     """Metadata-only receipt for one upstream attempt."""
@@ -86,6 +111,10 @@ class AttemptEvidence:
     upstream_response_id: str | None = None
     http_status: int | None = None
     bytes_received: int = 0
+    media_count: int = 0
+    media_type_hash: str | None = None
+    duration_ms: int | None = None
+    time_to_first_token_ms: int | None = None
     tool_call_count: int = 0
     complete_tool_calls: bool | None = None
     valid_tool_json: bool | None = None
@@ -96,6 +125,7 @@ class AttemptEvidence:
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
     output_tokens: int | None = None
+    requested_reasoning_control: str | None = None
     requested_reasoning_effort: str | None = None
     requested_reasoning_budget_tokens: int | None = None
     effective_reasoning_effort: str | None = None

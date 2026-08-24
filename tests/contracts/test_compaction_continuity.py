@@ -134,7 +134,7 @@ def test_checked_in_muse_auto_compact_receipt_is_current_and_metadata_only() -> 
 
     assert payload["claude"]["launcher"] == "fccdanger"
     assert payload["claude"]["version"] == "2.1.228"
-    assert payload["harness"]["package_version"] == "4.30.7"
+    assert payload["harness"]["package_version"] == "4.30.18"
     assert payload["context"]["effective_tokens"] == 50_000
     assert payload["compaction"] == {
         "trigger": "auto",
@@ -144,10 +144,22 @@ def test_checked_in_muse_auto_compact_receipt_is_current_and_metadata_only() -> 
         "manual_compact_command_sent": False,
     }
     assert payload["post_compaction"]["tool_call_count"] == 1
+    assert payload["post_compaction"]["client_request_count"] == 12
+    assert payload["post_compaction"]["provider_completed_turns"] == 10
+    assert payload["post_compaction"]["upstream_attempts_per_completed_turn"] == 1
+    assert payload["post_compaction"]["http_errors"] == 0
     assert payload["routing"]["provider_model_ref"] == (
         "opencode_go/muse-spark-1.2-contributor"
     )
     assert payload["routing"]["upstream_protocol"] == "responses"
+    assert payload["routing"]["response_completed_events"] == 10
+    assert payload["routing"]["request_shape_hash_count"] == 10
+    assert payload["routing"]["stable_prefix_hash_count"] == 9
+    assert payload["routing"]["valid_tool_json"] is True
+    assert payload["telemetry"]["pre_compact_peak_cache_read_tokens"] == 48_561
+    assert payload["telemetry"]["post_compact_input_tokens"] == 178
+    assert payload["telemetry"]["post_compact_cache_read_tokens"] == 18_161
+    assert payload["telemetry"]["time_to_first_token_ms"]["post_compact"] == 3_101
     assert "prompt" not in serialized
     assert "api_key" not in serialized
     assert "encrypted_content" not in serialized
@@ -164,7 +176,7 @@ def test_checked_in_reasoning_effort_matrix_receipt_is_metadata_only() -> None:
     serialized = json.dumps(payload)
 
     assert payload["claude"]["version"] == "2.1.228"
-    assert payload["harness"]["package_version"] == "4.30.7"
+    assert payload["harness"]["package_version"] == "4.30.15"
     assert payload["matrix"]["efforts"] == [
         "low",
         "medium",
@@ -177,6 +189,78 @@ def test_checked_in_reasoning_effort_matrix_receipt_is_metadata_only() -> None:
     assert payload["reasoning"][-1]["effective"] == "xhigh"
     assert payload["translation"]["requested_max_wire_value"] == "xhigh"
     assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized
+
+
+def test_checked_in_reasoning_negative_receipt_does_not_claim_unsupported_efforts() -> (
+    None
+):
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-reasoning-effort-negative-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["claude"]["advertised_efforts"] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert payload["claude"]["requested_unavailable_efforts"] == [
+        "off",
+        "minimal",
+    ]
+    assert payload["probe"]["status"] == "unverified"
+    assert payload["probe"]["provider_requests"] == 0
+    assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized
+
+
+def test_checked_in_reasoning_boundary_receipt_proves_off_and_minimal() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-reasoning-boundaries-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["claude"]["version"] == "2.1.228"
+    assert payload["harness"]["package_version"] == "4.30.19"
+    assert payload["requests"] == {
+        "messages_requests": 2,
+        "completed_provider_turns": 2,
+        "upstream_attempts_total": 2,
+        "upstream_attempts_per_completed_turn": 1,
+        "http_errors": 0,
+        "terminal_event": "response.completed",
+        "output_budget_tokens": 4096,
+    }
+    assert payload["routing"]["provider_model_ref"] == (
+        "opencode_go/muse-spark-1.2-contributor"
+    )
+    assert payload["routing"]["upstream_protocol"] == "responses"
+    assert [item["requested_control"] for item in payload["boundaries"]] == [
+        "off",
+        "minimal",
+    ]
+    assert [item["outcome"] for item in payload["boundaries"]] == [
+        "completed",
+        "completed",
+    ]
+    assert all(item["effective_effort"] == "minimal" for item in payload["boundaries"])
+    assert all(item["provider_opaque_reasoning"] for item in payload["boundaries"])
+    assert all(item["harness_thinking_block"] for item in payload["boundaries"])
+    assert "prompt" not in serialized
+    assert "content" not in serialized
     assert "api_key" not in serialized
     assert "encrypted_content" not in serialized
 
@@ -228,7 +312,32 @@ def test_checked_in_background_session_receipt_preserves_unverified_boundary() -
     assert "encrypted_content" not in serialized
 
 
-def test_checked_in_claude_compatibility_matrix_labels_unverified_surfaces() -> None:
+def test_checked_in_background_subagent_receipt_proves_routed_tool_path() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-background-subagent-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["surface"]["outcome"] == "passed"
+    assert payload["surface"]["background_handle_returned"] is True
+    assert payload["surface"]["tool_marker_seen"] is True
+    assert payload["requests"]["completed_provider_turns"] == 2
+    assert payload["requests"]["upstream_attempts_per_completed_turn"] == 1
+    assert payload["requests"]["http_errors"] == 0
+    assert payload["routing"]["provider_model_ref"] == (
+        "opencode_go/muse-spark-1.2-contributor"
+    )
+    assert payload["routing"]["upstream_protocol"] == "responses"
+    assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized
+
+
+def test_checked_in_claude_compatibility_matrix_labels_surface_statuses() -> None:
     path = (
         Path(__file__).parents[2]
         / "smoke"
@@ -241,7 +350,7 @@ def test_checked_in_claude_compatibility_matrix_labels_unverified_surfaces() -> 
 
     assert statuses["fresh_fccdanger"] == "passed"
     assert statuses["managed_resume"] == "passed"
-    assert statuses["top_level_background_session"] == "unverified"
+    assert statuses["top_level_background_session"] == "passed"
     assert statuses["subagent_around_compaction"] == "unverified"
     assert statuses["candidate_client_upgrade"] == "skipped"
     assert payload["invariants"]["unverified_boundaries_are_labeled"] is True

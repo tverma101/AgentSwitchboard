@@ -1,13 +1,13 @@
 {
   "receipt": "muse-auto-compact-tool-resume",
-  "captured_at": "2026-08-24T06:11:57Z",
+  "captured_at": "2026-08-24T10:31:26Z",
   "claude": {
     "path": "claude",
     "version": "2.1.228",
     "launcher": "fccdanger"
   },
   "harness": {
-    "package_version": "4.30.7",
+    "package_version": "4.30.18",
     "isolated_server": "loopback-isolated",
     "active_user_server_8082_touched": false
   },
@@ -16,8 +16,6 @@
     "effective_tokens": 50000,
     "seed_groups": 7,
     "client_invocation": "non_bare_local_settings_isolated",
-    "peak_pre_compact_context_estimate": 49701,
-    "post_compact_context_estimate": 14852,
     "context_dropped": true
   },
   "compaction": {
@@ -32,7 +30,12 @@
     "tool_call_count": 1,
     "tool_result_completed": true,
     "resume_invocation_returned": 0,
-    "continuation_marker_seen": true
+    "continuation_marker_seen": true,
+    "client_request_count": 12,
+    "provider_completed_turns": 10,
+    "upstream_attempts_total": 10,
+    "upstream_attempts_per_completed_turn": 1,
+    "http_errors": 0
   },
   "routing": {
     "provider_id": "opencode_go",
@@ -43,7 +46,28 @@
     "terminal_event": "response.completed",
     "provider_completed_turns": 10,
     "provider_attempts_total": 10,
-    "upstream_attempts_per_turn": 1
+    "upstream_attempts_per_turn": 1,
+    "response_completed_events": 10,
+    "request_shape_hash_count": 10,
+    "stable_prefix_hash_count": 9,
+    "tool_calls_total": 1,
+    "valid_tool_json": true
+  },
+  "telemetry": {
+    "metadata_only": true,
+    "pre_compact_peak_cache_read_tokens": 48561,
+    "post_compact_input_tokens": 178,
+    "post_compact_cache_read_tokens": 18161,
+    "duration_ms": {
+      "min": 3010,
+      "max": 25907,
+      "post_compact": 3147
+    },
+    "time_to_first_token_ms": {
+      "min": 2963,
+      "max": 8516,
+      "post_compact": 3101
+    }
   },
   "artifacts": {
     "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_auto_compact_resume_when_requested with FCC_SMOKE_CLAUDE_BIN=fccdanger",

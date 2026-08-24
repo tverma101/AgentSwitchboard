@@ -1,0 +1,134 @@
+{
+  "schema": "fcc.media-conformance.v1",
+  "payload_policy": "metadata-only; image bytes and source payloads are omitted",
+  "cases": [
+    {
+      "id": "single-png-base64",
+      "location": "user_message",
+      "source": "base64",
+      "media_type": "image/png",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "single-jpeg-base64",
+      "location": "user_message",
+      "source": "base64",
+      "media_type": "image/jpeg",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "single-webp-base64",
+      "location": "user_message",
+      "source": "base64",
+      "media_type": "image/webp",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "url-image",
+      "location": "user_message",
+      "source": "url",
+      "media_type": "image/jpeg",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["openai_chat", "openai_responses"]
+    },
+    {
+      "id": "interleaved-multiple-images",
+      "location": "user_message",
+      "source": "mixed",
+      "media_type": "image/png,image/webp",
+      "expected": "preserve_order_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "tool-result-image",
+      "location": "tool_result",
+      "source": "base64",
+      "media_type": "image/png",
+      "expected": "preserve_association_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "thinking-history-with-image",
+      "location": "user_and_assistant_history",
+      "source": "base64",
+      "media_type": "image/png",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "parallel-tools-with-image",
+      "location": "tool_result",
+      "source": "base64",
+      "media_type": "image/png",
+      "expected": "preserve_association_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "oversized-image",
+      "location": "user_message",
+      "source": "base64",
+      "media_type": "image/png",
+      "expected": "reject_before_upstream",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "unsupported-media-type",
+      "location": "user_message",
+      "source": "base64",
+      "media_type": "image/gif",
+      "expected": "reject_before_upstream",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "malformed-base64-source",
+      "location": "user_message",
+      "source": "base64",
+      "media_type": "image/png",
+      "expected": "reject_before_upstream",
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+    },
+    {
+      "id": "media-bearing-retry",
+      "location": "user_message",
+      "source": "base64",
+      "media_type": "image/png",
+      "expected": "one_metadata_receipt_per_logical_request",
+      "protocols": ["opencode_go_responses", "opencode_go_messages"]
+    },
+    {
+      "id": "anthropic-messages-to-openai-chat",
+      "location": "protocol_pair",
+      "source": "conversion",
+      "media_type": "image/png,tool_result",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_chat"]
+    },
+    {
+      "id": "anthropic-messages-to-openai-responses",
+      "location": "protocol_pair",
+      "source": "conversion",
+      "media_type": "image/png,tool_result",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["anthropic_messages", "openai_responses"]
+    },
+    {
+      "id": "native-anthropic-messages",
+      "location": "native_route",
+      "source": "structured",
+      "media_type": "image/png,tool_result",
+      "expected": "preserve_structured_media",
+      "protocols": ["anthropic_messages"]
+    },
+    {
+      "id": "opencode-go-model-route",
+      "location": "provider_route",
+      "source": "structured",
+      "media_type": "image/png",
+      "expected": "preserve_or_typed_reject",
+      "protocols": ["opencode_go_responses", "opencode_go_messages"]
+    }
+  ]
+}

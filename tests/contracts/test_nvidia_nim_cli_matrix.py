@@ -66,6 +66,8 @@ def test_nvidia_nim_cli_matrix_report_shape_and_redaction(
     assert path.name.startswith("nvidia-nim-cli-matrix-test-worker-")
     assert payload["target"] == "nvidia_nim_cli"
     assert payload["models"] == ["nvidia_nim/z-ai/glm-5.2"]
+    assert payload["harness"]["package_version"]
+    assert len(payload["harness"]["commit_sha"]) >= 7
     saved = payload["outcomes"][0]
     assert saved["feature"] == "basic_text"
     assert saved["classification"] == "passed"

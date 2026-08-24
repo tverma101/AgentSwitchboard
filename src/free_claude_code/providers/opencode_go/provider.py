@@ -6,6 +6,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -26,6 +27,7 @@ from free_claude_code.core.fault_attribution import (
     FaultDomain,
     canonical_hash,
     classify_failure,
+    media_metadata,
     stable_prefix_hash,
 )
 from free_claude_code.core.openai_responses import (
@@ -36,6 +38,7 @@ from free_claude_code.core.openai_responses import (
 )
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
+    ReasoningControl,
     ReasoningEffort,
     ReasoningPolicy,
 )
@@ -64,12 +67,18 @@ _MUSE_MODEL = "muse-spark-1.2-contributor"
 
 
 def _translate_responses_reasoning(reasoning: ReasoningPolicy) -> ReasoningPolicy:
-    """Translate FCC's max effort to OpenCode Go's highest wire value.
+    """Translate FCC reasoning intent to OpenCode Go's supported wire values.
 
     Claude exposes ``max`` as a client effort, but OpenCode Go Responses
-    currently accepts ``xhigh`` as its highest reasoning variant. Keep the
-    original policy for fault receipts while translating only the request.
+    currently accepts ``xhigh`` as its highest reasoning variant. Muse also
+    rejects the OpenAI ``effort=none`` spelling. Its provider default can also
+    spend the whole small output budget on hidden reasoning, so an explicit
+    FCC-off request uses Muse's lowest supported effort while the original
+    policy remains available to the stream adapter for output suppression and
+    receipts.
     """
+    if reasoning.control is ReasoningControl.OFF:
+        return ReasoningPolicy.on(effort=ReasoningEffort.MINIMAL)
     if reasoning.effort is not ReasoningEffort.MAX:
         return reasoning
     return replace(reasoning, effort=ReasoningEffort.XHIGH)
@@ -143,7 +152,10 @@ def _trace_receipt(
     *,
     outcome: str,
     error: BaseException | None = None,
+    started_at: float | None = None,
 ) -> None:
+    if started_at is not None:
+        evidence.duration_ms = max(0, round((monotonic() - started_at) * 1000))
     fields: dict[str, Any] = {"outcome": outcome, **evidence.as_dict()}
     if error is not None:
         fields["error_type"] = type(error).__name__
@@ -387,7 +399,9 @@ class OpenCodeGoProvider(BaseProvider):
         response_model: str,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
+        started_at = monotonic()
         turn_id = request_id or f"turn_{uuid.uuid4().hex}"
+        media_count, media_type_hash = media_metadata(request.model_dump(mode="python"))
         try:
             body = self._build_responses_body(request, reasoning=reasoning)
         except Exception as error:
@@ -398,9 +412,13 @@ class OpenCodeGoProvider(BaseProvider):
                 provider="OPENCODE_GO",
                 model=response_model,
                 attempt_number=0,
+                media_count=media_count,
+                media_type_hash=media_type_hash,
             )
             _record_failure(evidence, error, bridge=True)
-            _trace_receipt(evidence, outcome="error", error=error)
+            _trace_receipt(
+                evidence, outcome="error", error=error, started_at=started_at
+            )
             raise
         body.pop("stream", None)
         tool_names = OpenAIToolNameCodec.from_request(request)
@@ -420,6 +438,9 @@ class OpenCodeGoProvider(BaseProvider):
             model=response_model,
             attempt_number=retry_session.attempts_started,
             input_tokens=input_tokens,
+            media_count=media_count,
+            media_type_hash=media_type_hash,
+            requested_reasoning_control=reasoning.control.value,
             requested_reasoning_effort=(
                 reasoning.effort.value if reasoning.effort is not None else None
             ),
@@ -459,6 +480,10 @@ class OpenCodeGoProvider(BaseProvider):
                     continue
                 evidence.add_event(event_type, byte_count=_payload_size(payload))
                 for output in stream_view.feed(event_type, payload):
+                    if output and evidence.time_to_first_token_ms is None:
+                        evidence.time_to_first_token_ms = max(
+                            0, round((monotonic() - started_at) * 1000)
+                        )
                     evidence.output_committed = True
                     yield output
             if not stream_view.completed:
@@ -476,20 +501,22 @@ class OpenCodeGoProvider(BaseProvider):
                 request_id=request_id,
                 protocol=GoProtocol.RESPONSES.value,
             )
-            _trace_receipt(evidence, outcome="completed")
+            _trace_receipt(evidence, outcome="completed", started_at=started_at)
             receipt_emitted = True
         except asyncio.CancelledError, GeneratorExit:
             evidence.fault_domain = FaultDomain.HARNESS_TRANSPORT
             evidence.confidence = FaultConfidence.HIGH
             evidence.evidence_codes.append("stream_cancelled")
             _sync_responses_evidence(evidence, stream_view)
-            _trace_receipt(evidence, outcome="cancelled")
+            _trace_receipt(evidence, outcome="cancelled", started_at=started_at)
             receipt_emitted = True
             raise
         except Exception as error:
             _sync_responses_evidence(evidence, stream_view)
             _record_failure(evidence, error)
-            _trace_receipt(evidence, outcome="error", error=error)
+            _trace_receipt(
+                evidence, outcome="error", error=error, started_at=started_at
+            )
             receipt_emitted = True
             self._log_stream_transport_error(
                 "OPENCODE_GO",
@@ -517,7 +544,7 @@ class OpenCodeGoProvider(BaseProvider):
                     evidence,
                     RuntimeError("Responses stream closed before receipt emission."),
                 )
-                _trace_receipt(evidence, outcome="abandoned")
+                _trace_receipt(evidence, outcome="abandoned", started_at=started_at)
             if attempt is not None:
                 await attempt.aclose()
 
@@ -527,7 +554,9 @@ class OpenCodeGoProvider(BaseProvider):
         *,
         request_id: str | None,
     ) -> AsyncIterator[str]:
+        started_at = monotonic()
         turn_id = request_id or f"turn_{uuid.uuid4().hex}"
+        media_count, media_type_hash = media_metadata(request.model_dump(mode="python"))
         try:
             body = build_native_messages_body(request)
         except Exception as error:
@@ -538,9 +567,13 @@ class OpenCodeGoProvider(BaseProvider):
                 provider="OPENCODE_GO",
                 model=request.model,
                 attempt_number=0,
+                media_count=media_count,
+                media_type_hash=media_type_hash,
             )
             _record_failure(evidence, error, bridge=True)
-            _trace_receipt(evidence, outcome="error", error=error)
+            _trace_receipt(
+                evidence, outcome="error", error=error, started_at=started_at
+            )
             raise
         retry_session = self._admission.new_retry_session(request_id=request_id)
         evidence = AttemptEvidence(
@@ -550,6 +583,8 @@ class OpenCodeGoProvider(BaseProvider):
             provider="OPENCODE_GO",
             model=request.model,
             attempt_number=retry_session.attempts_started,
+            media_count=media_count,
+            media_type_hash=media_type_hash,
             request_shape_hash=canonical_hash(body),
             stable_prefix_hash=stable_prefix_hash(body),
             tool_schema_hash=canonical_hash(body.get("tools", [])),
@@ -613,6 +648,15 @@ class OpenCodeGoProvider(BaseProvider):
                 if not chunk:
                     continue
                 sse_buffer += chunk
+                frames = sse_buffer.split("\n\n")
+                sse_buffer = frames.pop() or ""
+                for frame in frames:
+                    if len(frame.encode("utf-8", errors="replace")) > _ERROR_BODY_LIMIT:
+                        raise ResponsesStreamFailure(
+                            "OpenCode Go Messages emitted an oversized SSE event.",
+                            code="sse_event_too_large",
+                        )
+                    _record_messages_sse_frame(evidence, frame)
                 if (
                     len(sse_buffer.encode("utf-8", errors="replace"))
                     > _ERROR_BODY_LIMIT
@@ -621,11 +665,14 @@ class OpenCodeGoProvider(BaseProvider):
                         "OpenCode Go Messages emitted an oversized SSE event.",
                         code="sse_event_too_large",
                     )
-                frames = sse_buffer.split("\n\n")
-                sse_buffer = frames.pop() or ""
-                for frame in frames:
-                    _record_messages_sse_frame(evidence, frame)
                 if _sse_chunk_has_payload(chunk):
+                    if (
+                        _sse_chunk_has_output(chunk)
+                        and evidence.time_to_first_token_ms is None
+                    ):
+                        evidence.time_to_first_token_ms = max(
+                            0, round((monotonic() - started_at) * 1000)
+                        )
                     saw_payload = True
                 if not attempt.accepted:
                     await attempt.succeeded()
@@ -652,20 +699,22 @@ class OpenCodeGoProvider(BaseProvider):
                 request_id=request_id,
                 protocol=GoProtocol.MESSAGES.value,
             )
-            _trace_receipt(evidence, outcome="completed")
+            _trace_receipt(evidence, outcome="completed", started_at=started_at)
             receipt_emitted = True
         except asyncio.CancelledError, GeneratorExit:
             evidence.fault_domain = FaultDomain.HARNESS_TRANSPORT
             evidence.confidence = FaultConfidence.HIGH
             evidence.evidence_codes.append("stream_cancelled")
             evidence.output_committed = saw_payload
-            _trace_receipt(evidence, outcome="cancelled")
+            _trace_receipt(evidence, outcome="cancelled", started_at=started_at)
             receipt_emitted = True
             raise
         except Exception as error:
             evidence.output_committed = saw_payload
             _record_failure(evidence, error)
-            _trace_receipt(evidence, outcome="error", error=error)
+            _trace_receipt(
+                evidence, outcome="error", error=error, started_at=started_at
+            )
             receipt_emitted = True
             self._log_stream_transport_error(
                 "OPENCODE_GO",
@@ -689,7 +738,7 @@ class OpenCodeGoProvider(BaseProvider):
                     evidence,
                     RuntimeError("Messages stream closed before receipt emission."),
                 )
-                _trace_receipt(evidence, outcome="abandoned")
+                _trace_receipt(evidence, outcome="abandoned", started_at=started_at)
             if attempt is not None:
                 await attempt.aclose()
 
@@ -733,6 +782,22 @@ def _sse_chunk_has_payload(chunk: str) -> bool:
             continue
         data = stripped.partition(":")[2].strip()
         if data and data != "[DONE]":
+            return True
+    return False
+
+
+def _sse_chunk_has_output(chunk: str) -> bool:
+    """Return whether a Messages SSE chunk carries an output delta."""
+    event_type: str | None = None
+    for line in chunk.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("event:"):
+            event_type = stripped.partition(":")[2].strip()
+            continue
+        if not stripped.startswith("data:") or event_type != "content_block_delta":
+            continue
+        data = stripped.partition(":")[2].strip()
+        if data and data not in {"[DONE]", "{}", "null"}:
             return True
     return False
 

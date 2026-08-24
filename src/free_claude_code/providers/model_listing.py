@@ -4,11 +4,13 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from free_claude_code.application.model_metadata import (
-    ProviderModelInfo as _ProviderModelInfo,
-)
-from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    CapabilityEvidenceStatus,
     ReasoningCapabilityEvidence,
     ReasoningCapabilityStatus,
+)
+from free_claude_code.application.model_metadata import (
+    ProviderModelInfo as _ProviderModelInfo,
 )
 
 
@@ -40,7 +42,9 @@ def extract_openai_model_infos(
         model_id = _field(item, "id")
         if not isinstance(model_id, str) or not model_id.strip():
             raise _malformed(provider_name, "expected every data item to include id")
-        supports_vision, accepted_image_types = _vision_metadata(item)
+        supports_vision, accepted_image_types = _vision_metadata(
+            item, provider_name=provider_name
+        )
         raw_supported_parameters = _field(item, "supported_parameters")
         supported_parameters = (
             {param for param in raw_supported_parameters if isinstance(param, str)}
@@ -48,6 +52,12 @@ def extract_openai_model_infos(
             else None
         )
         reasoning = _reasoning_metadata(item, supported_parameters=supported_parameters)
+        capability_evidence = _capability_metadata(
+            item,
+            provider_name=provider_name,
+            supports_vision=supports_vision,
+            supported_parameters=supported_parameters,
+        )
         model_infos.add(
             _ProviderModelInfo(
                 model_id=model_id,
@@ -65,6 +75,7 @@ def extract_openai_model_infos(
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
                 reasoning=reasoning,
+                capability_evidence=capability_evidence,
             )
         )
 
@@ -96,6 +107,15 @@ def extract_tool_capable_model_infos(
         reasoning = _reasoning_metadata(
             item, supported_parameters=supported_parameter_names
         )
+        supports_vision, accepted_image_types = _vision_metadata(
+            item, provider_name=provider_name
+        )
+        capability_evidence = _capability_metadata(
+            item,
+            provider_name=provider_name,
+            supports_vision=supports_vision,
+            supported_parameters=supported_parameter_names,
+        )
         model_infos.add(
             _ProviderModelInfo(
                 model_id=model_id,
@@ -103,7 +123,10 @@ def extract_tool_capable_model_infos(
                     "reasoning" in supported_parameter_names
                     or reasoning.status is ReasoningCapabilityStatus.SUPPORTED
                 ),
+                supports_vision=supports_vision,
+                accepted_image_types=accepted_image_types,
                 reasoning=reasoning,
+                capability_evidence=capability_evidence,
             )
         )
 
@@ -126,15 +149,159 @@ def _field(item: Any, name: str) -> Any:
 
 _IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
+_CAPABILITY_FIELDS = {
+    "text": "text_input",
+    "tools": "native_tools",
+    "parallel_tools": "parallel_tools",
+    "parallel_tool_calls": "parallel_tools",
+    "tool_choice": "named_tool_choice",
+    "named_tool_choice": "named_tool_choice",
+    "structured_output": "structured_output",
+    "structured_outputs": "structured_output",
+    "vision": "vision_input",
+    "image_tool_results": "image_tool_results",
+    "screenshot_vision": "screenshot_vision",
+    "semantic_browser_control": "semantic_browser_control",
+    "semantic_macos_control": "semantic_macos_control",
+    "pixel_computer_use": "pixel_computer_use",
+}
+_SUPPORTED_PARAMETER_CAPABILITIES = {
+    "tools": "native_tools",
+    "tool_choice": "named_tool_choice",
+    "parallel_tool_calls": "parallel_tools",
+    "response_format": "structured_output",
+    "structured_outputs": "structured_output",
+    "reasoning": "reasoning_effort",
+}
 
-def _vision_metadata(item: Any) -> tuple[bool | None, tuple[str, ...]]:
+
+def _capability_metadata(
+    item: Any,
+    *,
+    provider_name: str,
+    supports_vision: bool | None,
+    supported_parameters: set[str] | None,
+) -> CapabilityEvidence:
+    """Extract explicit capability states without provider-name inference."""
+    capabilities = _field(item, "capabilities")
+    capabilities = capabilities if isinstance(capabilities, Mapping) else {}
+    claims: dict[str, CapabilityEvidenceStatus] = {}
+
+    raw_statuses = _field(item, "capability_statuses")
+    if raw_statuses is None:
+        raw_statuses = capabilities.get("capability_statuses")
+    if isinstance(raw_statuses, Mapping):
+        for raw_name, raw_status in raw_statuses.items():
+            capability = _CAPABILITY_FIELDS.get(str(raw_name), str(raw_name))
+            status = _capability_status(raw_status)
+            if status is not None:
+                _record_capability_claim(
+                    claims, capability, status, provider_name=provider_name
+                )
+
+    for raw_name, capability in _CAPABILITY_FIELDS.items():
+        status = _capability_status(capabilities.get(raw_name))
+        if status is not None:
+            _record_capability_claim(
+                claims, capability, status, provider_name=provider_name
+            )
+
+    if supports_vision is not None:
+        _record_capability_claim(
+            claims,
+            "vision_input",
+            (
+                CapabilityEvidenceStatus.SUPPORTED
+                if supports_vision
+                else CapabilityEvidenceStatus.UNSUPPORTED
+            ),
+            provider_name=provider_name,
+        )
+
+    for parameter in supported_parameters or ():
+        capability = _SUPPORTED_PARAMETER_CAPABILITIES.get(parameter)
+        if capability is None:
+            continue
+        if claims.get(capability) is CapabilityEvidenceStatus.UNSUPPORTED:
+            raise _malformed(
+                provider_name,
+                "conflicting capability metadata for "
+                f"{capability!r}: explicit unsupported claim and "
+                f"supported_parameters={parameter!r}",
+            )
+        if capability not in claims:
+            claims[capability] = CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED
+
+    source = _first_string(item, "capability_evidence_source")
+    if source is None:
+        source = _first_string(capabilities, "capability_evidence_source")
+    if source is None:
+        source = "provider_metadata" if claims else "unknown"
+    observed_at = _first_string(item, "capability_observed_at", "observed_at")
+    if observed_at is None:
+        observed_at = _first_string(
+            capabilities, "capability_observed_at", "observed_at"
+        )
+    version = _first_string(item, "capability_evidence_version") or _first_string(
+        capabilities, "capability_evidence_version"
+    )
+    protocol = _first_string(item, "capability_evidence_protocol") or _first_string(
+        capabilities, "capability_evidence_protocol"
+    )
+    return CapabilityEvidence(
+        statuses=tuple(sorted(claims.items())),
+        evidence_source=source,
+        observed_at=observed_at,
+        evidence_version=version,
+        evidence_protocol=protocol,
+    )
+
+
+def _record_capability_claim(
+    claims: dict[str, CapabilityEvidenceStatus],
+    capability: str,
+    status: CapabilityEvidenceStatus,
+    *,
+    provider_name: str,
+) -> None:
+    existing = claims.get(capability)
+    if existing is not None and existing is not status:
+        raise _malformed(
+            provider_name,
+            f"conflicting capability metadata for {capability!r}: "
+            f"{existing.value} vs {status.value}",
+        )
+    claims[capability] = status
+
+
+def _capability_status(value: Any) -> CapabilityEvidenceStatus | None:
+    if isinstance(value, bool):
+        return (
+            CapabilityEvidenceStatus.SUPPORTED
+            if value
+            else CapabilityEvidenceStatus.UNSUPPORTED
+        )
+    if isinstance(value, str):
+        try:
+            return CapabilityEvidenceStatus(value.strip().casefold())
+        except ValueError:
+            return None
+    return None
+
+
+def _vision_metadata(
+    item: Any, *, provider_name: str
+) -> tuple[bool | None, tuple[str, ...]]:
     """Read optional model-list vision metadata without guessing from names."""
-    supports_vision = _field(item, "supports_vision")
+    vision_claims: list[tuple[str, bool]] = []
+    explicit_supports_vision = _field(item, "supports_vision")
+    if isinstance(explicit_supports_vision, bool):
+        vision_claims.append(("supports_vision", explicit_supports_vision))
     accepted = _field(item, "accepted_image_types")
     capabilities = _field(item, "capabilities")
     if isinstance(capabilities, Mapping):
         if isinstance(capabilities.get("vision"), bool):
-            supports_vision = capabilities["vision"]
+            vision_claims.append(("capabilities.vision", capabilities["vision"]))
         if accepted is None:
             accepted = capabilities.get("accepted_image_types")
 
@@ -144,7 +311,7 @@ def _vision_metadata(item: Any) -> tuple[bool | None, tuple[str, ...]]:
     ):
         normalized = {str(value).casefold() for value in modalities}
         if normalized & {"image", "images", "vision"}:
-            supports_vision = True
+            vision_claims.append(("input_modalities", True))
 
     accepted_types = (
         tuple(sorted(value for value in accepted if value in _IMAGE_TYPES))
@@ -153,9 +320,17 @@ def _vision_metadata(item: Any) -> tuple[bool | None, tuple[str, ...]]:
         else ()
     )
     if accepted_types:
-        supports_vision = True
+        vision_claims.append(("accepted_image_types", True))
+    claimed_values = {value for _, value in vision_claims}
+    if len(claimed_values) > 1:
+        claims = ", ".join(f"{source}={value}" for source, value in vision_claims)
+        raise _malformed(
+            provider_name,
+            f"conflicting vision capability metadata ({claims})",
+        )
+    supports_vision = next(iter(claimed_values), None)
     return (
-        supports_vision if isinstance(supports_vision, bool) else None,
+        supports_vision,
         accepted_types,
     )
 

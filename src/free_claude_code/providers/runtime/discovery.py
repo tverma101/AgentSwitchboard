@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import httpx
 from loguru import logger
@@ -147,15 +148,19 @@ class ProviderModelDiscovery:
                 # is re-filtered at read time so policy edits affect an
                 # already-populated catalog without requiring a new upstream
                 # model-list request.
-                self._model_cache.cache_model_infos(provider_id, result)
+                observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                observed_result = frozenset(
+                    info.with_observed_at(observed_at) for info in result
+                )
+                self._model_cache.cache_model_infos(provider_id, observed_result)
                 visible_result = filter_discovered_model_infos(
-                    self._settings, provider_id, result
+                    self._settings, provider_id, observed_result
                 )
                 refreshed_provider_ids.append(provider_id)
                 logger.info(
                     "Provider model discovery cached: provider={} models={} visible={}",
                     provider_id,
-                    len(result),
+                    len(observed_result),
                     len(visible_result),
                 )
 
