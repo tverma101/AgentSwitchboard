@@ -69,7 +69,9 @@ fcc-learning context-artifact slice /path/from-the-locator.txt \
 
 The reader is confined to FCC's configured artifact directory, reports the
 full-artifact hash and line/byte metadata, and returns only the requested
-slice. It cannot be used to read an arbitrary path outside that directory.
+slice. Artifact paths are normalized to the configured directory, and stale,
+colliding, or non-private pre-existing artifact files fail closed. It cannot be
+used to read an arbitrary path outside that directory.
 
 The current live compact/resume evidence is recorded in the sanitized
 [Muse auto-compact receipt](../smoke/receipts/muse-auto-compact-2026-08-24.json).
