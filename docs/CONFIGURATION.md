@@ -72,7 +72,18 @@ that source.
   `512` through `1000000`. `FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR` optionally
   selects the private artifact directory; the default is
   `~/.fcc/context-artifacts`. Structured JSON, media, and opaque reasoning
-  state are never truncated; oversized values fail explicitly.
+  state are never truncated; oversized values fail explicitly. Redirect
+  receipts include byte, line, and estimated-token counts. Retrieve more
+  text only through a bounded terminal slice rooted to that directory:
+
+  ```bash
+  fcc-learning context-artifact slice /path/from-the-locator.txt \
+    --start-line 1 --line-count 80 --max-bytes 16384
+  ```
+
+  The command verifies the resolved path stays inside the configured artifact
+  directory and reports the full-artifact SHA-256 without placing the full
+  artifact back into context.
 - FCC's Claude launcher pins the installed executable to the known-good
   `2.1.228` receipt by default. A newer or unparseable binary is quarantined
   before launch; set `FCC_CLAUDE_ALLOW_UNCERTIFIED=1` only for an explicit
@@ -93,6 +104,10 @@ that source.
   not proof that the model actually reasoned. Generation receipts separately
   record requested effort, provider-reported reasoning tokens, summary/text/
   opaque state, and the Anthropic thinking presentation.
+- Provider adapters translate a selected control to the highest documented wire
+  value when a provider uses a smaller vocabulary. OpenCode Go accepts `xhigh`
+  but not `max`; FCC preserves the client request as `max` and records the
+  upstream effective value as `xhigh`.
 
 ## Routing isolation
 

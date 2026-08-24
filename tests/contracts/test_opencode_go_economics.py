@@ -1,6 +1,7 @@
 """Deterministic tests for OpenCode Go cache-economic benchmark receipts."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -200,3 +201,29 @@ def test_load_receipt_preserves_commit_and_protocol_metadata(tmp_path) -> None:
 
     assert metadata == {"commit_sha": "abcdef1", "protocol": "responses"}
     assert rows[0].protocol == "responses"
+
+
+def test_checked_in_compaction_fixture_stays_within_economic_gate() -> None:
+    root = Path(__file__).parents[2] / "smoke" / "fixtures"
+    native_metadata, native_rows = load_receipt(
+        root / "opencode_go_compaction_native.sample.jsonl"
+    )
+    fcc_metadata, fcc_rows = load_receipt(
+        root / "opencode_go_compaction_fcc.sample.jsonl"
+    )
+
+    comparison = compare_receipts(native_rows, fcc_rows)
+
+    assert native_metadata["evidence"] == "synthetic-only"
+    assert fcc_metadata["evidence"] == "synthetic-only"
+    assert comparison["estimated_cost_regression_pct"] <= 5.0
+    assert comparison["cache_read_share_gap_percentage_points"] <= 3.0
+    assert comparison["token_amplification"] <= 1.10
+    assert comparison["retry_amplification_delta"] == pytest.approx(0.0)
+    assert comparison["stable_prefix_match_rate"] == pytest.approx(1.0)
+    assert set(comparison["native_by_phase"]) == {
+        "compact_turn",
+        "post_compact",
+        "pre_compact",
+        "resume",
+    }

@@ -6,7 +6,8 @@ import re
 import subprocess
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ _MISSING_ENV_MARKERS = (
     "permission denied",
 )
 _EMPTY_MCP_CONFIG = '{"mcpServers":{}}'
+CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _SUBAGENT_SYSTEM_PROMPT = (
     "You are a deterministic smoke-test coordinator. Use Agent when asked to "
     "use a subagent."
@@ -104,6 +106,7 @@ def run_claude_cli(
     no_session_persistence: bool = True,
     context_cap_tokens: int | None = None,
     prompt_in_stdin: bool = False,
+    env_overrides: Mapping[str, str] | None = None,
 ) -> ClaudeCliRun:
     """Run Claude Code CLI against the local smoke proxy."""
     cwd.mkdir(parents=True, exist_ok=True)
@@ -124,6 +127,8 @@ def run_claude_cli(
     )
 
     base_env = os.environ.copy()
+    if env_overrides:
+        base_env.update(env_overrides)
     if context_cap_tokens is not None:
         base_env["FCC_CLAUDE_CONTEXT_TOKENS"] = str(context_cap_tokens)
     env = build_claude_proxy_env(
@@ -210,7 +215,12 @@ def _build_claude_cli_command(
         if tools:
             cmd.extend(["--allowedTools", tools])
     cmd.extend(extra_args)
-    cmd.extend(["-p"] if prompt_in_stdin else ["-p", prompt])
+    if "--bg" in extra_args or "--background" in extra_args:
+        # Claude's background-session manager rejects --print/-p because the
+        # resulting session would not be attachable through `claude agents`.
+        cmd.append(prompt)
+    else:
+        cmd.extend(["-p"] if prompt_in_stdin else ["-p", prompt])
     return tuple(cmd)
 
 
@@ -243,6 +253,255 @@ def run_cli_feature_probes(
             claude_bin, server, smoke_config, provider_model, model_dir, marker_prefix
         ),
     ]
+
+
+def run_reasoning_effort_matrix(
+    *,
+    claude_bin: str,
+    server: RunningServer,
+    smoke_config: SmokeConfig,
+    provider_model: ProviderModel,
+    model_dir: Path,
+    marker_prefix: str,
+) -> list[CliMatrixOutcome]:
+    """Run the installed Claude CLI through every supported effort level."""
+    outcomes: list[CliMatrixOutcome] = []
+    for effort in CLAUDE_REASONING_EFFORTS:
+        marker = _marker(marker_prefix, f"REASONING_{effort.upper()}")
+        outcomes.append(
+            _run_probe(
+                claude_bin=claude_bin,
+                server=server,
+                smoke_config=smoke_config,
+                provider_model=provider_model,
+                workspace=model_dir / f"reasoning_{effort}",
+                feature=f"reasoning_{effort}",
+                marker=marker,
+                prompt=f"Reply with exactly {marker} and no other text.",
+                tools="",
+                extra_args=("--effort", effort),
+            )
+        )
+    return outcomes
+
+
+def run_subagent_probe(
+    *,
+    claude_bin: str,
+    server: RunningServer,
+    smoke_config: SmokeConfig,
+    provider_model: ProviderModel,
+    model_dir: Path,
+    marker_prefix: str,
+) -> CliMatrixOutcome:
+    """Run the strict foreground Agent/subagent tool probe."""
+    return _subagent_task(
+        claude_bin,
+        server,
+        smoke_config,
+        provider_model,
+        model_dir,
+        marker_prefix,
+    )
+
+
+def run_background_subagent_probe(
+    *,
+    claude_bin: str,
+    server: RunningServer,
+    smoke_config: SmokeConfig,
+    provider_model: ProviderModel,
+    model_dir: Path,
+    marker_prefix: str,
+) -> CliMatrixOutcome:
+    """Run one top-level Claude background-session tool probe."""
+    return _background_session_probe(
+        claude_bin=claude_bin,
+        server=server,
+        smoke_config=smoke_config,
+        provider_model=provider_model,
+        model_dir=model_dir,
+        marker_prefix=marker_prefix,
+    )
+
+
+def _background_session_probe(
+    *,
+    claude_bin: str,
+    server: RunningServer,
+    smoke_config: SmokeConfig,
+    provider_model: ProviderModel,
+    model_dir: Path,
+    marker_prefix: str,
+) -> CliMatrixOutcome:
+    """Start Claude with ``--bg`` and wait for one bounded tool marker."""
+    marker = _marker(marker_prefix, "BACKGROUND")
+    workspace = model_dir / "background_session"
+    workspace.mkdir(parents=True, exist_ok=True)
+    marker_path = workspace / "background-marker.txt"
+    marker_path.unlink(missing_ok=True)
+    isolated_cli_args = (
+        "--setting-sources",
+        "local",
+        "--strict-mcp-config",
+        "--mcp-config",
+        _EMPTY_MCP_CONFIG,
+        "--system-prompt",
+        _SUBAGENT_SYSTEM_PROMPT,
+    )
+    offset = read_log_offset(server.log_path)
+    run = run_claude_cli(
+        claude_bin=claude_bin,
+        server=server,
+        config=smoke_config,
+        cwd=workspace,
+        prompt=(
+            "Use Bash exactly once to run `printf %s "
+            f"{marker} > background-marker.txt`. After the command succeeds, stop."
+        ),
+        tools="Bash",
+        bare=False,
+        pre_tool_args=isolated_cli_args,
+        extra_args=("--bg",),
+        no_session_persistence=False,
+    )
+    deadline = time.monotonic() + smoke_config.timeout_s
+    while not marker_path.is_file() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    marker_seen = (
+        marker_path.is_file()
+        and marker_path.read_text(encoding="utf-8", errors="replace").strip() == marker
+    )
+    run = replace(
+        run,
+        stdout=f"{run.stdout}\n{marker}" if marker_seen else run.stdout,
+        timed_out=not marker_seen,
+    )
+    log_delta = read_log_delta(server.log_path, offset)
+    return make_outcome(
+        model=provider_model.model_name,
+        full_model=provider_model.full_model,
+        source=provider_model.source,
+        feature="background_session_tool_task",
+        marker=marker,
+        run=run,
+        log_delta=log_delta,
+        log_path=server.log_path,
+        requires_tool_result=True,
+        requires_background_task=True,
+    )
+
+
+def run_auto_compact_probe(
+    *,
+    claude_bin: str,
+    server: RunningServer,
+    smoke_config: SmokeConfig,
+    provider_model: ProviderModel,
+    model_dir: Path,
+    marker_prefix: str,
+) -> CliMatrixOutcome:
+    """Run one real automatic-compaction and post-boundary tool probe.
+
+    The seed turns intentionally use separate Claude invocations that resume
+    one persisted session.  No ``/compact`` command is sent; the final turn
+    must observe Claude's automatic boundary and then complete a Bash tool
+    round trip on the resumed session.
+    """
+    marker = _marker(marker_prefix, "AUTO_COMPACT")
+    continuation_marker = _marker(marker_prefix, "AUTO_COMPACT_CONTINUED")
+    workspace = model_dir / "auto_compact_resume"
+    session_id = str(uuid.uuid4())
+    context_seed = "context " * 7_000
+    launcher_env = {
+        "HOST": "127.0.0.1",
+        "PORT": str(server.port),
+        "MODEL": provider_model.full_model,
+    }
+    isolated_cli_args = (
+        "--setting-sources",
+        "local",
+        "--strict-mcp-config",
+        "--mcp-config",
+        _EMPTY_MCP_CONFIG,
+    )
+    offset = read_log_offset(server.log_path)
+    seed_prompts = tuple(
+        f"Retain the earlier smoke token {marker} and reply with exactly "
+        f"{marker}_GROUP_{group} after this bounded context seed.\n"
+        f"{context_seed}"
+        # Four groups reached only about 30K input tokens on Claude 2.1.228;
+        # seven keeps the fixture bounded while crossing the 50K gate.
+        for group in range(1, 8)
+    )
+    seed_runs = [
+        run_claude_cli(
+            claude_bin=claude_bin,
+            server=server,
+            config=smoke_config,
+            cwd=workspace,
+            prompt=prompt,
+            tools="",
+            bare=False,
+            pre_tool_args=isolated_cli_args,
+            session_id=session_id if index == 0 else None,
+            resume_session_id=session_id if index else None,
+            no_session_persistence=False,
+            context_cap_tokens=50_000,
+            prompt_in_stdin=True,
+            env_overrides=launcher_env,
+        )
+        for index, prompt in enumerate(seed_prompts)
+    ]
+    continuation_run = run_claude_cli(
+        claude_bin=claude_bin,
+        server=server,
+        config=smoke_config,
+        cwd=workspace,
+        prompt=(
+            f"After automatic compaction, use Bash to run `printf {continuation_marker}`. "
+            f"Reply with exactly {continuation_marker} after the tool succeeds."
+        ),
+        tools="Bash",
+        bare=False,
+        pre_tool_args=isolated_cli_args,
+        resume_session_id=session_id,
+        no_session_persistence=False,
+        context_cap_tokens=50_000,
+        env_overrides=launcher_env,
+    )
+    runs = [*seed_runs, continuation_run]
+    command: list[str] = []
+    for item in runs:
+        if command:
+            command.append("&&")
+        command.extend(item.command)
+    returncode = next((item.returncode for item in runs if item.returncode != 0), 0)
+    log_delta = read_log_delta(server.log_path, offset)
+    run = ClaudeCliRun(
+        command=tuple(command),
+        returncode=returncode,
+        stdout="\n".join(item.stdout for item in runs),
+        stderr="\n".join(item.stderr for item in runs),
+        duration_s=sum(item.duration_s for item in runs),
+        timed_out=any(item.timed_out for item in runs),
+        requested_context_tokens=50_000,
+        effective_context_tokens=50_000,
+    )
+    return make_outcome(
+        model=provider_model.model_name,
+        full_model=provider_model.full_model,
+        source=provider_model.source,
+        feature="auto_compact_resume",
+        marker=continuation_marker,
+        run=run,
+        log_delta=log_delta,
+        log_path=server.log_path,
+        requires_tool_result=True,
+        requires_compact=True,
+        requires_auto_compact=True,
+        requires_continuation=True,
+    )
 
 
 def read_log_offset(log_path: Path) -> int:
@@ -281,12 +540,19 @@ def token_evidence(
         "agent_result_count": _agent_result_count(combined),
         "task_tool_count": combined.count('"name": "Task"')
         + combined.count('"name":"Task"'),
+        "background_flag": "--bg" in run.command or "--background" in run.command,
+        "run_in_background_true": _metadata_bool_seen(
+            combined, "run_in_background", True
+        ),
         "run_in_background_false": "run_in_background" in combined and "false" in lower,
         "compact_boundary": "compact_boundary" in combined,
         "compact_metadata": "compact_metadata" in combined,
+        "compact_trigger": _compact_trigger(combined),
+        "auto_compact": _compact_trigger(combined) == "auto",
         "compact_result_success": bool(
             re.search(r'"compact_result"\s*:\s*"success"', combined)
         ),
+        "reasoning_effort_values": _metadata_values(combined, "reasoning_effort"),
         "requested_context_tokens": run.requested_context_tokens,
         "effective_context_tokens": run.effective_context_tokens,
         "http_422": 'HTTP/1.1" 422' in combined,
@@ -304,7 +570,9 @@ def classify_probe(
     requires_agent: bool = False,
     requires_task: bool = False,
     requires_compact: bool = False,
+    requires_auto_compact: bool = False,
     requires_continuation: bool = False,
+    requires_background_task: bool = False,
 ) -> tuple[str, str]:
     """Classify a probe without failing compatibility characterization failures."""
     combined = f"{run.combined_output}\n{log_delta}"
@@ -331,10 +599,16 @@ def classify_probe(
         and "run_in_background" in combined
         and "false" in lower
     )
+    background_task_ok = not requires_background_task or (
+        "--bg" in run.command
+        or "--background" in run.command
+        or _metadata_bool_seen(combined, "run_in_background", True)
+    )
     compact_ok = not requires_compact or (
         bool(re.search(r'"compact_result"\s*:\s*"success"', combined))
         and ("compact_boundary" in combined or "compact_metadata" in combined)
     )
+    auto_compact_ok = not requires_auto_compact or _compact_trigger(combined) == "auto"
     continuation_ok = not requires_continuation or marker in combined
     cli_ok = run.returncode == 0
 
@@ -344,7 +618,9 @@ def classify_probe(
         and tool_ok
         and agent_ok
         and task_ok
+        and background_task_ok
         and compact_ok
+        and auto_compact_ok
         and continuation_ok
     ):
         return "passed", "passed"
@@ -369,7 +645,9 @@ def make_outcome(
     requires_agent: bool = False,
     requires_task: bool = False,
     requires_compact: bool = False,
+    requires_auto_compact: bool = False,
     requires_continuation: bool = False,
+    requires_background_task: bool = False,
 ) -> CliMatrixOutcome:
     """Build one report outcome from a CLI run and its server log delta."""
     outcome, classification = classify_probe(
@@ -380,7 +658,9 @@ def make_outcome(
         requires_agent=requires_agent,
         requires_task=requires_task,
         requires_compact=requires_compact,
+        requires_auto_compact=requires_auto_compact,
         requires_continuation=requires_continuation,
+        requires_background_task=requires_background_task,
     )
     evidence = token_evidence(
         feature=feature,
@@ -727,6 +1007,7 @@ def _run_probe(
     requires_tool_result: bool = False,
     requires_agent: bool = False,
     requires_task: bool = False,
+    requires_background_task: bool = False,
 ) -> CliMatrixOutcome:
     offset = read_log_offset(server.log_path)
     run = run_claude_cli(
@@ -753,6 +1034,7 @@ def _run_probe(
         requires_tool_result=requires_tool_result,
         requires_agent=requires_agent,
         requires_task=requires_task,
+        requires_background_task=requires_background_task,
     )
 
 
@@ -760,6 +1042,43 @@ def _has_proxy_regression(log_delta: str) -> bool:
     if "CREATE_MESSAGE_ERROR" in log_delta:
         return True
     return any(re.search(pattern, log_delta) for pattern in _HTTP_REGRESSION_PATTERNS)
+
+
+def _compact_trigger(text: str) -> str | None:
+    """Return the explicit Claude compaction trigger from a metadata row."""
+    for line in text.splitlines():
+        if "compact" not in line.casefold():
+            continue
+        for pattern in (
+            r'"trigger"\s*:\s*"(?P<trigger>auto|manual)"',
+            r"'trigger'\s*:\s*'(?P<trigger>auto|manual)'",
+        ):
+            match = re.search(pattern, line, flags=re.IGNORECASE)
+            if match:
+                return match.group("trigger").lower()
+    return None
+
+
+def _metadata_values(text: str, key: str) -> list[str]:
+    """Return redacted string values for one structured trace key."""
+    values = re.findall(
+        rf"['\"]{re.escape(key)}['\"]\s*:\s*['\"]([^'\"]+)['\"]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return sorted(set(values))
+
+
+def _metadata_bool_seen(text: str, key: str, expected: bool) -> bool:
+    """Return whether a structured metadata key has the expected boolean."""
+    value = "true" if expected else "false"
+    return bool(
+        re.search(
+            rf"['\"]{re.escape(key)}['\"]\s*:\s*{value}\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _has_proxy_request(log_delta: str) -> bool:

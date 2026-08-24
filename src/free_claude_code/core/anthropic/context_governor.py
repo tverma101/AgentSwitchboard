@@ -48,6 +48,8 @@ class ContextGovernanceRecord:
     visible_bytes: int
     original_tokens: int
     visible_tokens: int
+    original_lines: int
+    visible_lines: int
     reduction_ratio: float
     artifact_path: str
     artifact_sha256: str
@@ -63,6 +65,8 @@ class ContextGovernanceRecord:
             "visible_bytes": self.visible_bytes,
             "original_tokens": self.original_tokens,
             "visible_tokens": self.visible_tokens,
+            "original_lines": self.original_lines,
+            "visible_lines": self.visible_lines,
             "reduction_ratio": self.reduction_ratio,
             "artifact_path": self.artifact_path,
             "artifact_sha256": self.artifact_sha256,
@@ -150,6 +154,8 @@ def govern_messages_request(
                     visible_bytes=visible_bytes,
                     original_tokens=_estimated_tokens(text),
                     visible_tokens=_estimated_tokens(replacement),
+                    original_lines=_estimated_lines(text),
+                    visible_lines=_estimated_lines(replacement),
                     reduction_ratio=round(
                         1 - (visible_bytes / max(1, original_bytes)),
                         6,
@@ -301,3 +307,11 @@ def _copy_block_with_content(block: object, content: str) -> object:
 
 def _estimated_tokens(text: str) -> int:
     return max(1, len(text.encode("utf-8")) // 4)
+
+
+def _estimated_lines(text: str) -> int:
+    """Estimate logical text lines without inventing a trailing empty line."""
+
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)

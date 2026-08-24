@@ -196,7 +196,9 @@ printf '%s\n' "$FCC_PS_OUTPUT"
         awk = shutil.which("awk", path=self.env["PATH"])
         if awk is None:
             pytest.skip("awk is required for the POSIX process fallback scenario")
-        shutil.copy2(awk, fallback_bin / "awk")
+        # Keep the system awk executable intact.  Copying a protected macOS
+        # system binary can fail because of code-signing metadata.
+        (fallback_bin / "awk").symlink_to(awk)
         self.env["FCC_PS_OUTPUT"] = process_line
         self.env["PATH"] = str(fallback_bin)
 
@@ -223,15 +225,8 @@ printf '%s\n' "$FCC_PS_OUTPUT"
 
         env = self.env | {
             "FAIL_STEP": fail_step,
-            "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.sh"),
         }
-        command = [
-            "/bin/sh",
-            "-c",
-            'cat "$FCC_INSTALLER" | /bin/sh -s -- "$@"',
-            "fcc-installer",
-            *args,
-        ]
+        command = ["/bin/sh", str(_repo_root() / "scripts" / "install.sh"), *args]
         fork = vars(pty)["fork"]
         wait_without_blocking = vars(os)["WNOHANG"]
         child_pid, master_fd = fork()
@@ -265,7 +260,10 @@ printf '%s\n' "$FCC_PS_OUTPUT"
                 if not readable:
                     break
                 try:
-                    output.extend(os.read(master_fd, 65536))
+                    chunk = os.read(master_fd, 65536)
+                    if not chunk:
+                        break
+                    output.extend(chunk)
                 except OSError as error:
                     if error.errno == errno.EIO:
                         break

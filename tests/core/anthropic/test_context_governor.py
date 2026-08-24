@@ -63,6 +63,7 @@ def test_large_text_result_is_redirected_to_private_artifact(tmp_path) -> None:
     assert record.original_bytes == len(text.encode())
     assert record.visible_bytes <= 4096
     assert 0 < record.reduction_ratio < 1
+    assert record.original_lines > record.visible_lines > 0
     block = governed.request.messages[0].content[0]
     replacement = get_block_attr(block, "content")
     assert isinstance(replacement, str)

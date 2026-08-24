@@ -5,6 +5,7 @@ import json
 import sys
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from enum import StrEnum
 from typing import Any
 
@@ -30,7 +31,11 @@ from free_claude_code.core.openai_responses import (
     ResponsesStreamFailure,
     build_responses_provider_request,
 )
-from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.core.trace import trace_event
 from free_claude_code.core.visual_attachments import (
     VisualAttachmentError,
@@ -53,6 +58,18 @@ _GO_DOCS_SOURCE = "https://dev.opencode.ai/docs/go/"
 _GO_DOCS_DATE = "2026-08-23"
 _ERROR_BODY_LIMIT = 65_536
 _MUSE_MODEL = "muse-spark-1.2-contributor"
+
+
+def _translate_responses_reasoning(reasoning: ReasoningPolicy) -> ReasoningPolicy:
+    """Translate FCC's max effort to OpenCode Go's highest wire value.
+
+    Claude exposes ``max`` as a client effort, but OpenCode Go Responses
+    currently accepts ``xhigh`` as its highest reasoning variant. Keep the
+    original policy for fault receipts while translating only the request.
+    """
+    if reasoning.effort is not ReasoningEffort.MAX:
+        return reasoning
+    return replace(reasoning, effort=ReasoningEffort.XHIGH)
 
 
 def _payload_size(payload: object) -> int:
@@ -382,7 +399,10 @@ class OpenCodeGoProvider(BaseProvider):
                         "tool_choice.type='auto'; named and forced tool choices "
                         "are unsupported and were rejected locally."
                     )
-            return build_responses_provider_request(request, reasoning=reasoning)
+            return build_responses_provider_request(
+                request,
+                reasoning=_translate_responses_reasoning(reasoning),
+            )
         except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
 

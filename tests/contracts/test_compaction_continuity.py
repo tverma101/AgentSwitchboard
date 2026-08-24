@@ -59,6 +59,10 @@ def test_compaction_receipt_passes_when_structural_state_is_preserved() -> None:
             replace(_state(), committed_tool_ids=("call-1", "call-1")),
             "committed_tools_not_replayed",
         ),
+        (
+            replace(_state(), committed_tool_ids=()),
+            "committed_tools_not_replayed",
+        ),
         (replace(_state(), retry_attempts=3), "retry_amplification_bounded"),
     ],
 )
@@ -105,3 +109,155 @@ def test_checked_in_synthetic_compaction_receipt_matches_the_gate() -> None:
     after = CompactionState.from_mapping(payload["after"])
 
     assert validate_compaction_continuity(before, after)["passed"] is True
+
+
+def test_checked_in_muse_auto_compact_receipt_is_current_and_metadata_only() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "muse-auto-compact-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["claude"]["launcher"] == "fccdanger"
+    assert payload["claude"]["version"] == "2.1.228"
+    assert payload["harness"]["package_version"] == "4.30.7"
+    assert payload["context"]["effective_tokens"] == 50_000
+    assert payload["compaction"] == {
+        "trigger": "auto",
+        "result": "success",
+        "compact_boundary_observed": True,
+        "compact_metadata_observed": True,
+        "manual_compact_command_sent": False,
+    }
+    assert payload["post_compaction"]["tool_call_count"] == 1
+    assert payload["routing"]["provider_model_ref"] == (
+        "opencode_go/muse-spark-1.2-contributor"
+    )
+    assert payload["routing"]["upstream_protocol"] == "responses"
+    assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized
+
+
+def test_checked_in_reasoning_effort_matrix_receipt_is_metadata_only() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-reasoning-effort-matrix-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["claude"]["version"] == "2.1.228"
+    assert payload["harness"]["package_version"] == "4.30.7"
+    assert payload["matrix"]["efforts"] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert payload["matrix"]["all_returncodes"] == [0, 0, 0, 0, 0]
+    assert payload["reasoning"][-1]["requested"] == "max"
+    assert payload["reasoning"][-1]["effective"] == "xhigh"
+    assert payload["translation"]["requested_max_wire_value"] == "xhigh"
+    assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized
+
+
+def test_checked_in_subagent_receipt_is_metadata_only() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-subagent-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["surface"]["outcome"] == "passed"
+    assert payload["surface"]["background"] == "not_run"
+    assert payload["context"]["effective_tokens"] == 256_000
+    assert payload["requests"]["foreground_run_in_background"] is False
+    assert payload["routing"]["provider_model_ref"] == (
+        "opencode_go/muse-spark-1.2-contributor"
+    )
+    assert payload["routing"]["upstream_protocol"] == "responses"
+    assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized
+
+
+def test_checked_in_background_session_receipt_preserves_unverified_boundary() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-background-session-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["surface"] == {
+        "name": "top_level_background_session",
+        "outcome": "unverified",
+        "background_handle_returned": True,
+        "daemon_lifecycle": "disappeared_before_tool_execution",
+        "claude_agents_after_probe": [],
+    }
+    assert payload["requests"]["fcc_messages_requests_observed"] == 0
+    assert payload["routing"]["route_proven"] is False
+    assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized
+
+
+def test_checked_in_managed_resume_receipt_is_metadata_only() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-managed-resume-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+
+    assert payload["claude"]["version"] == "2.1.228"
+    assert payload["surface"]["fresh"] == "passed"
+    assert payload["surface"]["resume"] == "passed"
+    assert payload["surface"]["fork"] == "passed"
+    assert payload["context"]["effective_tokens"] == 256_000
+    assert payload["requests"] == {
+        "managed_turns": 3,
+        "messages_requests": 6,
+        "completed_provider_turns": 3,
+        "upstream_attempts_total": 3,
+        "upstream_attempts_per_turn": 1,
+        "terminal_event": "response.completed",
+    }
+    assert payload["routing"] == {
+        "provider_id": "opencode_go",
+        "provider_model": "muse-spark-1.2-contributor",
+        "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+        "client_wire_api": "messages",
+        "upstream_protocol": "responses",
+    }
+    assert payload["reasoning"] == {
+        "requested_effort": "high",
+        "effective_effort": "high",
+        "provider_reasoning_tokens": [154, 22, 10],
+        "provider_reasoning_item": True,
+        "provider_visible_reasoning_summary": False,
+        "provider_reasoning_text": False,
+        "provider_opaque_reasoning": True,
+        "harness_thinking_block": True,
+        "harness_thinking_delta": False,
+    }
+    assert "prompt" not in serialized
+    assert "api_key" not in serialized
+    assert "encrypted_content" not in serialized

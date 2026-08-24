@@ -302,10 +302,12 @@ def test_muse_tool_aliases_cover_exact_limit_and_collision_shapes() -> None:
         (ReasoningEffort.MEDIUM, {"effort": "medium", "summary": "auto"}),
         (ReasoningEffort.HIGH, {"effort": "high", "summary": "auto"}),
         (ReasoningEffort.XHIGH, {"effort": "xhigh", "summary": "auto"}),
-        (ReasoningEffort.MAX, {"effort": "max", "summary": "auto"}),
+        # OpenCode Go's Responses endpoint has no `max` variant; the provider
+        # adapter sends its highest representable effort.
+        (ReasoningEffort.MAX, {"effort": "xhigh", "summary": "auto"}),
     ],
 )
-def test_muse_responses_body_carries_each_reasoning_effort(
+def test_muse_responses_body_translates_each_reasoning_effort(
     effort: ReasoningEffort, expected_reasoning: dict[str, str]
 ) -> None:
     """The outgoing /responses body names the exact client-selected effort."""

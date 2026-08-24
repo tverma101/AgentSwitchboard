@@ -1,0 +1,52 @@
+{
+  "receipt": "muse-auto-compact-tool-resume",
+  "captured_at": "2026-08-24T06:11:57Z",
+  "claude": {
+    "path": "claude",
+    "version": "2.1.228",
+    "launcher": "fccdanger"
+  },
+  "harness": {
+    "package_version": "4.30.7",
+    "isolated_server": "loopback-isolated",
+    "active_user_server_8082_touched": false
+  },
+  "context": {
+    "requested_tokens": 50000,
+    "effective_tokens": 50000,
+    "seed_groups": 7,
+    "client_invocation": "non_bare_local_settings_isolated",
+    "peak_pre_compact_context_estimate": 49701,
+    "post_compact_context_estimate": 14852,
+    "context_dropped": true
+  },
+  "compaction": {
+    "trigger": "auto",
+    "result": "success",
+    "compact_boundary_observed": true,
+    "compact_metadata_observed": true,
+    "manual_compact_command_sent": false
+  },
+  "post_compaction": {
+    "tool_name": "Bash",
+    "tool_call_count": 1,
+    "tool_result_completed": true,
+    "resume_invocation_returned": 0,
+    "continuation_marker_seen": true
+  },
+  "routing": {
+    "provider_id": "opencode_go",
+    "provider_model": "muse-spark-1.2-contributor",
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses",
+    "terminal_event": "response.completed",
+    "provider_completed_turns": 10,
+    "provider_attempts_total": 10,
+    "upstream_attempts_per_turn": 1
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_auto_compact_resume_when_requested with FCC_SMOKE_CLAUDE_BIN=fccdanger",
+    "retained_content": "metadata-only receipt; sensitive payloads omitted"
+  }
+}

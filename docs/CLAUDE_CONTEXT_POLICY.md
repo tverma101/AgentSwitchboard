@@ -49,15 +49,40 @@ backup presence, and SHA-256 digests; it does not print instruction contents.
 
 This leash is advisory: it guides the client toward bounded reads, summaries,
 and reuse of observations. The live CLI compaction probe uses several bounded
-stdin-fed conversation groups before `/compact`, because Claude cannot compact
-a single oversized message. It requires Claude's actual successful compact
-status/boundary and a resumed continuation marker; the FCC cap in that probe is
-50,000 tokens. The leash does not replace the hard runtime tool-result
-governor at the FCC Messages/Responses ingress boundary; that governor
-redirects only oversized text-only tool results and fails explicitly for
+stdin-fed conversation groups before Claude's automatic boundary, because a
+single oversized message is not a valid continuity proof. It sends no manual
+`/compact` command. It requires Claude's actual successful auto-compact
+status/boundary, a resumed continuation marker, and a post-boundary Bash tool
+result; the FCC cap in that probe is 50,000 tokens. The leash does not replace
+the hard runtime tool-result governor at the FCC Messages/Responses ingress
+boundary; that governor redirects only oversized text-only tool results and
+fails explicitly for
 unsupported structured values.
 
+When a bounded locator needs more detail, use the terminal-only retrieval
+primitive rather than dumping the artifact wholesale:
+
+```bash
+fcc-learning context-artifact slice /path/from-the-locator.txt \
+  --start-line 1 --line-count 80 --max-bytes 16384
+```
+
+The reader is confined to FCC's configured artifact directory, reports the
+full-artifact hash and line/byte metadata, and returns only the requested
+slice. It cannot be used to read an arbitrary path outside that directory.
+
 The current live compact/resume evidence is recorded in the sanitized
-[Muse auto-compact receipt](../smoke/receipts/muse-auto-compact-2026-08-23.json).
+[Muse auto-compact receipt](../smoke/receipts/muse-auto-compact-2026-08-24.json).
 That receipt is evidence for one installed-client boundary, not a claim that
 the advisory leash replaces the hard runtime governor.
+
+The separate managed-session inheritance check is recorded in the sanitized
+[managed fresh/resume/fork receipt](../smoke/receipts/claude-managed-resume-2026-08-24.json).
+It covers one fresh managed task, one resumed task, and one forked continuation;
+background and subagent inheritance remain unverified in that receipt.
+The independent foreground Agent/subagent route has a separate
+[metadata-only receipt](../smoke/receipts/claude-subagent-2026-08-24.json);
+the opt-in top-level background route has an explicit
+[unverified receipt](../smoke/receipts/claude-background-session-2026-08-24.json).
+Claude 2.1.228 returned a background handle but its daemon disappeared before
+any FCC request or tool marker; no routing pass is claimed.

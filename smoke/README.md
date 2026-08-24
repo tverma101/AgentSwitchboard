@@ -142,6 +142,23 @@ uv run pytest smoke/product -n 0 -s --tb=short
   free CLI matrix models appended to the default or replacement set.
 - `FCC_SMOKE_TIMEOUT_S`: per-request/subprocess timeout, default `45`.
 - `FCC_SMOKE_CLAUDE_BIN`: Claude CLI executable name, default `claude`.
+- `FCC_SMOKE_AUTO_COMPACT_MODEL`: optional provider/model reference for the
+  real automatic-compaction/resume gate; the gate is opt-in and uses a
+  metadata-only report.
+- `FCC_SMOKE_REASONING_MATRIX=1`: opt-in live matrix for Claude's `low`,
+  `medium`, `high`, `xhigh`, and `max` effort levels.
+- `FCC_SMOKE_REASONING_MODEL`: optional provider/model reference for that
+  reasoning matrix; otherwise the first configured provider model is used.
+- `FCC_SMOKE_SUBAGENT=1`: opt-in foreground Claude `Agent`/subagent probe.
+- `FCC_SMOKE_SUBAGENT_MODEL`: optional provider/model reference for that probe.
+- `FCC_SMOKE_BACKGROUND_SUBAGENT=1`: opt-in background Claude `Agent`/subagent
+  probe; it requires an explicit `run_in_background=true` event in the
+  metadata-only gateway trace.
+- `FCC_SMOKE_BACKGROUND_SUBAGENT_MODEL`: optional provider/model reference for
+  the background probe; otherwise `FCC_SMOKE_SUBAGENT_MODEL` is reused.
+- `FCC_SMOKE_MANAGED_MODEL`: optional provider/model reference for the live
+  managed-Claude fresh/resume/fork route check; the check uses an isolated temporary
+  Claude config and never changes the user's settings or sessions.
 - `FCC_SMOKE_TELEGRAM_CHAT_ID`: Telegram chat/user ID for send/edit/delete.
 - `FCC_SMOKE_DISCORD_CHANNEL_ID`: Discord channel ID for send/edit/delete.
 - `FCC_SMOKE_INTERACTIVE=1`: enables manual inbound Telegram/Discord checks.
@@ -218,6 +235,13 @@ ids, and attempts. It rejects prompt, image, tool-result, and reasoning payload
 fields before a receipt can be written.
 The checked-in [synthetic continuity receipt](receipts/compaction-continuity-synthetic.json)
 is a schema/regression fixture, not live provider evidence.
+The checked-in
+[synthetic native compaction fixture](fixtures/opencode_go_compaction_native.sample.jsonl)
+and
+[synthetic FCC compaction fixture](fixtures/opencode_go_compaction_fcc.sample.jsonl)
+exercise the phase economics thresholds without claiming a live native-vs-FCC
+measurement. Live economic receipts still require an explicitly captured native
+reference and FCC run.
 
 ## Failure Classes
 

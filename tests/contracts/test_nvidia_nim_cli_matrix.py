@@ -296,6 +296,76 @@ def test_compact_probe_accepts_claude_cli_compact_success_status(
     assert outcome.token_evidence["compact_result_success"] is True
 
 
+def test_auto_compact_probe_rejects_manual_boundary(tmp_path: Path) -> None:
+    marker = "FCC_AUTO_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p"),
+        returncode=0,
+        stdout=f'{marker}\n{{"type":"tool_result"}}',
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="muse-spark-1.2-contributor",
+        full_model="opencode_go/muse-spark-1.2-contributor",
+        source="live_p0",
+        feature="auto_compact_resume",
+        marker=marker,
+        run=run,
+        log_delta=(
+            'POST /v1/messages HTTP/1.1" 200 OK\n'
+            '"compact_boundary" "compact_metadata":{"trigger":"manual"}\n'
+            '"compact_result":"success"'
+        ),
+        log_path=tmp_path / "server.log",
+        requires_tool_result=True,
+        requires_compact=True,
+        requires_auto_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "model_feature_failure"
+    assert outcome.token_evidence["compact_trigger"] == "manual"
+    assert outcome.token_evidence["auto_compact"] is False
+
+
+def test_auto_compact_probe_requires_explicit_auto_boundary(tmp_path: Path) -> None:
+    marker = "FCC_AUTO_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p"),
+        returncode=0,
+        stdout=(
+            f'{marker}\n{{"type":"tool_result","content":"{marker}"}}\n'
+            '{"type":"system","subtype":"status",'
+            '"compact_result":"success"}'
+        ),
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="muse-spark-1.2-contributor",
+        full_model="opencode_go/muse-spark-1.2-contributor",
+        source="live_p0",
+        feature="auto_compact_resume",
+        marker=marker,
+        run=run,
+        log_delta=(
+            'POST /v1/messages HTTP/1.1" 200 OK\n'
+            '"type":"system","subtype":"compact_boundary",'
+            '"compact_metadata":{"trigger":"auto"}'
+        ),
+        log_path=tmp_path / "server.log",
+        requires_tool_result=True,
+        requires_compact=True,
+        requires_auto_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "passed"
+    assert outcome.token_evidence["compact_trigger"] == "auto"
+    assert outcome.token_evidence["auto_compact"] is True
+
+
 def test_nvidia_nim_cli_matrix_model_feature_failures_do_not_regress(
     tmp_path: Path,
 ) -> None:

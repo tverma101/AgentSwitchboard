@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The release head is version
-`4.30.6`; examples below describe this checkout, not every feature proposed in
+`4.30.7`; examples below describe this checkout, not every feature proposed in
 the open design backlog.
 
 ## What You Get
@@ -56,9 +56,9 @@ the open design backlog.
 
 | Status | Current scope |
 | --- | --- |
-| **Shipped and locally verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and hard text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and compact/resume proof. |
+| **Shipped and locally verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, compact/resume proof, and managed fresh/resume/fork policy inheritance. |
 | **Implemented but boundary-specific** | Image metadata validation with typed fail-fast behavior for non-vision providers, focused-window Appshot capture, optional learning/memory/skills, Codex/Pi launchers, and messaging integrations. These require their own client/provider permissions and are not part of the minimal Muse release claim. |
-| **Planned or design-only** | Full live reasoning-effort matrix, capability-aware helper execution, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
+| **Planned or design-only** | Capability-aware helper execution, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
 <div align="center">
   <img src="assets/pic.png" alt="Claude Code running with Free Claude Code" width="700">
@@ -194,12 +194,44 @@ one recovery copy before its first mutation. Remove only the managed block with
 `fcc-learning context-policy uninstall`. This is advisory guidance; the
 launcher context cap remains the actual client budget.
 
-The compact/resume claim is backed by the sanitized
-[Muse receipt](smoke/receipts/muse-auto-compact-2026-08-23.json). It records the
+Oversized text-only tool results are redirected to private local artifacts by
+the hard ingress governor. Retrieve a bounded follow-up slice from the
+terminal, without dumping the artifact back into the session:
+
+```bash
+fcc-learning context-artifact slice /path/from-the-locator.txt \
+  --start-line 1 --line-count 80 --max-bytes 16384
+```
+
+The compact/resume claim is backed by the current sanitized
+[Muse receipt](smoke/receipts/muse-auto-compact-2026-08-24.json). It records the
 literal Claude Code version, the effective 50K context window, an automatic
 compact boundary, a post-compact tool turn, resume success, and the OpenCode Go
 Responses route. The local debug trace and prompt content are intentionally not
 published.
+
+The managed-session inheritance slice is separately recorded in the sanitized
+[managed fresh/resume/fork receipt](smoke/receipts/claude-managed-resume-2026-08-24.json).
+It proves one fresh managed Claude task, one resume, and one forked continuation
+through FCC with the 256K policy. Background and subagent inheritance remain
+outside that receipt. That receipt also records Muse's current reasoning shape:
+opaque provider state and reasoning-token usage, with no fabricated visible
+summary or raw reasoning text.
+
+The reasoning effort matrix also covers Claude's `max` level. OpenCode Go's
+Responses protocol currently accepts `xhigh` as its highest wire value, so FCC
+translates only that provider request while receipts preserve both the client
+requested effort and the upstream effective effort.
+
+The five-level live matrix is recorded in the sanitized
+[reasoning receipt](smoke/receipts/claude-reasoning-effort-matrix-2026-08-24.json).
+
+The foreground Agent/subagent route is separately recorded in the sanitized
+[subagent receipt](smoke/receipts/claude-subagent-2026-08-24.json). Background
+self-spawn remains an explicit unverified surface; the current observed
+[background-session receipt](smoke/receipts/claude-background-session-2026-08-24.json)
+shows Claude 2.1.228 returning a handle and then disappearing before FCC saw a
+request.
 
 ### Inspect usage and model labels
 
@@ -334,7 +366,10 @@ Set `REASONING_POLICY` and its optional tier overrides in `~/.fcc/.env`.
 | **Low**, **Medium**, **High**, **X-High**, or **Max** | Override the client with the selected reasoning level. |
 | **Inherit** (Fable, Opus, Sonnet, and Haiku only) | Use the root Reasoning selection. |
 
-Providers that do not support a selected control retain their own behavior.
+Provider adapters translate a selected control to the highest documented wire
+value when a provider uses a smaller vocabulary. OpenCode Go accepts `xhigh`
+but not `max`; FCC preserves the client request as `max` and records the
+upstream effective value as `xhigh`.
 
 </details>
 
@@ -394,7 +429,7 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
   { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" },
   { "name": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "value": "1" },
-  { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" },
+  { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "256000" },
   { "name": "DISABLE_AUTOUPDATER", "value": "1" },
   { "name": "DISABLE_FEEDBACK_COMMAND", "value": "1" },
   { "name": "DISABLE_ERROR_REPORTING", "value": "1" }
@@ -484,7 +519,7 @@ Set the environment for `acp.registry.claude-acp`:
   "ANTHROPIC_BASE_URL": "http://localhost:8082",
   "ANTHROPIC_AUTH_TOKEN": "freecc",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
-  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "256000",
   "DISABLE_AUTOUPDATER": "1",
   "DISABLE_FEEDBACK_COMMAND": "1",
   "DISABLE_ERROR_REPORTING": "1"

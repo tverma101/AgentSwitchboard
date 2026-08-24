@@ -640,10 +640,17 @@ async def test_runtime_refresh_model_list_cache_keeps_prior_cache_on_failure() -
 
 def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
     cache = ProviderModelCache()
+    reasoning = ReasoningCapabilityEvidence(
+        status=ReasoningCapabilityStatus.SUPPORTED,
+        effort_evidence=(("high", ReasoningCapabilityStatus.SUPPORTED),),
+        evidence_source="deterministic_fixture",
+    )
     cache.cache_model_infos(
         "open_router",
         {
-            ProviderModelInfo("reasoning-model", supports_thinking=True),
+            ProviderModelInfo(
+                "reasoning-model", supports_thinking=True, reasoning=reasoning
+            ),
             ProviderModelInfo("plain-model", supports_thinking=False),
         },
     )
@@ -660,7 +667,11 @@ def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
     assert plain_info.supports_thinking is False
     assert cache.cached_prefixed_model_infos() == (
         ProviderModelInfo("open_router/plain-model", supports_thinking=False),
-        ProviderModelInfo("open_router/reasoning-model", supports_thinking=True),
+        ProviderModelInfo(
+            "open_router/reasoning-model",
+            supports_thinking=True,
+            reasoning=reasoning,
+        ),
     )
 
 

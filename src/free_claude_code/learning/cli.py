@@ -6,8 +6,15 @@ import os
 import shutil
 import sys
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
+
+from free_claude_code.core.anthropic.context_artifact import (
+    ContextArtifactError,
+    read_context_artifact_slice,
+)
 from free_claude_code.core.claude_compatibility import (
     default_process_wrapper_path,
     inspect_claude_compatibility,
@@ -67,6 +74,19 @@ def _parser() -> argparse.ArgumentParser:
     policy_commands.add_parser("install", help="install or update the managed block")
     policy_commands.add_parser("uninstall", help="remove only the managed block")
     policy_commands.add_parser("status", help="show the policy path and digest")
+
+    artifact = subcommands.add_parser(
+        "context-artifact",
+        help="retrieve a bounded slice from a governed local tool-result artifact",
+    )
+    artifact_commands = artifact.add_subparsers(dest="artifact_command", required=True)
+    artifact_slice = artifact_commands.add_parser(
+        "slice", help="read a bounded line/byte slice"
+    )
+    artifact_slice.add_argument("path")
+    artifact_slice.add_argument("--start-line", type=int, default=1)
+    artifact_slice.add_argument("--line-count", type=int, default=80)
+    artifact_slice.add_argument("--max-bytes", type=int, default=16 * 1024)
 
     memory = subcommands.add_parser("memory", help="inspect or edit durable memories")
     memory_commands = memory.add_subparsers(dest="memory_command", required=True)
@@ -178,6 +198,22 @@ def _skill_command(args: argparse.Namespace, store: LearningStore) -> None:
         )
 
 
+def _context_artifact_root() -> str:
+    configured = os.environ.get("FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR", "").strip()
+    if not configured:
+        env_files = [Path(".env"), Path.home() / ".fcc" / ".env"]
+        if explicit := os.environ.get("FCC_ENV_FILE"):
+            env_files.append(Path(explicit).expanduser())
+        for env_file in env_files:
+            try:
+                value = dotenv_values(env_file).get("FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR")
+            except OSError:
+                continue
+            if isinstance(value, str) and value.strip():
+                configured = value.strip()
+    return configured or str(Path.home() / ".fcc" / "context-artifacts")
+
+
 def main() -> None:
     args = _parser().parse_args()
     if args.command == "install":
@@ -197,6 +233,19 @@ def main() -> None:
             print(json.dumps({"changed": changed, **context_policy_status()}))
         else:
             print(json.dumps(context_policy_status(), indent=2))
+        return
+    if args.command == "context-artifact":
+        try:
+            result = read_context_artifact_slice(
+                args.path,
+                root=_context_artifact_root(),
+                start_line=args.start_line,
+                line_count=args.line_count,
+                max_bytes=args.max_bytes,
+            )
+        except ContextArtifactError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result.as_response(), ensure_ascii=False, indent=2))
         return
     if args.command == "claude-compat":
         binary = args.binary or shutil.which("claude")

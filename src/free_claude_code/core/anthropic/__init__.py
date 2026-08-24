@@ -1,6 +1,11 @@
 """Anthropic protocol helpers shared across API, providers, and integrations."""
 
 from .content import extract_text_from_content, get_block_attr, get_block_type
+from .context_artifact import (
+    ContextArtifactError,
+    ContextArtifactSlice,
+    read_context_artifact_slice,
+)
 from .context_governor import (
     ContextGovernanceError,
     ContextGovernanceRecord,
@@ -73,6 +78,8 @@ __all__ = [
     "ContentBlockWebSearchToolResult",
     "ContentChunk",
     "ContentType",
+    "ContextArtifactError",
+    "ContextArtifactSlice",
     "ContextGovernanceError",
     "ContextGovernanceRecord",
     "ContextGovernorConfig",
@@ -109,6 +116,7 @@ __all__ = [
     "govern_messages_request",
     "is_synthetic_openai_tool_turn_boundary",
     "map_stop_reason",
+    "read_context_artifact_slice",
     "serialize_tool_result_content",
     "set_if_not_none",
 ]

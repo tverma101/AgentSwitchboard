@@ -132,7 +132,9 @@ def validate_compaction_continuity(
         "tool_call_ids_preserved": before.tool_call_ids == after.tool_call_ids,
         "tool_result_ids_preserved": before.tool_result_ids == after.tool_result_ids,
         "committed_tools_not_replayed": (
-            len(after.tool_call_ids) == len(set(after.tool_call_ids))
+            before.committed_tool_ids == after.committed_tool_ids
+            and len(before.committed_tool_ids) == len(set(before.committed_tool_ids))
+            and len(after.tool_call_ids) == len(set(after.tool_call_ids))
             and len(after.committed_tool_ids) == len(set(after.committed_tool_ids))
             and set(after.committed_tool_ids).issubset(set(after.tool_call_ids))
         ),

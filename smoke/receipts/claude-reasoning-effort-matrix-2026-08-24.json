@@ -1,0 +1,59 @@
+{
+  "receipt": "claude-reasoning-effort-matrix",
+  "captured_at": "2026-08-24T06:04:03Z",
+  "claude": {
+    "launcher": "claude",
+    "version": "2.1.228"
+  },
+  "harness": {
+    "package_version": "4.30.7",
+    "isolated_server": "loopback-isolated",
+    "active_user_server_8082_touched": false
+  },
+  "matrix": {
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses",
+    "efforts": ["low", "medium", "high", "xhigh", "max"],
+    "all_returncodes": [0, 0, 0, 0, 0],
+    "all_markers_present": true,
+    "all_requests_completed": true,
+    "fcc_messages_requests_observed_per_effort": 3,
+    "upstream_attempts_per_effort": 1
+  },
+  "reasoning": [
+    {
+      "requested": "low",
+      "effective": "low",
+      "provider_reasoning_tokens": 38
+    },
+    {
+      "requested": "medium",
+      "effective": "medium",
+      "provider_reasoning_tokens": 194
+    },
+    {
+      "requested": "high",
+      "effective": "high",
+      "provider_reasoning_tokens": 65
+    },
+    {
+      "requested": "xhigh",
+      "effective": "xhigh",
+      "provider_reasoning_tokens": 84
+    },
+    {
+      "requested": "max",
+      "effective": "xhigh",
+      "provider_reasoning_tokens": 159
+    }
+  ],
+  "translation": {
+    "requested_max_wire_value": "xhigh",
+    "reason": "OpenCode Go Responses accepts xhigh as its highest reasoning variant; FCC preserves requested=max in the receipt."
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_reasoning_effort_matrix_when_requested",
+    "retained_content": "metadata-only receipt; sensitive payloads omitted"
+  }
+}
