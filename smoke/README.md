@@ -156,24 +156,30 @@ locked.
 
 ## OpenCode Go economic receipts
 
-Use the evaluator for redacted JSONL receipts captured from the native OpenCode
-reference and FCC bridge. The first line of each receipt should contain
-`{"_receipt":{"commit_sha":"...","model":"...","protocol":"..."}}`;
-remaining rows contain disjoint `uncached_input_tokens`, `cache_read_tokens`,
-`cache_write_tokens`, and `output_tokens` plus optional attempt and stable-prefix
-hash fields:
+Use the evaluator for metadata-only JSONL receipts captured from the native
+OpenCode reference and Harness bridge. Each receipt has exactly one `_receipt`
+line with `schema`, `commit_sha`, `model`, `protocol`, `fixture`,
+`implementation` (`native` or `harness`), and `evidence` (`synthetic-only` or
+`live`). Usage rows contain only disjoint token buckets, retry/attempt counts,
+logical request IDs, and lowercase SHA-256 `stable_prefix_hash`,
+`request_shape_hash`, and optional `tool_schema_hash` values. Raw prompts,
+messages, tool arguments/results, responses, and other content fields are
+rejected.
 
 ```powershell
-uv run python smoke/opencode_go_economics.py --native native.jsonl --fcc fcc.jsonl
+uv run python smoke/opencode_go_economics.py --native native.jsonl --harness harness.jsonl
 ```
 
 The evaluator applies the source-stamped fixture at
 [`smoke/fixtures/opencode_go_pricing.json`](fixtures/opencode_go_pricing.json),
-reports cache share, token amplification, retry amplification, prefix-match
-rate, and estimated cost regression, and exits nonzero when the default 98%
-cache-read or 5% cost-regression gates fail. It never stores or requires prompt
-content. Native-reference and live Go receipts remain opt-in human-supplied
-artifacts; deterministic unit tests cover the bridge-side serialization guard.
+reports native/Harness cache-share gap, token and retry amplification,
+stable-prefix/request/tool-envelope match rates, and estimated cost regression.
+The default gates are a maximum 3 percentage-point Harness cache-share deficit,
+5% cost regression, and 0.02 retry-amplification increase relative to native.
+The checked-in sample receipts are explicitly `synthetic-only`; a `live` label
+is reserved for human-supplied captures and is not implied by unit tests or
+synthetic fixtures. `--fcc` remains accepted as a compatibility alias for
+`--harness`.
 
 ## Failure Classes
 
