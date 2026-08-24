@@ -103,6 +103,7 @@ def run_claude_cli(
     resume_session_id: str | None = None,
     no_session_persistence: bool = True,
     context_cap_tokens: int | None = None,
+    prompt_in_stdin: bool = False,
 ) -> ClaudeCliRun:
     """Run Claude Code CLI against the local smoke proxy."""
     cwd.mkdir(parents=True, exist_ok=True)
@@ -118,6 +119,7 @@ def run_claude_cli(
             session_id=session_id,
             resume_session_id=resume_session_id,
             no_session_persistence=no_session_persistence,
+            prompt_in_stdin=prompt_in_stdin,
         )
     )
 
@@ -140,6 +142,7 @@ def run_claude_cli(
             cmd,
             cwd=cwd,
             env=env,
+            input_text=prompt if prompt_in_stdin else None,
             timeout=config.timeout_s,
             check=False,
         )
@@ -177,6 +180,7 @@ def _build_claude_cli_command(
     session_id: str | None = None,
     resume_session_id: str | None = None,
     no_session_persistence: bool = True,
+    prompt_in_stdin: bool = False,
 ) -> tuple[str, ...]:
     cmd: list[str] = [claude_bin]
     if bare:
@@ -206,7 +210,7 @@ def _build_claude_cli_command(
         if tools:
             cmd.extend(["--allowedTools", tools])
     cmd.extend(extra_args)
-    cmd.extend(["-p", prompt])
+    cmd.extend(["-p"] if prompt_in_stdin else ["-p", prompt])
     return tuple(cmd)
 
 
@@ -280,6 +284,9 @@ def token_evidence(
         "run_in_background_false": "run_in_background" in combined and "false" in lower,
         "compact_boundary": "compact_boundary" in combined,
         "compact_metadata": "compact_metadata" in combined,
+        "compact_result_success": bool(
+            re.search(r'"compact_result"\s*:\s*"success"', combined)
+        ),
         "requested_context_tokens": run.requested_context_tokens,
         "effective_context_tokens": run.effective_context_tokens,
         "http_422": 'HTTP/1.1" 422' in combined,
@@ -324,8 +331,12 @@ def classify_probe(
         and "run_in_background" in combined
         and "false" in lower
     )
-    compact_ok = not requires_compact or (
-        "compact_boundary" in combined or "compact_metadata" in combined
+    compact_ok = not requires_compact or any(
+        (
+            "compact_boundary" in combined,
+            "compact_metadata" in combined,
+            bool(re.search(r'"compact_result"\s*:\s*"success"', combined)),
+        )
     )
     continuation_ok = not requires_continuation or marker in combined
     cli_ok = run.returncode == 0
@@ -618,19 +629,34 @@ def _compact_command(
     continuation_marker = _marker(marker_prefix, "COMPACT_CONTINUED")
     workspace = model_dir / "compact_command"
     session_id = str(uuid.uuid4())
+    context_seed = "context " * 7_000
     offset = read_log_offset(server.log_path)
-    first = run_claude_cli(
-        claude_bin=claude_bin,
-        server=server,
-        config=smoke_config,
-        cwd=workspace,
-        prompt=f"Remember this smoke token: {marker}. Reply with exactly {marker}.",
-        tools="",
-        session_id=session_id,
-        no_session_persistence=False,
-        context_cap_tokens=50_000,
+    seed_prompts = (
+        f"Remember this smoke token: {marker}. Reply with exactly {marker} "
+        "after retaining the following bounded context seed.\n"
+        f"{context_seed}",
+        f"Retain the earlier smoke token {marker} and reply with exactly "
+        f"{marker}_GROUP_2 after this bounded context seed.\n{context_seed}",
+        f"Retain the earlier smoke token {marker} and reply with exactly "
+        f"{marker}_GROUP_3 after this bounded context seed.\n{context_seed}",
     )
-    second = run_claude_cli(
+    seed_runs = [
+        run_claude_cli(
+            claude_bin=claude_bin,
+            server=server,
+            config=smoke_config,
+            cwd=workspace,
+            prompt=prompt,
+            tools="",
+            session_id=session_id if index == 0 else None,
+            resume_session_id=session_id if index else None,
+            no_session_persistence=False,
+            context_cap_tokens=50_000,
+            prompt_in_stdin=True,
+        )
+        for index, prompt in enumerate(seed_prompts)
+    ]
+    compact_run = run_claude_cli(
         claude_bin=claude_bin,
         server=server,
         config=smoke_config,
@@ -641,7 +667,7 @@ def _compact_command(
         no_session_persistence=False,
         context_cap_tokens=50_000,
     )
-    third = run_claude_cli(
+    continuation_run = run_claude_cli(
         claude_bin=claude_bin,
         server=server,
         config=smoke_config,
@@ -655,18 +681,21 @@ def _compact_command(
         no_session_persistence=False,
         context_cap_tokens=50_000,
     )
+    runs = [*seed_runs, compact_run, continuation_run]
+    command: list[str] = []
+    for item in runs:
+        if command:
+            command.append("&&")
+        command.extend(item.command)
+    returncode = next((item.returncode for item in runs if item.returncode != 0), 0)
     log_delta = read_log_delta(server.log_path, offset)
     run = ClaudeCliRun(
-        command=(*first.command, "&&", *second.command, "&&", *third.command),
-        returncode=(
-            third.returncode
-            if first.returncode == 0 and second.returncode == 0
-            else (first.returncode if first.returncode != 0 else second.returncode)
-        ),
-        stdout=f"{first.stdout}\n{second.stdout}\n{third.stdout}",
-        stderr=f"{first.stderr}\n{second.stderr}\n{third.stderr}",
-        duration_s=first.duration_s + second.duration_s + third.duration_s,
-        timed_out=first.timed_out or second.timed_out or third.timed_out,
+        command=tuple(command),
+        returncode=returncode,
+        stdout="\n".join(item.stdout for item in runs),
+        stderr="\n".join(item.stderr for item in runs),
+        duration_s=sum(item.duration_s for item in runs),
+        timed_out=any(item.timed_out for item in runs),
         requested_context_tokens=50_000,
         effective_context_tokens=50_000,
     )

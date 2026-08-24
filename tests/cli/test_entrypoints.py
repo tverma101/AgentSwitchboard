@@ -89,6 +89,7 @@ def test_cli_scripts_are_registered() -> None:
     assert pyproject["project"]["scripts"] == {
         "fcc-server": "free_claude_code.cli.entrypoints:serve",
         "fcc-claude": "free_claude_code.cli.launchers.claude:launch",
+        "fccdanger": "free_claude_code.cli.launchers.claude:launch_danger",
         "fcc-codex": "free_claude_code.cli.launchers.codex:launch",
         "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
         "fcc-learning": "free_claude_code.learning.cli:main",
@@ -562,6 +563,19 @@ def test_launch_claude_refuses_settings_env_routing_override(
 
     assert exc_info.value.code == 2
     popen.assert_not_called()
+
+
+def test_launch_danger_adds_skip_permissions_once() -> None:
+    from free_claude_code.cli.launchers import claude
+
+    with patch.object(claude, "launch") as launch:
+        claude.launch_danger(("--model", "sonnet"))
+        claude.launch_danger(("--dangerously-skip-permissions", "--model", "sonnet"))
+
+    assert [entry.args[0] for entry in launch.call_args_list] == [
+        ["--dangerously-skip-permissions", "--model", "sonnet"],
+        ["--dangerously-skip-permissions", "--model", "sonnet"],
+    ]
 
 
 def test_launch_claude_allows_unrelated_settings_env_keys(

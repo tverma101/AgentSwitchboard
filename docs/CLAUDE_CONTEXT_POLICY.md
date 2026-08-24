@@ -48,5 +48,9 @@ different location. The status command reports only the path, policy version,
 backup presence, and SHA-256 digests; it does not print instruction contents.
 
 This leash is advisory: it guides the client toward bounded reads, summaries,
-and reuse of observations. It does not replace a future runtime tool-result
-governor or literal-client compaction proof.
+and reuse of observations. The live CLI compaction probe uses several bounded
+stdin-fed conversation groups before `/compact`, because Claude cannot compact
+a single oversized message. It requires Claude's actual successful compact
+status/boundary and a resumed continuation marker; the FCC cap in that probe is
+50,000 tokens. The leash does not replace a future runtime tool-result
+governor.

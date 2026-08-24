@@ -19,4 +19,6 @@ this fork's startup contract.
 
 The local HTTP Admin API remains an implementation surface for explicitly
 scripted local tooling. It is never opened automatically by FCC. Normal agent
-work stays in the terminal through `fcc-claude`, `fcc-codex`, or `fcc-pi`.
+work stays in the terminal through `fcc-claude`, `fccdanger`, `fcc-codex`, or
+`fcc-pi`. `fccdanger` is the personal-fork convenience alias that adds
+`--dangerously-skip-permissions` while retaining FCC routing.

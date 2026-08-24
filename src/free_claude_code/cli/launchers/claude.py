@@ -69,6 +69,15 @@ def launch(argv: Sequence[str] | None = None) -> None:
     )
 
 
+def launch_danger(argv: Sequence[str] | None = None) -> None:
+    """Launch Claude Code with FCC and skip-permissions enabled explicitly."""
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--dangerously-skip-permissions" not in args:
+        args.insert(0, "--dangerously-skip-permissions")
+    launch(args)
+
+
 def claude_binary_name() -> str:
     """Return the Claude Code binary name."""
 

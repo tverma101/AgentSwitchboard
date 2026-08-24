@@ -232,6 +232,7 @@ def test_compact_probe_requires_boundary_event_and_continuation_marker(
     assert outcome.classification == "passed"
     assert outcome.token_evidence["compact_boundary"] is True
     assert outcome.token_evidence["compact_metadata"] is True
+    assert outcome.token_evidence["compact_result_success"] is False
     assert outcome.token_evidence["requested_context_tokens"] == 50_000
     assert outcome.token_evidence["effective_context_tokens"] == 50_000
 
@@ -258,6 +259,39 @@ def test_compact_probe_does_not_pass_on_command_text_alone(tmp_path: Path) -> No
     )
 
     assert outcome.classification == "model_feature_failure"
+
+
+def test_compact_probe_accepts_claude_cli_compact_success_status(
+    tmp_path: Path,
+) -> None:
+    marker = "FCC_COMPACT_CONTINUED"
+    run = ClaudeCliRun(
+        command=("claude", "-p"),
+        returncode=0,
+        stdout=(
+            '{"type":"system","subtype":"status","status":"compacting"}\n'
+            '{"type":"system","subtype":"status",'
+            '"compact_result":"success"}\n'
+            f"{marker}"
+        ),
+        stderr="",
+        duration_s=0.1,
+    )
+    outcome = make_outcome(
+        model="muse-spark-1.2-contributor",
+        full_model="opencode_go/muse-spark-1.2-contributor",
+        source="live_p0",
+        feature="compact_resume",
+        marker=marker,
+        run=run,
+        log_delta='POST /v1/messages HTTP/1.1" 200 OK',
+        log_path=tmp_path / "server.log",
+        requires_compact=True,
+        requires_continuation=True,
+    )
+
+    assert outcome.classification == "passed"
+    assert outcome.token_evidence["compact_result_success"] is True
 
 
 def test_nvidia_nim_cli_matrix_model_feature_failures_do_not_regress(
@@ -593,6 +627,18 @@ def test_cli_matrix_default_command_uses_bare_mode() -> None:
     assert command[:2] == ("claude", "--bare")
     assert "--tools" in command
     assert "Read" in command
+
+
+def test_cli_matrix_can_send_prompt_through_stdin() -> None:
+    command = _build_claude_cli_command(
+        claude_bin="claude",
+        prompt="large prompt omitted from argv",
+        tools="",
+        prompt_in_stdin=True,
+    )
+
+    assert command[-1:] == ("-p",)
+    assert "large prompt omitted from argv" not in command
 
 
 def test_cli_matrix_subagent_command_uses_agent_without_bare_or_task() -> None:

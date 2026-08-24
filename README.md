@@ -129,6 +129,16 @@ Claude Code:
 fcc-claude
 ```
 
+For this personal fork's terminal-only, skip-permissions workflow:
+
+```bash
+fccdanger
+```
+
+`fccdanger` is only a convenience alias for `fcc-claude` that adds
+`--dangerously-skip-permissions`; it still uses the FCC proxy and never opens a
+browser or starts a second server.
+
 Codex:
 
 ```bash
@@ -311,7 +321,7 @@ Providers that do not support a selected control retain their own behavior.
 
 ## Connect Your Client
 
-For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
+For terminal use, start `fcc-server`, then run `fcc-claude`, `fccdanger`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
 
 FCC owns Claude's gateway routing. Do not set `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` in any active Claude settings
