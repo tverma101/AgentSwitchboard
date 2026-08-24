@@ -126,6 +126,25 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
 
 
 @pytest.mark.asyncio
+async def test_messages_handler_keeps_session_affinity_metadata_internal() -> None:
+    provider = FakeProvider()
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        stream=True,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    response = await handler.create(request, claude_session_id="session_stable")
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
+
+    routed = provider.requests[0]
+    assert routed.claude_session_id == "session_stable"
+    assert "claude_session_id" not in routed.model_dump()
+
+
+@pytest.mark.asyncio
 async def test_messages_handler_governs_large_tool_result_before_provider() -> None:
     provider = FakeProvider()
     settings = Settings().model_copy(

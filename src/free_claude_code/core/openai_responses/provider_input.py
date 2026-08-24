@@ -24,6 +24,7 @@ def build_responses_provider_request(
     request: MessagesRequest,
     *,
     reasoning: ReasoningPolicy,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, Any]:
     """Build a stateless Responses request without silently dropping fields."""
 
@@ -59,6 +60,12 @@ def build_responses_provider_request(
         "store": False,
         "include": ["reasoning.encrypted_content"],
     }
+    if cache_key := _select_prompt_cache_key(
+        explicit=request.prompt_cache_key,
+        session=prompt_cache_key or request.claude_session_id,
+        metadata=request.metadata,
+    ):
+        body["prompt_cache_key"] = cache_key
     if instructions:
         body["instructions"] = "\n\n".join(instructions)
     if request.max_tokens is not None:
@@ -88,6 +95,36 @@ def build_responses_provider_request(
     ):
         body["reasoning"] = reasoning_config
     return body
+
+
+def _select_prompt_cache_key(
+    *,
+    explicit: str | None,
+    session: str | None,
+    metadata: dict[str, Any] | None,
+) -> str | None:
+    """Choose a stable Responses affinity key without touching prompt input.
+
+    A caller-supplied key wins.  The session/header key is the normal Claude
+    Code path, and ``metadata.user_id`` is only a compatibility fallback for
+    clients that cannot forward a session header.  Invalid/non-string values
+    are ignored instead of becoming unstable cache identity.
+    """
+
+    for candidate in (explicit, session, _metadata_user_id(metadata)):
+        if not isinstance(candidate, str):
+            continue
+        normalized = candidate.strip()
+        if normalized and len(normalized) <= 512 and "\n" not in normalized:
+            return normalized
+    return None
+
+
+def _metadata_user_id(metadata: dict[str, Any] | None) -> str | None:
+    if metadata is None:
+        return None
+    user_id = metadata.get("user_id")
+    return user_id if isinstance(user_id, str) else None
 
 
 def _validate_supported_request(request: MessagesRequest) -> None:

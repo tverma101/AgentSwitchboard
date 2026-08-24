@@ -402,6 +402,7 @@ class OpenCodeGoProvider(BaseProvider):
             return build_responses_provider_request(
                 request,
                 reasoning=_translate_responses_reasoning(reasoning),
+                prompt_cache_key=request.claude_session_id,
             )
         except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc

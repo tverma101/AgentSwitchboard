@@ -6,7 +6,11 @@ from loguru import logger
 
 from free_claude_code.application.errors import UnknownProviderError
 from free_claude_code.config.model_aliases import parse_model_aliases
-from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
+from free_claude_code.config.model_refs import (
+    normalize_model_ref,
+    parse_model_name,
+    parse_provider_type,
+)
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
@@ -34,6 +38,7 @@ class ResolvedModel:
     provider_model: str
     provider_model_ref: str
     reasoning_preference: ReasoningPreference
+    virtual_context_window: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +65,9 @@ class ModelRouter:
 
     def resolve(self, claude_model_name: str) -> ResolvedModel:
         requested_model = self._model_aliases.resolve_if_configured(claude_model_name)
+        normalized_requested = normalize_model_ref(requested_model)
+        requested_model = normalized_requested.model_ref
+        virtual_context_window = normalized_requested.virtual_context_window
         (
             direct_provider_id,
             direct_provider_model,
@@ -84,9 +92,13 @@ class ModelRouter:
                 provider_model=direct_provider_model,
                 provider_model_ref=requested_model,
                 reasoning_preference=reasoning_preference,
+                virtual_context_window=virtual_context_window,
             )
 
-        provider_model_ref = self._resolve_model_ref(requested_model)
+        configured_model = normalize_model_ref(self._resolve_model_ref(requested_model))
+        provider_model_ref = configured_model.model_ref
+        if virtual_context_window is None:
+            virtual_context_window = configured_model.virtual_context_window
         reasoning_preference = self._resolve_reasoning_preference(claude_model_name)
         provider_id = parse_provider_type(provider_model_ref)
         self._validate_provider_id(provider_id)
@@ -101,6 +113,7 @@ class ModelRouter:
             provider_model=provider_model,
             provider_model_ref=provider_model_ref,
             reasoning_preference=reasoning_preference,
+            virtual_context_window=virtual_context_window,
         )
 
     @staticmethod

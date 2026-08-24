@@ -9,6 +9,7 @@ from loguru import logger
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.core.trace import (
     TRACE_PAYLOAD_BINDING,
+    extract_claude_session_id_from_headers,
     trace_event,
     traced_async_stream,
 )
@@ -124,6 +125,16 @@ def test_sanitize_masks_image_data_urls_and_base64_sources() -> None:
         }
     )
     assert encoded not in str(snapshot)
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["x-claude-code-session-id", "x-claude-session-id", "anthropic-session-id"],
+)
+def test_extract_claude_session_id_accepts_client_session_headers(header: str) -> None:
+    assert extract_claude_session_id_from_headers({header: "session_stable"}) == (
+        "session_stable"
+    )
 
 
 @pytest.mark.asyncio

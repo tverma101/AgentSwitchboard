@@ -105,7 +105,11 @@ class MessagesHandler:
         )
 
     async def create(
-        self, request_data: MessagesRequest, *, request_id: str | None = None
+        self,
+        request_data: MessagesRequest,
+        *,
+        request_id: str | None = None,
+        claude_session_id: str | None = None,
     ) -> object:
         """Create an Anthropic-compatible message response."""
         request_id = request_id or new_request_id()
@@ -115,6 +119,10 @@ class MessagesHandler:
                 self._settings,
                 request_id=request_id,
             )
+            if claude_session_id:
+                request_data = request_data.model_copy(
+                    update={"claude_session_id": claude_session_id}
+                )
             require_non_empty_messages(request_data.messages)
             routed = self._model_router.resolve_messages_request(request_data)
             routed = self._apply_message_routing_policies(routed)

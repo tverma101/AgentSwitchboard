@@ -15,6 +15,7 @@ boundaries explicit so design notes are not mistaken for release guarantees.
 | [Learning, memory, and skills](CLAUDE_LEARNING.md) | Hook lifecycle, local state, safety rails, and CLI controls | Current; optional integration |
 | [Terminal-only startup](ADMIN_TERMINAL_BROWSER.md) | `fcc-server` lifecycle and the no-browser contract | Current personal-fork policy |
 | [Smoke and receipt guide](../smoke/README.md) | Deterministic and opt-in live validation, receipt schemas, and evidence limits | Current validation guide |
+| [Upstream regression watch](UPSTREAM_REGRESSION_WATCH.md) | Bounded provenance registry for promoted external edge cases | Current manual registry; no hot-path polling |
 
 The maintainer architecture map is [ARCHITECTURE.md](../ARCHITECTURE.md). It
 describes package ownership and extension boundaries, not a promise that every

@@ -13,7 +13,10 @@ from free_claude_code.core.anthropic import (
     get_token_count,
 )
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
-from free_claude_code.core.trace import trace_event
+from free_claude_code.core.trace import (
+    extract_claude_session_id_from_headers,
+    trace_event,
+)
 
 from .dependencies import (
     get_services,
@@ -40,6 +43,7 @@ async def _create_messages_response(
     request_data: MessagesRequest,
     *,
     request_id: str,
+    claude_session_id: str | None = None,
 ) -> object:
     lease: RequestRuntimeLease | None = None
     try:
@@ -52,7 +56,11 @@ async def _create_messages_response(
             usage_store=services.usage,
             model_info_resolver=services.requests.cached_model_info,
         )
-        response = await handler.create(request_data, request_id=request_id)
+        response = await handler.create(
+            request_data,
+            request_id=request_id,
+            claude_session_id=claude_session_id,
+        )
     except ApplicationError as exc:
         if lease is not None:
             await lease.release()
@@ -74,6 +82,7 @@ async def _create_responses_response(
     request_data: OpenAIResponsesRequest,
     *,
     request_id: str,
+    claude_session_id: str | None = None,
 ) -> object:
     lease: RequestRuntimeLease | None = None
     try:
@@ -85,7 +94,11 @@ async def _create_responses_response(
             usage_store=services.usage,
             model_info_resolver=services.requests.cached_model_info,
         )
-        response = await handler.create(request_data, request_id=request_id)
+        response = await handler.create(
+            request_data,
+            request_id=request_id,
+            claude_session_id=claude_session_id,
+        )
     except ApplicationError as exc:
         if lease is not None:
             await lease.release()
@@ -118,6 +131,7 @@ async def create_message(
         services,
         request_data,
         request_id=get_request_id(request),
+        claude_session_id=extract_claude_session_id_from_headers(request.headers),
     )
 
 
@@ -138,6 +152,7 @@ async def create_response(
         services,
         request_data,
         request_id=get_request_id(request),
+        claude_session_id=extract_claude_session_id_from_headers(request.headers),
     )
 
 

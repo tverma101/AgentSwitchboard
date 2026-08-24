@@ -67,7 +67,11 @@ class ResponsesHandler:
         )
 
     async def create(
-        self, request_data: OpenAIResponsesRequest, *, request_id: str | None = None
+        self,
+        request_data: OpenAIResponsesRequest,
+        *,
+        request_id: str | None = None,
+        claude_session_id: str | None = None,
     ) -> object:
         """Create a streaming OpenAI Responses-compatible response."""
         request_id = request_id or new_request_id()
@@ -86,6 +90,10 @@ class ResponsesHandler:
                 self._settings,
                 request_id=request_id,
             )
+            if claude_session_id:
+                response_request = response_request.model_copy(
+                    update={"claude_session_id": claude_session_id}
+                )
             request_payload = response_request.model_dump(
                 mode="json", exclude_none=True
             )

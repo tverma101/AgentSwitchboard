@@ -113,6 +113,67 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
     }
 
 
+def test_responses_prompt_cache_key_prefers_explicit_caller_value() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "prompt_cache_key": "caller-key",
+            "claude_session_id": "header-key",
+            "metadata": {"user_id": "metadata-key"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+        prompt_cache_key="parameter-key",
+    )
+
+    assert body["prompt_cache_key"] == "caller-key"
+
+
+def test_responses_prompt_cache_key_uses_session_then_metadata_fallback() -> None:
+    session_request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "claude_session_id": "header-key",
+            "metadata": {"user_id": "metadata-key"},
+        }
+    )
+    session_body = build_responses_provider_request(
+        session_request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+    assert session_body["prompt_cache_key"] == "header-key"
+
+    metadata_request = session_request.model_copy(update={"claude_session_id": None})
+    metadata_body = build_responses_provider_request(
+        metadata_request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+    assert metadata_body["prompt_cache_key"] == "metadata-key"
+
+
+def test_responses_prompt_cache_key_ignores_unsafe_candidates() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "claude_session_id": "bad\nkey",
+            "metadata": {"user_id": "fallback-key"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["prompt_cache_key"] == "fallback-key"
+
+
 def test_build_responses_provider_request_accepts_claude_client_controls() -> None:
     request = MessagesRequest.model_validate(
         {
