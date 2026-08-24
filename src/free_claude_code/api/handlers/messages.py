@@ -31,6 +31,10 @@ from free_claude_code.api.web_tools.request import (
     unsupported_server_tool_error,
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.context_governance import (
+    ContextGovernanceError,
+    apply_context_governor,
+)
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.model_metadata import ProviderModelInfo
@@ -106,6 +110,11 @@ class MessagesHandler:
         """Create an Anthropic-compatible message response."""
         request_id = request_id or new_request_id()
         try:
+            request_data = apply_context_governor(
+                request_data,
+                self._settings,
+                request_id=request_id,
+            )
             require_non_empty_messages(request_data.messages)
             routed = self._model_router.resolve_messages_request(request_data)
             routed = self._apply_message_routing_policies(routed)
@@ -139,6 +148,8 @@ class MessagesHandler:
             )
         except ApplicationError:
             raise
+        except ContextGovernanceError as exc:
+            raise InvalidRequestError(str(exc)) from exc
         except ExecutionFailure as exc:
             return self._execution_failure_response(exc, request_id=request_id)
         except Exception as exc:

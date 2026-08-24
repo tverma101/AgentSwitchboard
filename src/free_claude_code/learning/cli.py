@@ -3,9 +3,15 @@
 import argparse
 import json
 import os
+import shutil
 import sys
 from collections.abc import Iterable
 from typing import Any
+
+from free_claude_code.cli.claude_firewall import (
+    default_process_wrapper_path,
+    inspect_claude_compatibility,
+)
 
 from .context_policy import (
     context_policy_status,
@@ -43,6 +49,15 @@ def _parser() -> argparse.ArgumentParser:
     subcommands.add_parser("install", help="merge FCC Learning hooks into Claude Code")
     subcommands.add_parser("uninstall", help="remove only FCC Learning hooks")
     subcommands.add_parser("status", help="show local learning state")
+
+    compatibility = subcommands.add_parser(
+        "claude-compat",
+        help="inspect the installed Claude Code compatibility firewall state",
+    )
+    compatibility.add_argument(
+        "--binary",
+        help="explicit Claude executable path; defaults to the first claude on PATH",
+    )
 
     policy = subcommands.add_parser(
         "context-policy",
@@ -182,6 +197,27 @@ def main() -> None:
             print(json.dumps({"changed": changed, **context_policy_status()}))
         else:
             print(json.dumps(context_policy_status(), indent=2))
+        return
+    if args.command == "claude-compat":
+        binary = args.binary or shutil.which("claude")
+        if binary is None:
+            print(
+                json.dumps(
+                    {
+                        "state": "unresolved",
+                        "claude_version": None,
+                        "binary_path": None,
+                    },
+                    indent=2,
+                )
+            )
+            return
+        status = inspect_claude_compatibility(
+            binary,
+            base_env=os.environ,
+            wrapper_path=default_process_wrapper_path(os.environ),
+        )
+        print(json.dumps(status.as_receipt(), indent=2, sort_keys=True))
         return
 
     store = LearningStore()

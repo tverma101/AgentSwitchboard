@@ -10,6 +10,12 @@ from free_claude_code.cli.claude_env import (
     resolved_model_id,
     settings_env_routing_conflict_message,
 )
+from free_claude_code.cli.claude_firewall import (
+    ClaudeCompatibilityError,
+    default_process_wrapper_path,
+    enforce_claude_compatibility,
+    ensure_process_wrapper,
+)
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
 from free_claude_code.learning.hooks import ensure_learning_hooks
@@ -55,6 +61,20 @@ def launch(argv: Sequence[str] | None = None) -> None:
     ):
         print(conflict_message, file=sys.stderr)
         raise SystemExit(2)
+    try:
+        wrapper_path = default_process_wrapper_path(os.environ)
+        if os.path.isfile(binary_path):
+            wrapper_path = ensure_process_wrapper(wrapper_path)
+            enforce_claude_compatibility(
+                binary_path,
+                base_env=os.environ,
+                wrapper_path=wrapper_path,
+            )
+    except ClaudeCompatibilityError as exc:
+        print(
+            f"FCC Claude compatibility firewall blocked launch: {exc}", file=sys.stderr
+        )
+        raise SystemExit(78) from None
     run_client_process(
         command=build_claude_launcher_command(binary_path=binary_path, argv=args),
         env=build_claude_proxy_env(
@@ -62,6 +82,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
             auth_token=settings.anthropic_auth_token,
             base_env=os.environ,
             model_id=resolved_model_id(args, os.environ),
+            process_wrapper_path=str(wrapper_path),
         ),
         binary_name=binary_name,
         display_name=_DISPLAY_NAME,

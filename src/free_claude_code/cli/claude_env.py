@@ -5,6 +5,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from free_claude_code.cli.claude_firewall import (
+    CLAUDE_PROCESS_WRAPPER_ENV,
+    default_process_wrapper_path,
+)
 from free_claude_code.cli.local_http import with_local_proxy_bypass
 from free_claude_code.cli.proxy_auth import proxy_auth_token
 
@@ -267,6 +271,7 @@ def build_claude_proxy_env(
     auth_token: str,
     base_env: Mapping[str, str],
     model_id: str | None = None,
+    process_wrapper_path: str | None = None,
 ) -> dict[str, str]:
     """Return the canonical environment for Claude Code proxy sessions.
 
@@ -296,6 +301,9 @@ def build_claude_proxy_env(
     # unknown third-party models. FCC already supplies an explicit bounded cap,
     # so that second enforcement layer is both redundant and destabilizing.
     env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1"
+    env[CLAUDE_PROCESS_WRAPPER_ENV] = process_wrapper_path or str(
+        default_process_wrapper_path(base_env)
+    )
 
     env["DISABLE_AUTOUPDATER"] = "1"
     env["DISABLE_FEEDBACK_COMMAND"] = "1"

@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator
 from loguru import logger
 
 from free_claude_code.cli.claude_env import settings_env_routing_conflict_message
+from free_claude_code.cli.claude_firewall import ensure_process_wrapper
 from free_claude_code.cli.process_registry import (
     kill_pid_tree_best_effort,
     register_pid,
@@ -120,6 +121,7 @@ class ManagedClaudeSession:
                         cwd=self.config.workspace_path,
                     )
                     if routing_conflict_message is None:
+                        ensure_process_wrapper()
                         invocation = build_managed_claude_invocation(
                             config=self.config,
                             request=ManagedClaudeTaskRequest(

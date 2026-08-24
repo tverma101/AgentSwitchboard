@@ -65,6 +65,23 @@ that source.
 - `fcc-learning context-policy install` adds advisory tool-output discipline to
   the global Claude instructions. It does not replace the launcher context
   cap or provide a hard runtime tool-result governor.
+- `FCC_CONTEXT_GOVERNOR_ENABLED` defaults to `true`. At the Messages/Responses
+  ingress boundary, oversized text-only `tool_result` content is redirected to
+  a local `0600` artifact and replaced with a bounded head/tail locator.
+- `FCC_CONTEXT_GOVERNOR_TOOL_RESULT_MAX_BYTES` defaults to `16384` and accepts
+  `512` through `1000000`. `FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR` optionally
+  selects the private artifact directory; the default is
+  `~/.fcc/context-artifacts`. Structured JSON, media, and opaque reasoning
+  state are never truncated; oversized values fail explicitly.
+- FCC's Claude launcher pins the installed executable to the known-good
+  `2.1.228` receipt by default. A newer or unparseable binary is quarantined
+  before launch; set `FCC_CLAUDE_ALLOW_UNCERTIFIED=1` only for an explicit
+  canary. The launcher installs a private absolute
+  `CLAUDE_CODE_PROCESS_WRAPPER` under `~/.fcc/bin/` for Claude self-spawns.
+  The wrapper preserves arguments/environment, reasserts FCC's local policy,
+  and fails closed if proxy auth or the context cap is missing.
+  Inspect the current state without launching Claude with
+  `fcc-learning claude-compat`.
 
 ## Routing isolation
 

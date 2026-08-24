@@ -15,6 +15,10 @@ from free_claude_code.api.response_streams import (
     terminal_execution_error_response,
     trace_terminal_execution_error,
 )
+from free_claude_code.application.context_governance import (
+    ContextGovernanceError,
+    apply_context_governor,
+)
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.model_metadata import ProviderModelInfo
@@ -67,7 +71,6 @@ class ResponsesHandler:
     ) -> object:
         """Create a streaming OpenAI Responses-compatible response."""
         request_id = request_id or new_request_id()
-        request_payload = request_data.model_dump(mode="json", exclude_none=True)
         if request_data.stream is False:
             raise InvalidRequestError(
                 "FCC /v1/responses supports streaming only; omit stream or set stream=true."
@@ -78,6 +81,14 @@ class ResponsesHandler:
                 request_data
             )
             response_request = MessagesRequest(**anthropic_payload)
+            response_request = apply_context_governor(
+                response_request,
+                self._settings,
+                request_id=request_id,
+            )
+            request_payload = response_request.model_dump(
+                mode="json", exclude_none=True
+            )
             require_non_empty_messages(response_request.messages)
             routed = self._model_router.resolve_messages_request(response_request)
             if self._model_info_resolver is not None:
@@ -117,6 +128,8 @@ class ResponsesHandler:
             raise InvalidRequestError(str(exc)) from exc
         except ApplicationError:
             raise
+        except ContextGovernanceError as exc:
+            raise InvalidRequestError(str(exc)) from exc
         except ExecutionFailure as exc:
             return self._execution_failure_response(exc, request_id=request_id)
         except Exception as exc:

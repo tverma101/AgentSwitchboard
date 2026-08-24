@@ -174,6 +174,18 @@ class Settings(BaseSettings):
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
+    # ==================== Context-pressure governor ====================
+    context_governor_enabled: bool = Field(
+        default=True, validation_alias="FCC_CONTEXT_GOVERNOR_ENABLED"
+    )
+    context_governor_tool_result_max_bytes: int = Field(
+        default=16 * 1024,
+        validation_alias="FCC_CONTEXT_GOVERNOR_TOOL_RESULT_MAX_BYTES",
+    )
+    context_governor_artifact_dir: str = Field(
+        default="", validation_alias="FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR"
+    )
+
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
@@ -432,6 +444,16 @@ class Settings(BaseSettings):
         if v <= 0:
             raise ValueError("messaging_rate_window must be > 0")
         return float(v)
+
+    @field_validator("context_governor_tool_result_max_bytes")
+    @classmethod
+    def validate_context_governor_tool_result_max_bytes(cls, v: int) -> int:
+        if not 512 <= v <= 1_000_000:
+            raise ValueError(
+                "FCC_CONTEXT_GOVERNOR_TOOL_RESULT_MAX_BYTES must be between "
+                "512 and 1000000"
+            )
+        return v
 
     @field_validator("web_fetch_allowed_schemes")
     @classmethod
