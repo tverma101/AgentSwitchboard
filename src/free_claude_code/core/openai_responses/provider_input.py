@@ -17,6 +17,8 @@ from free_claude_code.core.visual_attachments import (
 
 from .errors import ResponsesConversionError
 
+_REASONING_SUMMARIES = frozenset({"auto", "concise", "detailed"})
+
 
 def build_responses_provider_request(
     request: MessagesRequest,
@@ -80,7 +82,10 @@ def build_responses_provider_request(
         ]
     if request.tool_choice is not None:
         body["tool_choice"] = _tool_choice(request.tool_choice, tool_names=tool_names)
-    if reasoning_config := _reasoning_config(reasoning):
+    if reasoning_config := _reasoning_config(
+        reasoning,
+        summary=_requested_reasoning_summary(request.output_config),
+    ):
         body["reasoning"] = reasoning_config
     return body
 
@@ -106,6 +111,7 @@ def _validate_supported_request(request: MessagesRequest) -> None:
         unsupported.append("top_k")
     if not _is_noop_context_management(request.context_management):
         unsupported.append("context_management")
+    _validate_reasoning_summary(request.output_config)
     unsupported.extend(_unsupported_output_config_paths(request.output_config))
     if request.mcp_servers:
         unsupported.append("mcp_servers")
@@ -123,7 +129,21 @@ def _unsupported_output_config_paths(
 ) -> list[str]:
     if not output_config:
         return []
-    return [f"output_config.{key}" for key in sorted(output_config) if key != "effort"]
+    return [
+        f"output_config.{key}"
+        for key in sorted(output_config)
+        if key not in {"effort", "summary"}
+    ]
+
+
+def _validate_reasoning_summary(output_config: dict[str, Any] | None) -> None:
+    if not output_config or "summary" not in output_config:
+        return
+    summary = output_config["summary"]
+    if not isinstance(summary, str) or summary not in _REASONING_SUMMARIES:
+        raise ResponsesConversionError(
+            "output_config.summary must be one of: auto, concise, detailed."
+        )
 
 
 def _is_noop_context_management(
@@ -348,11 +368,26 @@ def _tool_choice(
     raise ResponsesConversionError(f"Unsupported tool_choice type {choice_type!r}.")
 
 
-def _reasoning_config(reasoning: ReasoningPolicy) -> dict[str, str]:
+def _requested_reasoning_summary(output_config: dict[str, Any] | None) -> str | None:
+    _validate_reasoning_summary(output_config)
+    if not output_config:
+        return None
+    summary = output_config.get("summary")
+    return summary if isinstance(summary, str) else None
+
+
+def _reasoning_config(
+    reasoning: ReasoningPolicy,
+    *,
+    summary: str | None,
+) -> dict[str, str]:
     if reasoning.control is ReasoningControl.OFF:
         return {"effort": "none"}
+    config = {"summary": summary} if summary is not None else {}
     if reasoning.effort is not None:
-        return {"effort": reasoning.effort.value, "summary": "auto"}
+        config["effort"] = reasoning.effort.value
+        config.setdefault("summary", "auto")
+        return config
     if reasoning.requests_reasoning:
-        return {"summary": "auto"}
-    return {}
+        config.setdefault("summary", "auto")
+    return config

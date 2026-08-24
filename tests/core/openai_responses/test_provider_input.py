@@ -153,6 +153,62 @@ def test_build_responses_provider_request_uses_resolved_reasoning_policy() -> No
     assert body["reasoning"] == {"effort": "max", "summary": "auto"}
 
 
+@pytest.mark.parametrize("summary", ["auto", "concise", "detailed"])
+def test_build_responses_provider_request_preserves_summary_mode(
+    summary: str,
+) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "output_config": {"summary": summary},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["reasoning"] == {"summary": summary}
+
+
+def test_build_responses_provider_request_combines_effort_and_summary_mode() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "output_config": {"summary": "concise"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+    )
+
+    assert body["reasoning"] == {"effort": "high", "summary": "concise"}
+
+
+@pytest.mark.parametrize("summary", ["verbose", "", 1, None, {"mode": "auto"}])
+def test_build_responses_provider_request_rejects_invalid_summary_mode(
+    summary: object,
+) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "output_config": {"summary": summary},
+        }
+    )
+
+    with pytest.raises(ResponsesConversionError, match=r"output_config\.summary"):
+        build_responses_provider_request(
+            request,
+            reasoning=ReasoningPolicy.provider_default(),
+        )
+
+
 @pytest.mark.parametrize(
     "context_management",
     [
@@ -419,6 +475,29 @@ def test_responses_reasoning_round_trip_reaches_provider_request() -> None:
 
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
     assert "output_config" not in body
+
+
+@pytest.mark.parametrize("summary", ["auto", "concise", "detailed"])
+def test_responses_reasoning_summary_round_trip_reaches_provider_request(
+    summary: str,
+) -> None:
+    adapter = OpenAIResponsesAdapter()
+    ingress = OpenAIResponsesRequest.model_validate(
+        {
+            "model": "openai/gpt-test",
+            "input": "hello",
+            "reasoning": {"summary": summary},
+        }
+    )
+    anthropic = MessagesRequest.model_validate(adapter.to_anthropic_payload(ingress))
+
+    assert anthropic.output_config == {"summary": summary}
+    body = build_responses_provider_request(
+        anthropic,
+        reasoning=client_reasoning_policy(anthropic),
+    )
+
+    assert body["reasoning"] == {"summary": summary}
 
 
 @pytest.mark.parametrize(
