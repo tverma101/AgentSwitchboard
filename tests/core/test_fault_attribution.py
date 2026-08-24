@@ -5,6 +5,7 @@ from free_claude_code.core.fault_attribution import (
     canonical_hash,
     classify_failure,
     media_metadata,
+    request_shape_hash,
     stable_prefix_hash,
 )
 
@@ -30,6 +31,37 @@ def test_hashes_are_deterministic_and_exclude_conversation_suffix() -> None:
     assert canonical_hash(first) == canonical_hash({**first})
     assert stable_prefix_hash(first) == stable_prefix_hash(second)
     assert stable_prefix_hash(first) != canonical_hash(first)
+
+
+def test_request_shape_and_prefix_hashes_ignore_metadata_identity() -> None:
+    first = {
+        "model": "muse-spark-1.2-contributor",
+        "instructions": "stable",
+        "tools": [{"name": "lookup"}],
+        "input": [
+            {"role": "user", "content": "prefix"},
+            {"role": "user", "content": "first"},
+        ],
+        "metadata": {"session_id": "session-a", "timestamp": "2026-08-24"},
+        "prompt_cache_key": "session-a",
+    }
+    same_logical_request = {
+        **first,
+        "metadata": {"session_id": "session-b", "timestamp": "2026-08-25"},
+        "prompt_cache_key": "session-b",
+    }
+    different_suffix = {
+        **same_logical_request,
+        "input": [
+            {"role": "user", "content": "prefix"},
+            {"role": "user", "content": "second"},
+        ],
+    }
+
+    assert request_shape_hash(first) == request_shape_hash(same_logical_request)
+    assert stable_prefix_hash(first) == stable_prefix_hash(same_logical_request)
+    assert request_shape_hash(first) != request_shape_hash(different_suffix)
+    assert stable_prefix_hash(first) == stable_prefix_hash(different_suffix)
 
 
 def test_media_metadata_counts_ordered_types_without_payloads() -> None:
