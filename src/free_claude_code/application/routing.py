@@ -164,9 +164,7 @@ class ModelRouter:
         model_ref, _source = self._resolve_model_ref_with_source(claude_model_name)
         return model_ref
 
-    def _resolve_model_ref_with_source(
-        self, claude_model_name: str
-    ) -> tuple[str, str]:
+    def _resolve_model_ref_with_source(self, claude_model_name: str) -> tuple[str, str]:
         """Resolve the model ref and retain the exact setting that selected it."""
 
         route = self._matched_route(claude_model_name)
