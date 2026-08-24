@@ -114,6 +114,13 @@ vision confirmation are rejected at ingress. Provider adapters also fail before
 network I/O when their native protocol cannot consume the attachment. Text and
 tool requests do not require visual capability metadata.
 
+The application also records a deterministic required-capability set for
+Messages requests. The strict capability policy is controller-preserving and
+has no implicit helper or controller-failover path; smart-local, smart-Go, and
+custom helper plans require an explicit helper allowlist and produce separate
+metadata-only route receipts. Helper execution is not enabled by the terminal
+Muse release path.
+
 ## Local state
 
 | Path | Purpose |

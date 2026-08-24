@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The release head is version
-`4.30.5`; examples below describe this checkout, not every feature proposed in
+`4.30.6`; examples below describe this checkout, not every feature proposed in
 the open design backlog.
 
 ## What You Get
@@ -58,7 +58,7 @@ the open design backlog.
 | --- | --- |
 | **Shipped and locally verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and hard text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and compact/resume proof. |
 | **Implemented but boundary-specific** | Image metadata validation with typed fail-fast behavior for non-vision providers, focused-window Appshot capture, optional learning/memory/skills, Codex/Pi launchers, and messaging integrations. These require their own client/provider permissions and are not part of the minimal Muse release claim. |
-| **Planned or design-only** | Full live reasoning-effort matrix, capability-aware helper/fallback routing, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
+| **Planned or design-only** | Full live reasoning-effort matrix, capability-aware helper execution, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
 <div align="center">
   <img src="assets/pic.png" alt="Claude Code running with Free Claude Code" width="700">

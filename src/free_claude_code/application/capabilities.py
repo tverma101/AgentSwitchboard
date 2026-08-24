@@ -4,6 +4,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
 from free_claude_code.core.anthropic.models import MessagesRequest
 
@@ -24,6 +25,178 @@ class Capability(StrEnum):
     SEMANTIC_BROWSER_CONTROL = "semantic_browser_control"
     SEMANTIC_MACOS_CONTROL = "semantic_macos_control"
     PIXEL_COMPUTER_USE = "pixel_computer_use"
+
+
+class CapabilityRoutingMode(StrEnum):
+    """Explicit policies for resolving unsupported controller capabilities."""
+
+    STRICT = "strict"
+    SMART_LOCAL = "smart_local"
+    SMART_GO = "smart_go"
+    CUSTOM = "custom"
+
+
+class CapabilityRoutingError(InvalidRequestError):
+    """A required capability cannot be served under the active policy."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityHelper:
+    """An explicitly configured subordinate capability route."""
+
+    helper_id: str
+    provider_family: str
+    model_ref: str
+    capabilities: frozenset[Capability]
+    local: bool = False
+    billable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityRoutingPolicy:
+    """Allowlisted helper policy; controller failover is never implicit."""
+
+    mode: CapabilityRoutingMode = CapabilityRoutingMode.STRICT
+    allowed_helpers: frozenset[str] = frozenset()
+    allow_controller_failover: bool = False
+
+    def __post_init__(self) -> None:
+        if self.mode is CapabilityRoutingMode.STRICT and (
+            self.allowed_helpers or self.allow_controller_failover
+        ):
+            raise ValueError(
+                "strict capability routing cannot permit helpers or failover"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityRoutePlan:
+    """A controller-preserving capability decision and its receipt data."""
+
+    controller_provider: str
+    controller_model: str
+    required: RequiredCapabilitySet
+    mode: CapabilityRoutingMode
+    decision: str
+    unknown: frozenset[Capability] = frozenset()
+    unsupported: frozenset[Capability] = frozenset()
+    helpers: tuple[CapabilityHelper, ...] = ()
+    controller_failover: bool = False
+
+    def as_receipt(self) -> dict[str, object]:
+        """Return metadata without request content or image bytes."""
+
+        return {
+            "controller_provider": self.controller_provider,
+            "controller_model": self.controller_model,
+            "required": self.required.as_dict(),
+            "mode": self.mode.value,
+            "decision": self.decision,
+            "unknown": sorted(capability.value for capability in self.unknown),
+            "unsupported": sorted(capability.value for capability in self.unsupported),
+            "controller_failover": self.controller_failover,
+            "helpers": [
+                {
+                    "helper_id": helper.helper_id,
+                    "provider_family": helper.provider_family,
+                    "model_ref": helper.model_ref,
+                    "capabilities": sorted(
+                        capability.value for capability in helper.capabilities
+                    ),
+                    "local": helper.local,
+                    "billable": helper.billable,
+                }
+                for helper in self.helpers
+            ],
+        }
+
+
+class CapabilityRouter:
+    """Plan capability helpers without replacing the primary controller."""
+
+    def __init__(self, policy: CapabilityRoutingPolicy | None = None) -> None:
+        self._policy = policy or CapabilityRoutingPolicy()
+
+    def plan(
+        self,
+        required: RequiredCapabilitySet,
+        *,
+        controller_provider: str,
+        controller_model: str,
+        supported_capabilities: frozenset[Capability] = frozenset(),
+        known_capabilities: frozenset[Capability] = frozenset(),
+        helpers: tuple[CapabilityHelper, ...] = (),
+    ) -> CapabilityRoutePlan:
+        """Return a strict controller or an explicit helper chain."""
+
+        baseline = {Capability.TEXT_INPUT, Capability.TEXT_OUTPUT}
+        requested = set(required.capabilities) - baseline
+        supported = set(supported_capabilities)
+        known = set(known_capabilities)
+        unknown = frozenset(requested - known)
+        unsupported = frozenset((requested & known) - supported)
+        missing = unknown | unsupported
+        if not missing:
+            return CapabilityRoutePlan(
+                controller_provider=controller_provider,
+                controller_model=controller_model,
+                required=required,
+                mode=self._policy.mode,
+                decision="primary",
+            )
+
+        selected, remaining = self._select_helpers(missing, helpers)
+        if remaining:
+            names = ", ".join(sorted(capability.value for capability in remaining))
+            if self._policy.allow_controller_failover:
+                raise CapabilityRoutingError(
+                    "controller failover is a separate policy and cannot be "
+                    f"performed automatically for: {names}"
+                )
+            raise CapabilityRoutingError(
+                f"required capabilities are unavailable under "
+                f"{self._policy.mode.value} policy: {names}"
+            )
+        return CapabilityRoutePlan(
+            controller_provider=controller_provider,
+            controller_model=controller_model,
+            required=required,
+            mode=self._policy.mode,
+            decision="helpers",
+            unknown=unknown,
+            unsupported=unsupported,
+            helpers=tuple(selected),
+        )
+
+    def _select_helpers(
+        self,
+        missing: frozenset[Capability],
+        helpers: tuple[CapabilityHelper, ...],
+    ) -> tuple[list[CapabilityHelper], set[Capability]]:
+        remaining = set(missing)
+        selected: list[CapabilityHelper] = []
+        for helper in helpers:
+            if not self._helper_allowed(helper):
+                continue
+            covered = remaining & set(helper.capabilities)
+            if not covered:
+                continue
+            selected.append(helper)
+            remaining -= covered
+            if not remaining:
+                break
+        return selected, remaining
+
+    def _helper_allowed(self, helper: CapabilityHelper) -> bool:
+        if helper.helper_id not in self._policy.allowed_helpers:
+            return False
+        if self._policy.mode is CapabilityRoutingMode.STRICT:
+            return False
+        if self._policy.mode is CapabilityRoutingMode.SMART_LOCAL:
+            return helper.local
+        if self._policy.mode is CapabilityRoutingMode.SMART_GO:
+            return helper.provider_family.casefold() == "opencode_go"
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,4 +358,14 @@ def _looks_like_screenshot_tool(name: str) -> bool:
     return "screenshot" in name or "screen_capture" in name
 
 
-__all__ = ["Capability", "RequiredCapabilitySet", "required_capabilities_for_messages"]
+__all__ = [
+    "Capability",
+    "CapabilityHelper",
+    "CapabilityRoutePlan",
+    "CapabilityRouter",
+    "CapabilityRoutingError",
+    "CapabilityRoutingMode",
+    "CapabilityRoutingPolicy",
+    "RequiredCapabilitySet",
+    "required_capabilities_for_messages",
+]
