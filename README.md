@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The release head is version
-`4.30.4`; examples below describe this checkout, not every feature proposed in
+`4.30.5`; examples below describe this checkout, not every feature proposed in
 the open design backlog.
 
 ## What You Get
@@ -363,10 +363,10 @@ own environment rather than using the FCC launcher firewall.
 
 FCC validates PNG, JPEG, and WebP image bytes before forwarding them and exposes
 metadata-only attachment receipts (hash, dimensions, size, and media type). The
-model catalog exposes known vision support and accepted image types; a known
-non-vision model rejects image input before provider I/O, while unknown metadata
-remains permissive so stale discovery data does not break requests. The
-terminal fallback is a compact `[img ... · attached]` card; Kitty and iTerm2
+model catalog exposes explicit vision support and accepted image types; a
+non-vision model or a model without confirmed vision metadata rejects image
+input before provider I/O. Text/tool requests do not require visual metadata.
+The terminal fallback is a compact `[img ... · attached]` card; Kitty and iTerm2
 capability detection is available to the wrapper without emitting escape codes
 to unsupported terminals. `fcc-appshot` exposes a demand-only macOS
 focused-window capture helper backed by

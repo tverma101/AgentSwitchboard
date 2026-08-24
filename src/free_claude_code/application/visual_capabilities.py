@@ -2,6 +2,10 @@
 
 from collections.abc import Iterator, Mapping
 
+from free_claude_code.application.capabilities import (
+    Capability,
+    required_capabilities_for_messages,
+)
 from free_claude_code.application.errors import VisualCapabilityError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
@@ -16,18 +20,28 @@ def validate_visual_capability(
 ) -> None:
     """Reject known-incompatible image input before provider construction/I/O.
 
-    Unknown capability metadata remains permissive so a stale or unavailable
-    model catalog cannot break an otherwise valid provider request. A provider
-    that explicitly declares no vision support, however, must fail closed.
+    Image input fails closed unless the model catalog explicitly confirms vision
+    support. Text and tool-only requests do not require visual metadata.
     """
 
-    image_blocks = tuple(_iter_image_blocks(request.messages))
-    if not image_blocks or model_info is None:
+    required = required_capabilities_for_messages(request)
+    if not required.requires(Capability.VISION_INPUT):
         return
-    if model_info.supports_vision is False:
+    image_blocks = tuple(_iter_image_blocks(request.messages))
+    if model_info is None:
         raise VisualCapabilityError(
-            f"Model {model_ref!r} does not support image input; "
+            f"Model {model_ref!r} has vision capability metadata unavailable; "
             "the request was rejected before upstream I/O."
+        )
+    if model_info.supports_vision is not True:
+        if model_info.supports_vision is False:
+            message = f"Model {model_ref!r} does not support image input; "
+        else:
+            message = (
+                f"Model {model_ref!r} has vision capability metadata not confirmed; "
+            )
+        raise VisualCapabilityError(
+            message + "the request was rejected before upstream I/O."
         )
 
     accepted_types = frozenset(model_info.accepted_image_types)

@@ -78,19 +78,36 @@ def test_known_image_types_are_enforced_without_rejecting_urls() -> None:
     )
 
 
-def test_unknown_capability_metadata_remains_permissive() -> None:
-    validate_visual_capability(
-        _request(
-            content=[
-                {
-                    "type": "image",
-                    "source": {"type": "url", "url": "https://example.test/a"},
-                }
-            ]
-        ),
-        model_info=ProviderModelInfo("provider-model"),
-        model_ref="provider/provider-model",
-    )
+def test_unknown_capability_metadata_fails_closed() -> None:
+    with pytest.raises(VisualCapabilityError, match="metadata not confirmed"):
+        validate_visual_capability(
+            _request(
+                content=[
+                    {
+                        "type": "image",
+                        "source": {"type": "url", "url": "https://example.test/a"},
+                    }
+                ]
+            ),
+            model_info=ProviderModelInfo("provider-model"),
+            model_ref="provider/provider-model",
+        )
+
+
+def test_missing_model_metadata_fails_closed() -> None:
+    with pytest.raises(VisualCapabilityError, match="metadata unavailable"):
+        validate_visual_capability(
+            _request(
+                content=[
+                    {
+                        "type": "image",
+                        "source": {"type": "url", "url": "https://example.test/a"},
+                    }
+                ]
+            ),
+            model_info=None,
+            model_ref="provider/provider-model",
+        )
 
 
 def test_tool_result_image_is_not_silently_missed() -> None:
