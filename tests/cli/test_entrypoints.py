@@ -558,6 +558,10 @@ def test_launch_claude_refuses_settings_env_routing_override(
         patch(
             "free_claude_code.cli.launchers.claude.preflight_proxy", return_value=None
         ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-claude.cmd",
+        ),
         patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
         pytest.raises(SystemExit) as exc_info,
     ):
