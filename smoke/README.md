@@ -197,6 +197,12 @@ wrapper, background, and upgrade surfaces. It is deliberately explicit about
 `unverified` and `skipped` boundaries; a receipt row is not a claim that the
 underlying client surface is certified unless its status is `passed`.
 
+The separate [deterministic inheritance contract](receipts/claude-compaction-inheritance-2026-08-24.json)
+checks policy reassertion, hashed relationships, bounded visible overrides,
+interrupted-compaction quarantine, and candidate-version certification. It is
+`synthetic-only` with `live_provider_claim: false`; it does not promote the
+remaining subagent/child compaction, interruption, or upgrade boundaries.
+
 The metadata-only [media conformance corpus](fixtures/media-conformance-v1.json)
 enumerates the supported image/tool-result protocol boundaries, deterministic
 rejection cases, retry identity, and native/provider route pairs. It contains
