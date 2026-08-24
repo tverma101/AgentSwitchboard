@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
-from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.model_metadata import (
+    ProviderModelInfo,
+    ReasoningCapabilityEvidence,
+    ReasoningCapabilityStatus,
+)
 from free_claude_code.config.provider_catalog import KILO_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
@@ -411,7 +415,14 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
 
     assert await kilo_provider.list_model_infos() == frozenset(
         {
-            ProviderModelInfo("anthropic/tool-reasoning", supports_thinking=True),
+            ProviderModelInfo(
+                "anthropic/tool-reasoning",
+                supports_thinking=True,
+                reasoning=ReasoningCapabilityEvidence(
+                    status=ReasoningCapabilityStatus.ACCEPTED_BUT_UNVERIFIED,
+                    evidence_source="provider_metadata",
+                ),
+            ),
             ProviderModelInfo("plain-tool", supports_thinking=False),
             ProviderModelInfo(
                 "missing-optional-metadata",

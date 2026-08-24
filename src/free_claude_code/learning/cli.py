@@ -8,7 +8,7 @@ import sys
 from collections.abc import Iterable
 from typing import Any
 
-from free_claude_code.cli.claude_firewall import (
+from free_claude_code.core.claude_compatibility import (
     default_process_wrapper_path,
     inspect_claude_compatibility,
 )

@@ -18,7 +18,9 @@ ALLOWED_PACKAGE_DEPENDENCIES: dict[str, set[str]] = {
     "providers": {"application", "config", "core"},
     "api": {"application", "config", "core", "usage"},
     "cli": {"config", "core", "learning"},
-    "learning": set(),
+    # The learning CLI exposes the Claude compatibility diagnostic, whose
+    # implementation is deliberately dependency-neutral in core.
+    "learning": {"core"},
     "usage": set(),
     "runtime": {
         "api",
