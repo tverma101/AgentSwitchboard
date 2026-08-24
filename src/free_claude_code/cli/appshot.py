@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .appshot_helpers import copy_appshot_path, inspect_appshot, open_appshot
 from .visuals import (
     capture_and_enqueue_appshot,
     pending_appshots,
@@ -29,10 +30,31 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="local Appshot queue directory",
     )
-    parser.add_argument(
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument(
         "--list",
         action="store_true",
         help="list queued receipts for the explicit session without capturing",
+    )
+    actions.add_argument(
+        "--inspect",
+        type=Path,
+        metavar="RECEIPT",
+        help="show redacted metadata for one persisted receipt",
+    )
+    actions.add_argument(
+        "--open",
+        dest="open_receipt",
+        type=Path,
+        metavar="RECEIPT",
+        help="open one persisted image in the local default viewer",
+    )
+    actions.add_argument(
+        "--copy-path",
+        dest="copy_receipt",
+        type=Path,
+        metavar="RECEIPT",
+        help="copy one persisted image path to the local clipboard",
     )
     parser.add_argument(
         "--no-preview",
@@ -43,15 +65,36 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Capture one Appshot and print only local metadata."""
+    """Capture one Appshot or perform one explicit persisted-queue action."""
     args = _parser().parse_args(argv)
     session_id = args.session_id or os.environ.get("FCC_CLAUDE_SESSION_ID", "")
-    if not session_id:
-        raise SystemExit("fcc-appshot requires --session-id or FCC_CLAUDE_SESSION_ID")
     if args.list:
+        if not session_id:
+            raise SystemExit(
+                "fcc-appshot --list requires --session-id or FCC_CLAUDE_SESSION_ID"
+            )
         for receipt in pending_appshots(session_id, root=args.queue):
             print(receipt.name)
         return
+    if args.inspect or args.open_receipt or args.copy_receipt:
+        receipt = args.inspect or args.open_receipt or args.copy_receipt
+        try:
+            if args.inspect:
+                print(inspect_appshot(receipt, root=args.queue))
+            elif args.open_receipt:
+                open_appshot(receipt, root=args.queue)
+                print(f"opened: {receipt.name}")
+            else:
+                copy_appshot_path(receipt, root=args.queue)
+                print(f"copied: {receipt.name}")
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(
+                f"Appshot helper failed: {type(exc).__name__}: {exc}", file=sys.stderr
+            )
+            raise SystemExit(1) from exc
+        return
+    if not session_id:
+        raise SystemExit("fcc-appshot requires --session-id or FCC_CLAUDE_SESSION_ID")
     try:
         attachment, receipt = capture_and_enqueue_appshot(
             session_id=session_id,
