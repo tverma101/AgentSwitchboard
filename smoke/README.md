@@ -265,9 +265,18 @@ with mismatched row counts, model sequences, phase sequences, or compact-boundar
 shape.
 
 Compaction-boundary rows may additionally include `phase` (`pre_compact`,
-`compact_turn`, `post_compact`, or `resume`) and a metadata-only
+`compact_turn`, `post_compact`, `mature_post_compact`, or `resume`) and a metadata-only
 `compact_boundary_hash`. `summarize_phases()` keeps those economics separate so
 the compaction turn and resume turn cannot hide a post-compact token increase.
+Issue #60's five-turn synthetic contract is loaded by
+`load_compaction_economics_receipt()` and validated by
+`validate_compaction_economics()`. It requires input/cache bucket accounting,
+effective uncached input, request-shape and stable-prefix hashes, one compact
+boundary identity, optional TTFT/duration ordering, unique learning-memory
+injection ids, and 1.0x retry amplification. The checked-in
+[synthetic economics receipt](fixtures/opencode_go_compaction_economics.synthetic.json)
+is schema `fcc.compaction-economics.v1`; it covers pre-compact, compacting,
+first post-compact, mature post-compact, and resume-after-compact turns only.
 The deterministic semantic gate in
 [`smoke/lib/compaction_continuity.py`](lib/compaction_continuity.py) records
 provider/model/protocol, system/tool and message-shape hashes, tool/result ids,
