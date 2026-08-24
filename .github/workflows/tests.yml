@@ -11,10 +11,7 @@ env:
 
 on:
   push:
-    branches:
-      - main
-      - master
-      - "review/**"
+    branches: [main, master]
   # Run on every PR target, including chained release-train and design PRs.
   pull_request:
   merge_group:
