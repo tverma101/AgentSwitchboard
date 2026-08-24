@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The release head is version
-`4.30.0`; examples below describe this checkout, not every feature proposed in
+`4.30.2`; examples below describe this checkout, not every feature proposed in
 the open design backlog.
 
 ## What You Get
@@ -47,9 +47,10 @@ the open design backlog.
   file tools, repeated tool calls, provider receipts, and one compact/resume
   cycle with the literal Claude client.
 - **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider; optionally enable [RTK](https://github.com/rtk-ai/rtk) to filter noisy terminal output before it reaches the model.
-- **Keep provider boundaries visible.** FCC records metadata-only usage and
-  fault-attribution receipts; it does not silently select a different provider
-  when the configured native route is unsupported.
+- **Keep provider boundaries visible.** FCC records metadata-only usage,
+  fault-attribution receipts, and pre-network provider-policy decisions; it
+  does not silently select a different provider when the configured native
+  route is unsupported.
 
 ## Release status
 

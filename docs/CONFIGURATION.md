@@ -99,6 +99,12 @@ Claude `settings.json` environment blocks, project settings, local settings, or
 `--settings` overlays. The Claude launcher checks those sources and fails closed
 with the conflicting source/key names. Unrelated settings remain allowed.
 
+For strict OpenCode Go sessions, the configured provider transport is authorized
+before network I/O. Forbidden Anthropic/OpenAI/Codex/ChatGPT families are blocked
+instead of becoming implicit fallbacks, and each allowed or blocked decision is
+recorded as metadata-only `provider.egress.decision` trace evidence. This does
+not claim that optional browser, computer-use, or vision helpers are enabled.
+
 ## Local state
 
 | Path | Purpose |

@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from urllib.parse import urlparse
 
+from free_claude_code.core.trace import trace_event
+
 
 class ProviderPolicyError(PermissionError):
     """Raised before a provider or helper request is allowed to start."""
@@ -44,7 +46,13 @@ class ProviderEgressGuard:
     _counts: dict[str, int] = field(default_factory=dict)
     _blocked_counts: dict[str, int] = field(default_factory=dict)
 
-    def authorize(self, provider_family: str, *, category: str = "model") -> bool:
+    def authorize(
+        self,
+        provider_family: str,
+        *,
+        category: str = "model",
+        destination_host: str | None = None,
+    ) -> bool:
         family = provider_family.strip().lower()
         allowed = family == self.policy.primary_provider.lower()
         if category == "local_tool":
@@ -57,6 +65,21 @@ class ProviderEgressGuard:
             }
         if family in {item.lower() for item in self.policy.forbidden_provider_families}:
             allowed = False
+        decision = "allowed" if allowed else "blocked"
+        if not allowed and self.policy.mode is ProviderPolicyMode.DIAGNOSTIC:
+            decision = "diagnostic_blocked"
+        trace_event(
+            stage="provider_policy",
+            event="provider.egress.decision",
+            source="provider_policy",
+            provider_family=family,
+            destination_host=destination_host,
+            category=category,
+            decision=decision,
+            policy_mode=self.policy.mode.value,
+            primary_provider=self.policy.primary_provider,
+            paid_fallback=self.policy.paid_fallback,
+        )
         if not allowed:
             receipt_family = "local" if category == "local_tool" else family
             self._blocked_counts[receipt_family] = (
@@ -87,10 +110,15 @@ class ProviderEgressGuard:
         if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
             if category != "local_tool":
                 raise ProviderPolicyError("local URL is only valid for local tools")
-            return self.authorize("local", category="local_tool")
+            return self.authorize(
+                "local",
+                category="local_tool",
+                destination_host=parsed.hostname,
+            )
         return self.authorize(
             provider_family or parsed.hostname,
             category=category,
+            destination_host=parsed.hostname,
         )
 
     def receipt(self) -> dict[str, object]:

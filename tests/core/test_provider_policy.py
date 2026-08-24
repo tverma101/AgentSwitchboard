@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 
 from free_claude_code.core.provider_policy import (
@@ -11,10 +13,25 @@ from free_claude_code.core.provider_policy import (
 def test_strict_policy_blocks_forbidden_provider_before_network() -> None:
     guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
 
-    with pytest.raises(ProviderPolicyError, match="before network I/O"):
+    with (
+        patch("free_claude_code.core.provider_policy.trace_event") as trace,
+        pytest.raises(ProviderPolicyError, match="before network I/O"),
+    ):
         guard.authorize("anthropic")
 
     assert guard.receipt()["counts"] == {}
+    trace.assert_called_once_with(
+        stage="provider_policy",
+        event="provider.egress.decision",
+        source="provider_policy",
+        provider_family="anthropic",
+        destination_host=None,
+        category="model",
+        decision="blocked",
+        policy_mode="strict",
+        primary_provider="opencode_go",
+        paid_fallback=False,
+    )
 
 
 def test_strict_policy_allows_primary_and_local_tool() -> None:
@@ -36,11 +53,24 @@ def test_localhost_model_url_is_not_treated_as_a_local_tool() -> None:
 def test_configured_provider_family_can_use_an_explicit_proxy_host() -> None:
     guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
 
-    guard.authorize_url(
-        "https://proxy.example.test/v1",
-        provider_family="opencode_go",
-    )
+    with patch("free_claude_code.core.provider_policy.trace_event") as trace:
+        guard.authorize_url(
+            "https://proxy.example.test/v1",
+            provider_family="opencode_go",
+        )
     assert guard.receipt()["counts"] == {"opencode_go": 1}
+    trace.assert_called_once_with(
+        stage="provider_policy",
+        event="provider.egress.decision",
+        source="provider_policy",
+        provider_family="opencode_go",
+        destination_host="proxy.example.test",
+        category="model",
+        decision="allowed",
+        policy_mode="strict",
+        primary_provider="opencode_go",
+        paid_fallback=False,
+    )
 
 
 def test_diagnostic_policy_records_blocked_destinations_without_authorizing_them() -> (
