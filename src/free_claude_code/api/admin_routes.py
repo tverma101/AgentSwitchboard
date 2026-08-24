@@ -10,10 +10,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from free_claude_code.application.capabilities import CapabilityRoutingMode
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
+from free_claude_code.application.route_diagnostics import build_route_diagnostic
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
@@ -42,6 +44,14 @@ class AdminConfigPayload(BaseModel):
     """Partial config update submitted by the admin UI."""
 
     values: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminRouteDiagnosticPayload(BaseModel):
+    """Synthetic shape only; raw prompts and content are not accepted."""
+
+    model: str | None = Field(default=None, max_length=256, pattern=r"^[^\r\n]*$")
+    shapes: tuple[str, ...] = Field(default=("text",), min_length=1, max_length=10)
+    mode: CapabilityRoutingMode = CapabilityRoutingMode.STRICT
 
 
 class ConnectedAccountLoginPayload(BaseModel):
@@ -141,6 +151,27 @@ async def admin_status(
 ):
     require_loopback_admin(request)
     return services.admin.admin_status()
+
+
+@router.post("/admin/api/diagnostics/route")
+async def route_diagnostic(
+    payload: AdminRouteDiagnosticPayload,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Explain a synthetic route from cached metadata without provider I/O."""
+    require_loopback_admin(request)
+    try:
+        result = build_route_diagnostic(
+            services.requests.current_settings(),
+            runtime=services.requests,
+            model=payload.model,
+            shapes=payload.shapes,
+            mode=payload.mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _no_store(result)
 
 
 @router.get("/admin/api/providers/local-status")
