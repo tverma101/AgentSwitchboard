@@ -1,6 +1,14 @@
 {
+  "schema": "fcc.claude-auto-compact.v1",
   "receipt": "muse-auto-compact-tool-resume",
   "captured_at": "2026-08-24T10:31:26Z",
+  "evidence": {
+    "kind": "live_installed_claude",
+    "status": "passed",
+    "synthetic": false,
+    "client_executed": true,
+    "gateway": "fcc_loopback_isolated"
+  },
   "claude": {
     "path": "claude",
     "version": "2.1.228",
@@ -9,13 +17,16 @@
   "harness": {
     "package_version": "4.30.18",
     "isolated_server": "loopback-isolated",
-    "active_user_server_8082_touched": false
+    "active_user_server_8082_touched": false,
+    "commit_sha": null,
+    "commit_sha_recorded": false
   },
   "context": {
     "requested_tokens": 50000,
     "effective_tokens": 50000,
     "seed_groups": 7,
     "client_invocation": "non_bare_local_settings_isolated",
+    "effective_window_observed_via": "automatic_compact_boundary_metadata",
     "context_dropped": true
   },
   "compaction": {
@@ -72,5 +83,10 @@
   "artifacts": {
     "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_auto_compact_resume_when_requested with FCC_SMOKE_CLAUDE_BIN=fccdanger",
     "retained_content": "metadata-only receipt; sensitive payloads omitted"
-  }
+  },
+  "unverified_boundaries": [
+    "harness_commit_sha_at_capture",
+    "numeric_pre_post_context_estimates",
+    "duplicate_tool_call_count"
+  ]
 }

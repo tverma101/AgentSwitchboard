@@ -1,0 +1,32 @@
+{
+  "schema": "fcc.claude-auto-compact.v1",
+  "receipt": "synthetic-auto-compact-contract",
+  "evidence": {
+    "kind": "synthetic_contract",
+    "status": "contract_passed",
+    "synthetic": true,
+    "client_executed": false,
+    "gateway": "deterministic_fixture_trace"
+  },
+  "context": {
+    "requested_tokens": 50000,
+    "effective_tokens": 50000,
+    "context_dropped": true,
+    "effective_window_observed_via": "synthetic_compact_boundary_fixture"
+  },
+  "compaction": {
+    "trigger": "auto",
+    "result": "success",
+    "compact_boundary_observed": true,
+    "compact_metadata_observed": true,
+    "manual_compact_command_sent": false
+  },
+  "post_compaction": {
+    "tool_name": "Bash",
+    "tool_call_count": 1,
+    "tool_result_completed": true,
+    "resume_invocation_returned": 0,
+    "continuation_marker_seen": true,
+    "http_errors": 0
+  }
+}
