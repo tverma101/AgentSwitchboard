@@ -253,6 +253,50 @@ def test_responses_conversion_shortens_long_tool_names_for_muse() -> None:
     assert len(wire_name) <= 64
 
 
+def test_responses_body_keeps_session_identity_metadata_only_and_deterministic() -> (
+    None
+):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "messages": [{"role": "user", "content": "hello"}],
+            "claude_session_id": "session-stable",
+            "metadata": {"timestamp": "2026-08-24T12:00:00Z"},
+        }
+    )
+
+    first = OpenCodeGoProvider._build_responses_body(
+        request,
+        reasoning=DEFAULT_REASONING_POLICY,
+    )
+    second = OpenCodeGoProvider._build_responses_body(
+        request,
+        reasoning=DEFAULT_REASONING_POLICY,
+    )
+
+    assert first == second
+    assert first["prompt_cache_key"] == "session-stable"
+    assert first["input"][0]["content"][0]["text"] == "hello"
+    assert "session_id" not in first["metadata"]
+
+
+def test_responses_body_rejects_turn_identity_as_cache_key() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "muse-spark-1.2-contributor",
+            "messages": [{"role": "user", "content": "hello"}],
+            "claude_session_id": "turn-123456",
+        }
+    )
+
+    body = OpenCodeGoProvider._build_responses_body(
+        request,
+        reasoning=DEFAULT_REASONING_POLICY,
+    )
+
+    assert "prompt_cache_key" not in body
+
+
 @pytest.mark.parametrize(
     "tool_choice",
     [

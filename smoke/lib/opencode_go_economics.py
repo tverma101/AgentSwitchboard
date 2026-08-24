@@ -13,6 +13,27 @@ from typing import Any
 PRICING_SOURCE_DATE = "2026-08-23"
 PRICING_SOURCE_URL = "https://dev.opencode.ai/docs/go/"
 COMPACTION_PHASES = frozenset({"pre_compact", "compact_turn", "post_compact", "resume"})
+_RAW_RECEIPT_KEYS = frozenset(
+    {
+        "content",
+        "data",
+        "input",
+        "messages",
+        "output",
+        "prompt",
+        "response",
+        "tool_arguments",
+        "prompt_cache_key",
+        "session_id",
+        "cwd",
+        "working_directory",
+        "timestamp",
+        "request_id",
+        "turn_id",
+        "run_id",
+        "trace_id",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +74,7 @@ class GoUsage:
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> GoUsage:
+        _reject_raw_receipt_fields(value)
         required = (
             "model",
             "uncached_input_tokens",
@@ -286,7 +308,6 @@ def canonical_prefix_json(request: dict[str, Any]) -> str:
         "system",
         "tools",
         "tool_choice",
-        "metadata",
         "cache_prefix",
     ):
         if key in request:
@@ -303,6 +324,15 @@ def stable_prefix_hash(request: dict[str, Any]) -> str:
     """Hash the canonical prefix without storing prompt content in a receipt."""
 
     return hashlib.sha256(canonical_prefix_json(request).encode("utf-8")).hexdigest()
+
+
+def _reject_raw_receipt_fields(value: dict[str, Any]) -> None:
+    raw_keys = sorted(_RAW_RECEIPT_KEYS.intersection(value))
+    if raw_keys:
+        raise ValueError(
+            "receipt rows must not contain raw content or unstable identity fields: "
+            + ", ".join(raw_keys)
+        )
 
 
 def load_jsonl(path: str | Path) -> list[GoUsage]:
@@ -342,6 +372,7 @@ def load_receipt(path: str | Path) -> tuple[dict[str, Any], list[GoUsage]]:
             receipt = value["_receipt"]
             if not isinstance(receipt, dict):
                 raise ValueError("_receipt metadata must be an object")
+            _reject_raw_receipt_fields(receipt)
             metadata.update(receipt)
             continue
         rows.append(GoUsage.from_mapping(value))

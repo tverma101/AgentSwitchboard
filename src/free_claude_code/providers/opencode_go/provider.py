@@ -30,6 +30,9 @@ from free_claude_code.core.fault_attribution import (
     media_metadata,
     stable_prefix_hash,
 )
+from free_claude_code.core.fault_attribution import (
+    request_shape_hash as canonical_request_shape_hash,
+)
 from free_claude_code.core.openai_responses import (
     ResponsesConversionError,
     ResponsesProviderStream,
@@ -464,7 +467,7 @@ class OpenCodeGoProvider(BaseProvider):
                 reasoning.effort.value if reasoning.effort is not None else None
             ),
             requested_reasoning_budget_tokens=reasoning.numeric_budget_tokens,
-            request_shape_hash=canonical_hash(body),
+            request_shape_hash=canonical_request_shape_hash(body),
             stable_prefix_hash=stable_prefix_hash(body),
             tool_schema_hash=canonical_hash(body.get("tools", [])),
         )
