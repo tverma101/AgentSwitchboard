@@ -17,6 +17,7 @@ from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.model_protocols import OPENCODE_GO_MODEL_PROTOCOLS
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
+from free_claude_code.core.provider_policy import ProviderPolicy
 
 _SHAPES = frozenset(
     {
@@ -110,6 +111,12 @@ def build_route_diagnostic(
             "controller_failover": False,
             "allowed_helpers": [],
         },
+        "provider_isolation": _provider_isolation_receipt(
+            ProviderPolicy(
+                primary_provider=resolved.provider_id,
+                primary_model=resolved.provider_model,
+            )
+        ),
         "decision": (
             plan.as_receipt()
             if plan is not None
@@ -122,6 +129,23 @@ def build_route_diagnostic(
                 "error": error,
             }
         ),
+    }
+
+
+def _provider_isolation_receipt(policy: ProviderPolicy) -> dict[str, object]:
+    """Return the launch policy preview without authorizing or contacting anything."""
+
+    forbidden = sorted(policy.forbidden_provider_families)
+    return {
+        "primary_provider": policy.primary_provider,
+        "primary_model": policy.primary_model,
+        "mode": policy.mode.value,
+        "paid_fallback": policy.paid_fallback,
+        "allowed_local_tools": sorted(policy.allowed_local_tools),
+        "forbidden_provider_families": forbidden,
+        "fallback_decision": "blocked",
+        "fallback_provider_families": forbidden,
+        "network": "none",
     }
 
 

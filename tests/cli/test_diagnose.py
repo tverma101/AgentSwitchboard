@@ -31,6 +31,27 @@ def test_route_diagnostic_is_zero_network_and_explains_muse_protocol() -> None:
     assert payload["controller"]["model"] == "muse-spark-1.2-contributor"
     assert payload["controller"]["protocol"] == "responses"
     assert payload["decision"]["decision"] == "primary"
+    assert payload["provider_isolation"] == {
+        "primary_provider": "opencode_go",
+        "primary_model": "muse-spark-1.2-contributor",
+        "mode": "strict",
+        "paid_fallback": False,
+        "allowed_local_tools": ["browser", "computer"],
+        "forbidden_provider_families": [
+            "anthropic",
+            "chatgpt",
+            "codex",
+            "openai",
+        ],
+        "fallback_decision": "blocked",
+        "fallback_provider_families": [
+            "anthropic",
+            "chatgpt",
+            "codex",
+            "openai",
+        ],
+        "network": "none",
+    }
 
 
 def test_route_diagnostic_rejects_unknown_vision_before_provider_io() -> None:

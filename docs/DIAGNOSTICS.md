@@ -16,6 +16,11 @@ typed rejection decision. `--known` and `--supported` are explicit diagnostic
 assertions; they do not query a provider catalog. Omit them to see the safe
 unknown/strict rejection that applies when capability evidence is absent.
 
+The `provider_isolation` section is a metadata-only launch-policy preview. It
+shows the primary provider/model, local tool allowance, and forbidden fallback
+families. `fallback_decision` is `blocked` under the default strict policy; the
+diagnostic does not authorize a request or instantiate a provider.
+
 Useful synthetic shapes include `text`, `tools`, `parallel-tools`, `vision`,
 `image-tool-result`, `reasoning`, `structured`, `browser`, `macos`, and
 `screenshot`. Multiple shapes can be comma-separated. The command is intended
