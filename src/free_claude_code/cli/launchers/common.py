@@ -1,5 +1,6 @@
 """Shared process helpers for installed client CLI launchers."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -13,21 +14,26 @@ from free_claude_code.cli.process_registry import (
     register_pid,
     unregister_pid,
 )
+from free_claude_code.core.version import package_version
 
 PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
+_PROXY_VERSION_MISMATCH_PREFIX = "FCC version mismatch:"
 
 
 def preflight_proxy(proxy_root_url: str) -> str | None:
-    """Return an error message when the local proxy health check is unreachable."""
+    """Return an error when the local proxy is unreachable or incompatible."""
 
     url = f"{proxy_root_url.rstrip('/')}{PROXY_PREFLIGHT_PATH}"
     request = Request(url, method="GET")
+    body: bytes | None = None
     try:
         with open_local_request(
             request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
         ) as response:
             status_code = response.getcode()
+            if 200 <= status_code < 300:
+                body = response.read()
     except HTTPError as exc:
         return f"returned HTTP {exc.code}"
     except URLError as exc:
@@ -37,7 +43,34 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
 
     if not 200 <= status_code < 300:
         return f"returned HTTP {status_code}"
+    if body is None:
+        return "FCC health endpoint returned no body"
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return "FCC health endpoint returned invalid JSON"
+    if not isinstance(payload, dict) or payload.get("status") != "healthy":
+        return "FCC health endpoint returned an invalid payload"
+
+    running_version = payload.get("version")
+    expected_version = package_version()
+    if running_version != expected_version:
+        display_version = (
+            running_version
+            if isinstance(running_version, str) and running_version
+            else "unknown"
+        )
+        return (
+            f"{_PROXY_VERSION_MISMATCH_PREFIX} running {display_version}, "
+            f"installed {expected_version}"
+        )
     return None
+
+
+def is_proxy_version_mismatch(error: str | None) -> bool:
+    """Return whether a preflight error identifies an older/newer FCC daemon."""
+
+    return isinstance(error, str) and error.startswith(_PROXY_VERSION_MISMATCH_PREFIX)
 
 
 def resolve_client_binary(
