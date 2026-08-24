@@ -1,7 +1,7 @@
 """Validation for the minimal Claude automatic-compaction receipt."""
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, TypedDict
 
 AUTO_COMPACT_RECEIPT_SCHEMA = "fcc.claude-auto-compact.v1"
 LIVE_INSTALLED_CLAUDE = "live_installed_claude"
@@ -28,6 +28,17 @@ class AutoCompactReceiptError(ValueError):
     """A receipt cannot prove the minimal automatic-compaction gate."""
 
 
+class AutoCompactReceiptSummary(TypedDict):
+    """Typed metadata-only result of the live receipt gate."""
+
+    schema: str
+    evidence_kind: str
+    status: str
+    requested_context_tokens: int
+    effective_context_tokens: int
+    unverified_boundaries: tuple[str, ...]
+
+
 def evidence_kind(receipt: Mapping[str, Any]) -> str:
     """Return the declared evidence class after checking the receipt envelope."""
 
@@ -43,7 +54,7 @@ def evidence_kind(receipt: Mapping[str, Any]) -> str:
 
 def validate_live_auto_compact_receipt(
     receipt: Mapping[str, Any],
-) -> dict[str, object]:
+) -> AutoCompactReceiptSummary:
     """Validate the smallest receipt that can claim installed-client proof.
 
     This validator deliberately rejects synthetic and contract-only artifacts.
@@ -149,19 +160,20 @@ def validate_live_auto_compact_receipt(
         "artifacts.retained_content",
     )
 
-    unverified_boundaries = receipt.get("unverified_boundaries")
-    if not isinstance(unverified_boundaries, Sequence) or isinstance(
-        unverified_boundaries, str
+    unverified_boundaries_value = receipt.get("unverified_boundaries")
+    if not isinstance(unverified_boundaries_value, Sequence) or isinstance(
+        unverified_boundaries_value, str
     ):
         raise AutoCompactReceiptError(
             "unverified_boundaries must be a sequence of explicit boundary names"
         )
     if not all(
-        isinstance(item, str) and item.strip() for item in unverified_boundaries
+        isinstance(item, str) and item.strip() for item in unverified_boundaries_value
     ):
         raise AutoCompactReceiptError(
             "unverified_boundaries must contain non-empty strings"
         )
+    unverified_boundaries = tuple(str(item) for item in unverified_boundaries_value)
     if (
         not commit_sha_recorded
         and "harness_commit_sha_at_capture" not in unverified_boundaries
@@ -176,7 +188,7 @@ def validate_live_auto_compact_receipt(
         "status": "passed",
         "requested_context_tokens": requested_tokens,
         "effective_context_tokens": effective_tokens,
-        "unverified_boundaries": tuple(unverified_boundaries),
+        "unverified_boundaries": unverified_boundaries,
     }
 
 
@@ -222,6 +234,7 @@ def _reject_forbidden_keys(value: object, *, path: str = "receipt") -> None:
 __all__ = [
     "AUTO_COMPACT_RECEIPT_SCHEMA",
     "AutoCompactReceiptError",
+    "AutoCompactReceiptSummary",
     "evidence_kind",
     "validate_live_auto_compact_receipt",
 ]
