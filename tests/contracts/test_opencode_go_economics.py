@@ -184,6 +184,33 @@ def test_compare_receipts_reports_token_and_retry_amplification() -> None:
     assert comparison["stable_prefix_match_rate"] == 1.0
 
 
+@pytest.mark.parametrize(
+    "mutator, message",
+    [
+        (lambda rows: rows[:-1], "same number of usage rows"),
+        (
+            lambda rows: [replace(rows[0], phase="resume")],
+            "same phase sequence",
+        ),
+        (
+            lambda rows: [replace(rows[0], model="other-model")],
+            "same model sequence",
+        ),
+    ],
+)
+def test_compare_receipts_rejects_misaligned_workloads(mutator, message) -> None:
+    native = [
+        replace(
+            _muse(),
+            phase="pre_compact",
+            compact_boundary_hash="boundary-1",
+        )
+    ]
+
+    with pytest.raises(ValueError, match=message):
+        compare_receipts(native, mutator(native))
+
+
 def test_load_receipt_preserves_commit_and_protocol_metadata(tmp_path) -> None:
     receipt = tmp_path / "receipt.jsonl"
     receipt.write_text(

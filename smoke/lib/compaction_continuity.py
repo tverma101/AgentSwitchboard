@@ -170,9 +170,14 @@ def validate_compaction_continuity(
             after.media_count,
             after.media_type_hash,
         ),
-        "learning_memory_not_duplicated": len(after.learning_memory_ids)
-        == len(set(after.learning_memory_ids)),
-        "skills_not_duplicated": len(after.skill_ids) == len(set(after.skill_ids)),
+        "learning_memory_not_duplicated": (
+            len(after.learning_memory_ids) == len(set(after.learning_memory_ids))
+            and set(before.learning_memory_ids).issubset(set(after.learning_memory_ids))
+        ),
+        "skills_not_duplicated": (
+            len(after.skill_ids) == len(set(after.skill_ids))
+            and set(before.skill_ids).issubset(set(after.skill_ids))
+        ),
         "retry_amplification_bounded": after.retry_attempts
         <= before.retry_attempts + 1,
     }

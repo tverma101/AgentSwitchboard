@@ -228,7 +228,9 @@ gate is relative to the native receipt: FCC may not trail native by more than 3
 percentage points. Use `--min-cache-read-share` only as an explicit legacy
 absolute override. It never stores or requires prompt content. Native-reference
 and live Go receipts remain opt-in human-supplied artifacts; deterministic unit
-tests cover the bridge-side serialization guard.
+tests cover the bridge-side serialization guard and reject native/FCC receipts
+with mismatched row counts, model sequences, phase sequences, or compact-boundary
+shape.
 
 Compaction-boundary rows may additionally include `phase` (`pre_compact`,
 `compact_turn`, `post_compact`, or `resume`) and a metadata-only

@@ -398,6 +398,7 @@ def compare_receipts(
 ) -> dict[str, Any]:
     """Compare native OpenCode and FCC receipts using estimated Go dollars."""
 
+    _validate_comparable_receipts(native_rows, fcc_rows)
     native = summarize(native_rows)
     fcc = summarize(fcc_rows)
     native_cost = float(native["estimated_cost_usd"])
@@ -430,6 +431,32 @@ def compare_receipts(
         comparison["native_by_phase"] = summarize_phases(native_rows)
         comparison["fcc_by_phase"] = summarize_phases(fcc_rows)
     return comparison
+
+
+def _validate_comparable_receipts(
+    native_rows: list[GoUsage], fcc_rows: list[GoUsage]
+) -> None:
+    """Reject receipts that do not describe the same logical workload shape."""
+
+    if len(native_rows) != len(fcc_rows):
+        raise ValueError(
+            "comparable receipts must contain the same number of usage rows"
+        )
+
+    native_phases = [row.phase for row in native_rows]
+    fcc_phases = [row.phase for row in fcc_rows]
+    if native_phases != fcc_phases:
+        raise ValueError("comparable receipts must use the same phase sequence")
+
+    native_models = [row.model for row in native_rows]
+    fcc_models = [row.model for row in fcc_rows]
+    if native_models != fcc_models:
+        raise ValueError("comparable receipts must use the same model sequence")
+
+    native_boundaries = [row.compact_boundary_hash is not None for row in native_rows]
+    fcc_boundaries = [row.compact_boundary_hash is not None for row in fcc_rows]
+    if native_boundaries != fcc_boundaries:
+        raise ValueError("comparable receipts must use the same compact-boundary shape")
 
 
 def summarize_phases(rows: list[GoUsage]) -> dict[str, dict[str, Any]]:

@@ -69,6 +69,11 @@ def test_compaction_receipt_passes_when_structural_state_is_preserved() -> None:
             replace(_state(), committed_tool_ids=()),
             "committed_tools_not_replayed",
         ),
+        (
+            replace(_state(), learning_memory_ids=()),
+            "learning_memory_not_duplicated",
+        ),
+        (replace(_state(), skill_ids=()), "skills_not_duplicated"),
         (replace(_state(), retry_attempts=3), "retry_amplification_bounded"),
     ],
 )
