@@ -379,13 +379,13 @@ class ResponsesProviderStream:
             )
         usage = response.get("usage")
         usage = usage if isinstance(usage, dict) else {}
-        input_tokens = _integer(usage.get("input_tokens"))
-        output_tokens = _integer(usage.get("output_tokens"))
+        input_tokens = _non_negative_integer(usage.get("input_tokens"))
+        output_tokens = _non_negative_integer(usage.get("output_tokens"))
         details = usage.get("input_tokens_details")
         details = details if isinstance(details, dict) else {}
         output_details = usage.get("output_tokens_details")
         output_details = output_details if isinstance(output_details, dict) else {}
-        cached_tokens = _integer(details.get("cached_tokens"))
+        cached_tokens = _non_negative_integer(details.get("cached_tokens"))
         if cached_tokens is not None and input_tokens is not None:
             if cached_tokens <= input_tokens:
                 # OpenAI-style Responses counts cached reads inside input_tokens;
@@ -395,11 +395,13 @@ class ResponsesProviderStream:
                 # An impossible provider breakdown is less useful than omitting
                 # the suspect cache field and preserving the reported total.
                 cached_tokens = None
-        cache_write_tokens = _integer(
+        cache_write_tokens = _non_negative_integer(
             details.get("cache_write_tokens", usage.get("cache_write_tokens"))
         )
         if cache_write_tokens is None:
-            cache_write_tokens = _integer(usage.get("cache_creation_input_tokens"))
+            cache_write_tokens = _non_negative_integer(
+                usage.get("cache_creation_input_tokens")
+            )
         self.usage_input_tokens = input_tokens
         self.usage_cache_read_tokens = cached_tokens
         self.usage_cache_write_tokens = cache_write_tokens
@@ -415,6 +417,10 @@ class ResponsesProviderStream:
             if isinstance(effective_effort, str) and effective_effort.strip()
             else None
         )
+        elif cached_tokens is not None:
+            # Without a valid total, the ledger's input estimate already covers
+            # the prompt. Retaining cached reads would double-count that input.
+            cached_tokens = None
         usage_fields: dict[str, int] = {}
         if cached_tokens is not None:
             usage_fields["cache_read_input_tokens"] = cached_tokens
@@ -471,5 +477,9 @@ def _string(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _integer(value: Any) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+def _non_negative_integer(value: Any) -> int | None:
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        else None
+    )
