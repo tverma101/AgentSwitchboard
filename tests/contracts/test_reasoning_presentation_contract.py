@@ -146,8 +146,10 @@ def test_opaque_reasoning_round_trips_into_next_provider_request() -> None:
     redacted_blocks = [
         event.data["content_block"]
         for event in events
-        if event.event == "content_block_start"
-        and event.data["content_block"].get("type") == "redacted_thinking"
+        if (
+            event.event == "content_block_start"
+            and event.data["content_block"].get("type") == "redacted_thinking"
+        )
     ]
     assert redacted_blocks == [{"type": "redacted_thinking", "data": opaque}]
 
