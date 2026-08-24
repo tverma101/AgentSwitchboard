@@ -1,0 +1,46 @@
+{
+  "receipt": "muse-auto-compact-tool-resume",
+  "captured_at": "2026-08-23T23:15:00-04:00",
+  "claude": {
+    "path": "claude",
+    "version": "2.1.228"
+  },
+  "fcc": {
+    "package_version": "4.28.1",
+    "isolated_server": "loopback-isolated",
+    "active_user_server_8082_touched": false
+  },
+  "context": {
+    "requested_tokens": 50000,
+    "effective_tokens": 50000
+  },
+  "compaction": {
+    "trigger": "auto",
+    "result": "success",
+    "pre_tokens": 60924,
+    "post_tokens": 33909,
+    "context_dropped": true,
+    "manual_compact_command_sent": false
+  },
+  "post_compaction": {
+    "bash_tool_use_seen": true,
+    "bash_marker_seen": true,
+    "resume_invocation_returned": 0,
+    "resume_marker_seen": true
+  },
+  "routing": {
+    "provider_id": "opencode_go",
+    "provider_model": "muse-spark-1.2-contributor",
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses",
+    "terminal_event": "response.completed",
+    "attempt_number": 1,
+    "route_canary_request_id": "req_5001347a3199463c8546485cffb7feb4",
+    "route_canary_prompt_log_deleted": true
+  },
+  "artifacts": {
+    "compact_info_log": "local-only; not published",
+    "retained_content": "metadata-only server INFO log"
+  }
+}
