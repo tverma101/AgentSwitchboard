@@ -140,8 +140,9 @@ def govern_messages_request(
                 artifact_dir=config.artifact_dir,
             )
             replacement = _redirected_text(
-                text,
+                artifact_text,
                 original_bytes=original_bytes,
+                original_tokens=_estimated_tokens(text),
                 artifact_path=artifact_path,
                 artifact_sha256=artifact_sha256,
                 max_bytes=config.tool_result_max_bytes,
@@ -250,6 +251,7 @@ def _redirected_text(
     text: str,
     *,
     original_bytes: int,
+    original_tokens: int,
     artifact_path: str,
     artifact_sha256: str,
     max_bytes: int,
@@ -259,7 +261,7 @@ def _redirected_text(
     header = (
         "[FCC context governor: tool result redirected]\n"
         f"original_bytes={original_bytes} visible_bytes=0000000000 "
-        f"original_tokens={_estimated_tokens(text)} "
+        f"original_tokens={original_tokens} "
         f"artifact_sha256={artifact_sha256} artifact_path={artifact_path}\n"
         "The complete redacted result is outside model context. Retrieve a "
         "bounded slice from artifact_path before relying on omitted content.\n"

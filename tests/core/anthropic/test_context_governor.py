@@ -45,9 +45,10 @@ def test_small_text_tool_result_is_unchanged(tmp_path) -> None:
 
 
 def test_large_text_result_is_redirected_to_private_artifact(tmp_path) -> None:
+    secret = "do-not-keep-in-artifact"
     text = (
         "HEAD marker\n"
-        + '"api_key": "do-not-keep-in-artifact"\n'
+        + f'"api_key": "{secret}"\n'
         + ("middle-line\n" * 20_000)
         + "TAIL marker\n"
     )
@@ -70,11 +71,13 @@ def test_large_text_result_is_redirected_to_private_artifact(tmp_path) -> None:
     assert "tool result redirected" in replacement
     assert "HEAD marker" in replacement
     assert "TAIL marker" in replacement
+    assert secret not in replacement
+    assert '"api_key": "<redacted>"' in replacement
     assert record.artifact_path in replacement
 
     artifact = tmp_path / record.artifact_path.rsplit("/", 1)[-1]
     assert artifact.read_text() == text.replace(
-        '"api_key": "do-not-keep-in-artifact"', '"api_key": "<redacted>"'
+        f'"api_key": "{secret}"', '"api_key": "<redacted>"'
     )
     assert hashlib.sha256(artifact.read_bytes()).hexdigest() == record.artifact_sha256
     assert stat.S_IMODE(artifact.stat().st_mode) == 0o600
