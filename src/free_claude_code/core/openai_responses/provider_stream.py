@@ -73,6 +73,8 @@ class ResponsesProviderStream:
         self.harness_thinking_delta = False
         self._tool_names = tool_names or OpenAIToolNameCodec.from_names(())
         self._tools: dict[str, _ToolState] = {}
+        self._tool_items_by_call_id: dict[str, str] = {}
+        self._duplicate_tool_item_ids: set[str] = set()
         self._encrypted_reasoning: dict[str, str] = {}
 
     def start(self) -> list[str]:
@@ -115,11 +117,25 @@ class ResponsesProviderStream:
             return []
         item_id = _string(item.get("id"))
         if item.get("type") == "function_call" and item_id:
-            self._tools[item_id] = _ToolState(
-                tool_index=len(self._tools),
-                call_id=_string(item.get("call_id")) or item_id,
-                name=self._tool_names.decode(_string(item.get("name"))),
-            )
+            call_id = _string(item.get("call_id")) or item_id
+            name = self._tool_names.decode(_string(item.get("name")))
+            existing_item_id = self._tool_items_by_call_id.get(call_id)
+            if existing_item_id is not None and existing_item_id != item_id:
+                self._duplicate_tool_item_ids.add(item_id)
+                return []
+            self._tool_items_by_call_id[call_id] = item_id
+            state = self._tools.get(item_id)
+            if state is None:
+                self._tools[item_id] = _ToolState(
+                    tool_index=len(self._tools),
+                    call_id=call_id,
+                    name=name,
+                )
+            else:
+                if state.call_id == item_id and call_id != item_id:
+                    state.call_id = call_id
+                if not state.name and name:
+                    state.name = name
         if item.get("type") == "reasoning":
             self.provider_reasoning_item = True
         if item.get("type") == "reasoning" and item_id:
@@ -169,6 +185,8 @@ class ResponsesProviderStream:
         delta = data.get("delta")
         if not item_id or not isinstance(delta, str):
             return []
+        if item_id in self._duplicate_tool_item_ids:
+            return []
         state = self._tools.get(item_id)
         if state is None:
             state = _ToolState(
@@ -202,6 +220,8 @@ class ResponsesProviderStream:
         item_id = _string(data.get("item_id"))
         arguments = data.get("arguments")
         if not item_id or not isinstance(arguments, str):
+            return []
+        if item_id in self._duplicate_tool_item_ids:
             return []
         state = self._tools.get(item_id)
         if state is None:
@@ -239,6 +259,8 @@ class ResponsesProviderStream:
         item_type = item.get("type")
         item_id = _string(item.get("id"))
         if item_type == "function_call":
+            if item_id in self._duplicate_tool_item_ids:
+                return []
             state = self._tools.get(item_id)
             if state is None:
                 state = _ToolState(
