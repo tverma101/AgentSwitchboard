@@ -19,3 +19,13 @@ def test_fastapi_and_openapi_report_installed_package_version() -> None:
         response = TestClient(app).get("/openapi.json")
     assert response.status_code == 200
     assert response.json()["info"]["version"] == package_version()
+
+
+def test_health_reports_running_daemon_package_version() -> None:
+    response = TestClient(create_test_app()).get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "healthy",
+        "version": package_version(),
+    }
