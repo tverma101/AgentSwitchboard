@@ -33,9 +33,11 @@ health and control endpoints but never opens a desktop browser or launches a
 terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
-This repository is a personal Harness fork. The release head is version
-`4.30.7`; examples below describe this checkout, not every feature proposed in
-the open design backlog.
+This repository is a personal Harness fork. The local release head is version
+`4.30.9`; examples below describe this checkout, not every feature proposed in
+the open design backlog. Live smoke receipts retain the package version that
+was installed when each receipt was captured; read the receipt's own metadata
+before treating it as evidence for a later release head.
 
 ## What You Get
 
@@ -56,8 +58,9 @@ the open design backlog.
 
 | Status | Current scope |
 | --- | --- |
-| **Shipped and locally verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, compact/resume proof, and managed fresh/resume/fork policy inheritance. |
-| **Implemented but boundary-specific** | Image metadata validation with typed fail-fast behavior for non-vision providers, focused-window Appshot capture, optional learning/memory/skills, Codex/Pi launchers, and messaging integrations. These require their own client/provider permissions and are not part of the minimal Muse release claim. |
+| **Current-source verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
+| **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, and a foreground Agent/subagent loop. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
+| **Partial or unverified** | Top-level Claude `--bg` inheritance (the observed daemon exited before FCC saw a request), live native-vs-FCC economic parity, deep semantic compaction torture, and a live `off`/`minimal` reasoning matrix. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Planned or design-only** | Capability-aware helper execution, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
 <div align="center">
@@ -107,6 +110,19 @@ INFO:     FCC control endpoint: http://127.0.0.1:8082/admin (terminal-only; brow
 ```
 
 Use the port shown in your terminal if it differs from `8082`.
+
+In a second terminal, verify the existing local server before launching the
+client:
+
+```bash
+curl -fsS http://127.0.0.1:8082/health
+fcc-learning claude-compat --binary "$(command -v claude)"
+```
+
+The expected health response contains `"status":"healthy"`; the compatibility
+check should report Claude `2.1.228` as `certified` for the default release
+configuration. If a different FCC process already owns the port, inspect it
+and use that healthy instance rather than starting a second server.
 
 `fcc-server --terminal` and `fcc-server --no-browser` are accepted as explicit
 terminal-only compatibility flags. Browser-opening flags and presentation
@@ -231,7 +247,8 @@ The foreground Agent/subagent route is separately recorded in the sanitized
 self-spawn remains an explicit unverified surface; the current observed
 [background-session receipt](smoke/receipts/claude-background-session-2026-08-24.json)
 shows Claude 2.1.228 returning a handle and then disappearing before FCC saw a
-request.
+request. The complete PASS/UNVERIFIED/SKIPPED map is in the
+[Claude compatibility matrix](smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
 
 ### Inspect usage and model labels
 
@@ -269,7 +286,7 @@ catalog at `~/.fcc/codex-model-catalog.json` when a client needs discovery.
 | [Mistral La Plateforme](https://console.mistral.ai/) | `MISTRAL_API_KEY` | `mistral/devstral-small-latest` |
 | [Mistral Codestral](https://console.mistral.ai/) | `CODESTRAL_API_KEY` | `mistral_codestral/codestral-latest` |
 | [OpenCode Zen](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode_zen/gpt-5.3-codex` |
-| [OpenCode Go](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode_go/minimax-m2.7` |
+| [OpenCode Go](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode_go/muse-spark-1.2-contributor` |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/models-and-providers) | `AI_GATEWAY_API_KEY` | `vercel/openai/gpt-5.5` |
 | [Amazon Bedrock](https://console.aws.amazon.com/bedrock/) | `AWS_BEARER_TOKEN_BEDROCK` | `bedrock/openai.gpt-oss-120b` |
 | [Hugging Face Inference Providers](https://huggingface.co/settings/tokens) | `HUGGINGFACE_API_KEY` | `huggingface/Qwen/Qwen3-Coder-480B-A35B-Instruct:fastest` |
@@ -660,6 +677,7 @@ On Windows, run `scripts/uninstall.ps1` in PowerShell.
 ## Project Links
 
 - [Report bugs or request features](https://github.com/tverma101/Harness/issues)
+- [Documentation index and release evidence](docs/README.md)
 - [Architecture and extension guide](ARCHITECTURE.md)
 - [Configuration reference](docs/CONFIGURATION.md)
 - [Claude context policy](docs/CLAUDE_CONTEXT_POLICY.md)

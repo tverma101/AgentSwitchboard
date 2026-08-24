@@ -164,6 +164,13 @@ uv run pytest smoke/product -n 0 -s --tb=short
 - `FCC_SMOKE_INTERACTIVE=1`: enables manual inbound Telegram/Discord checks.
 - `FCC_SMOKE_RUN_VOICE=1`: allows voice transcription backends to load/run.
 
+The checked-in
+[Claude compatibility matrix](receipts/claude-compatibility-matrix-2026-08-24.json)
+maps the current fresh, resume, fork, compact-resume, foreground-subagent,
+wrapper, background, and upgrade surfaces. It is deliberately explicit about
+`unverified` and `skipped` boundaries; a receipt row is not a claim that the
+underlying client surface is certified unless its status is `passed`.
+
 ## OpenCode Go transport benchmark
 
 The synthetic benchmark isolates FCC transport overhead with a local keep-alive
@@ -230,9 +237,9 @@ the compaction turn and resume turn cannot hide a post-compact token increase.
 The deterministic semantic gate in
 [`smoke/lib/compaction_continuity.py`](lib/compaction_continuity.py) records
 provider/model/protocol, system/tool and message-shape hashes, tool/result ids,
-reasoning-state type/hash, media type/count, memory/skill ids, committed tool
-ids, and attempts. It rejects prompt, image, tool-result, and reasoning payload
-fields before a receipt can be written.
+session relationship, reasoning-state type/hash, media type/count, memory/skill
+ids, committed tool ids, and attempts. It rejects prompt, image, tool-result,
+and reasoning payload fields before a receipt can be written.
 The checked-in [synthetic continuity receipt](receipts/compaction-continuity-synthetic.json)
 is a schema/regression fixture, not live provider evidence.
 The checked-in

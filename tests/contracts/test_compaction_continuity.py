@@ -21,6 +21,8 @@ def _state() -> CompactionState:
         protocol="responses",
         system_tool_schema_hash="schema-hash",
         message_shape_hash="message-shape",
+        session_id_hash="session-hash",
+        parent_session_id_hash="parent-session-hash",
         tool_call_ids=("call-1", "call-2"),
         tool_result_ids=("result-1", "result-2"),
         reasoning_state_type="opaque",
@@ -49,6 +51,10 @@ def test_compaction_receipt_passes_when_structural_state_is_preserved() -> None:
     "change,failed",
     [
         (replace(_state(), provider="anthropic"), "routing_preserved"),
+        (
+            replace(_state(), session_id_hash="different-session"),
+            "session_relationship_preserved",
+        ),
         (replace(_state(), reasoning_state_hash=None), "reasoning_state_preserved"),
         (replace(_state(), media_count=0), "media_preserved"),
         (
@@ -215,6 +221,29 @@ def test_checked_in_background_session_receipt_preserves_unverified_boundary() -
     assert "prompt" not in serialized
     assert "api_key" not in serialized
     assert "encrypted_content" not in serialized
+
+
+def test_checked_in_claude_compatibility_matrix_labels_unverified_surfaces() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "receipts"
+        / "claude-compatibility-matrix-2026-08-24.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload)
+    statuses = {item["name"]: item["status"] for item in payload["surfaces"]}
+
+    assert statuses["fresh_fccdanger"] == "passed"
+    assert statuses["managed_resume"] == "passed"
+    assert statuses["top_level_background_session"] == "unverified"
+    assert statuses["subagent_around_compaction"] == "unverified"
+    assert statuses["candidate_client_upgrade"] == "skipped"
+    assert payload["invariants"]["unverified_boundaries_are_labeled"] is True
+    assert payload["invariants"]["raw_request_bodies_retained"] is False
+    assert "prompt" not in serialized
+    assert "content" not in serialized
+    assert "api_key" not in serialized
 
 
 def test_checked_in_managed_resume_receipt_is_metadata_only() -> None:

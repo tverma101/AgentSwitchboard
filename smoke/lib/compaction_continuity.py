@@ -28,6 +28,8 @@ class CompactionState:
     skill_ids: tuple[str, ...] = ()
     committed_tool_ids: tuple[str, ...] = ()
     retry_attempts: int = 1
+    session_id_hash: str | None = None
+    parent_session_id_hash: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -81,6 +83,12 @@ class CompactionState:
             protocol=_required_string(value, "protocol"),
             system_tool_schema_hash=_required_string(value, "system_tool_schema_hash"),
             message_shape_hash=_required_string(value, "message_shape_hash"),
+            session_id_hash=_optional_string(
+                value.get("session_id_hash"), "session_id_hash"
+            ),
+            parent_session_id_hash=_optional_string(
+                value.get("parent_session_id_hash"), "parent_session_id_hash"
+            ),
             tool_call_ids=_string_tuple(value.get("tool_call_ids"), "tool_call_ids"),
             tool_result_ids=_string_tuple(
                 value.get("tool_result_ids"), "tool_result_ids"
@@ -124,6 +132,14 @@ def validate_compaction_continuity(
             after.provider,
             after.model,
             after.protocol,
+        ),
+        "session_relationship_preserved": (
+            before.session_id_hash,
+            before.parent_session_id_hash,
+        )
+        == (
+            after.session_id_hash,
+            after.parent_session_id_hash,
         ),
         "system_tool_schema_preserved": before.system_tool_schema_hash
         == after.system_tool_schema_hash,

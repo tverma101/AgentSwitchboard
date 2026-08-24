@@ -86,3 +86,8 @@ the opt-in top-level background route has an explicit
 [unverified receipt](../smoke/receipts/claude-background-session-2026-08-24.json).
 Claude 2.1.228 returned a background handle but its daemon disappeared before
 any FCC request or tool marker; no routing pass is claimed.
+
+The complete execution-surface status map is recorded in the metadata-only
+[Claude compatibility matrix](../smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
+It keeps passed, unverified, and skipped boundaries separate; the matrix does
+not promote the top-level background or subagent-around-compact gaps.

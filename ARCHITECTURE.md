@@ -8,6 +8,11 @@ For installation, provider setup, and user-facing usage, see
 [README.md](README.md). This file focuses on where behavior lives in the codebase
 and how contributors should extend it.
 
+The current release-head status and evidence vocabulary are maintained in the
+[documentation index](docs/README.md). A package version bump does not silently
+upgrade the capture version of an older live receipt; receipt metadata remains
+the source of truth for the run that produced it.
+
 ## System Overview
 
 Free Claude Code is a local proxy for agent clients. In this personal fork, the
