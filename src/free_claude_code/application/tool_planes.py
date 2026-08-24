@@ -53,12 +53,19 @@ class LocalToolPlane:
         self,
         tool_name: str,
         arguments: Mapping[str, object] | None = None,
+        *,
+        session_id: str | None = None,
     ) -> Mapping[str, object] | Sequence[Mapping[str, object]] | bytes:
         """Invoke one provider-independent local tool by its stable name."""
 
         args = arguments or {}
         if self.egress_guard is not None:
-            allowed = self.egress_guard.authorize("local", category="local_tool")
+            allowed = self.egress_guard.authorize(
+                "local",
+                model=tool_name,
+                category="local_tool",
+                session_id=session_id,
+            )
             if not allowed:
                 raise LocalToolError(
                     "local tool egress blocked before network I/O by diagnostic policy"

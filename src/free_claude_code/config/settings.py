@@ -6,6 +6,8 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from free_claude_code.core.provider_policy import ProviderPolicyMode
+
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
 from .env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
@@ -169,6 +171,24 @@ class Settings(BaseSettings):
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+
+    # ==================== Session provider/billing isolation ====================
+    provider_policy_mode: ProviderPolicyMode = Field(
+        default=ProviderPolicyMode.STRICT,
+        validation_alias="FCC_PROVIDER_POLICY_MODE",
+    )
+    provider_policy_allowed_helpers: str = Field(
+        default="",
+        validation_alias="FCC_PROVIDER_POLICY_ALLOWED_HELPERS",
+    )
+    provider_policy_allowed_local_tools: str = Field(
+        default="computer,browser",
+        validation_alias="FCC_PROVIDER_POLICY_ALLOWED_LOCAL_TOOLS",
+    )
+    provider_policy_paid_fallback: bool = Field(
+        default=False,
+        validation_alias="FCC_PROVIDER_POLICY_PAID_FALLBACK",
+    )
 
     # Per-model overrides (optional, falls back to MODEL)
     # Each can use a different provider

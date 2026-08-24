@@ -31,6 +31,7 @@ from free_claude_code.core.anthropic.streaming import (
     tool_schemas_by_name,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.provider_policy import ProviderPolicyError
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.admission import (
@@ -213,6 +214,9 @@ class OpenAIChatProvider(BaseProvider):
         self,
         body: dict,
         retry_session: ProviderRetrySession,
+        *,
+        model: str | None = None,
+        session_id: str | None = None,
     ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
@@ -223,7 +227,14 @@ class OpenAIChatProvider(BaseProvider):
             stream: Any | None = None
             retain_attempt = False
             try:
-                self._authorize_egress(self._base_url)
+                body_model = body.get("model")
+                self._authorize_egress(
+                    self._base_url,
+                    model=model
+                    or (body_model if isinstance(body_model, str) else None),
+                    session_id=session_id,
+                    request_id=retry_session.request_id,
+                )
                 create_body = self._prepare_create_body(body)
                 stream = await self._client.chat.completions.create(
                     **create_body,
@@ -233,6 +244,8 @@ class OpenAIChatProvider(BaseProvider):
                 retain_attempt = True
                 return stream, body, attempt
             except asyncio.CancelledError:
+                raise
+            except ProviderPolicyError:
                 raise
             except Exception as error:
                 retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
@@ -431,6 +444,8 @@ class _OpenAIChatStreamRunner:
                 stream, body, attempt = await self._provider._create_stream(
                     body,
                     retry_session,
+                    model=self._response_model,
+                    session_id=self._request.claude_session_id,
                 )
                 stream_opened = True
                 tool_argument_aliases = self._provider._tool_argument_aliases(body)
@@ -560,6 +575,8 @@ class _OpenAIChatStreamRunner:
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as error:
+                if isinstance(error, ProviderPolicyError):
+                    raise
                 if attempt is not None and not attempt.accepted:
                     await attempt.retry(
                         error,
@@ -764,6 +781,20 @@ class _OpenAIChatStreamRunner:
         input_tokens = (
             provider_input if provider_input is not None else self._input_tokens
         )
+        usage_fields = self._provider._anthropic_usage_fields(usage_info)
+        guard = self._provider._config.egress_guard
+        if guard is not None:
+            guard.record_usage(
+                self._provider._config.provider_family or self._provider._provider_name,
+                model=self._response_model,
+                session_id=self._request.claude_session_id,
+                request_id=self._request_id,
+                input_tokens=usage_fields.get("input_tokens", input_tokens),
+                output_tokens=output_tokens,
+                cache_read_tokens=usage_fields.get("cache_read_input_tokens", 0),
+                cache_write_tokens=usage_fields.get("cache_creation_input_tokens", 0),
+                retry_count=max(0, retry_session.attempts_started - 1),
+            )
         trace_event(
             stage="provider",
             event="provider.response.completed",
@@ -780,7 +811,7 @@ class _OpenAIChatStreamRunner:
                 ledger.final_stop_reason(map_stop_reason(finish_reason)),
                 output_tokens,
                 input_tokens=input_tokens,
-                usage_fields=self._provider._anthropic_usage_fields(usage_info),
+                usage_fields=usage_fields,
             )
         ):
             yield event
@@ -805,6 +836,8 @@ class _OpenAIChatStreamRunner:
                 stream, accepted_body, attempt = await self._provider._create_stream(
                     body,
                     retry_session,
+                    model=self._response_model,
+                    session_id=self._request.claude_session_id,
                 )
                 text_parts: list[str] = []
                 thinking_parts: list[str] = []
@@ -854,6 +887,8 @@ class _OpenAIChatStreamRunner:
                     tool_calls=completed_tool_calls or (),
                 )
             except Exception as error:
+                if isinstance(error, ProviderPolicyError):
+                    raise
                 last_error = error
                 retryable = is_retryable_stream_error(error)
                 if attempt is not None and not attempt.accepted:

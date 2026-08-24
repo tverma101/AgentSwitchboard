@@ -17,9 +17,16 @@ assertions; they do not query a provider catalog. Omit them to see the safe
 unknown/strict rejection that applies when capability evidence is absent.
 
 The `provider_isolation` section is a metadata-only launch-policy preview. It
-shows the primary provider/model, local tool allowance, and forbidden fallback
-families. `fallback_decision` is `blocked` under the default strict policy; the
-diagnostic does not authorize a request or instantiate a provider.
+shows the primary provider/model, explicit helper/local-tool allowances, and
+forbidden fallback families. `fallback_decision` and `would_be_fallback` are
+`blocked` under the default strict policy; the diagnostic does not authorize a
+request or instantiate a provider.
+
+Runtime egress traces use `provider.egress.decision` for pre-network admission
+and `provider.egress.usage` for sanitized per-session totals. Receipts retain
+hashed session identifiers plus request/category, token, cache, image, and
+retry counters. A blocked policy decision is attributed to `harness_bridge`;
+it is not retried or converted into an implicit provider fallback.
 
 Useful synthetic shapes include `text`, `tools`, `parallel-tools`, `vision`,
 `image-tool-result`, `reasoning`, `structured`, `browser`, `macos`, and

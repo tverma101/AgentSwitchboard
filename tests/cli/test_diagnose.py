@@ -36,6 +36,7 @@ def test_route_diagnostic_is_zero_network_and_explains_muse_protocol() -> None:
         "primary_model": "muse-spark-1.2-contributor",
         "mode": "strict",
         "paid_fallback": False,
+        "allowed_helpers": [],
         "allowed_local_tools": ["browser", "computer"],
         "forbidden_provider_families": [
             "anthropic",
@@ -45,6 +46,12 @@ def test_route_diagnostic_is_zero_network_and_explains_muse_protocol() -> None:
         ],
         "fallback_decision": "blocked",
         "fallback_provider_families": [
+            "anthropic",
+            "chatgpt",
+            "codex",
+            "openai",
+        ],
+        "would_be_fallback": [
             "anthropic",
             "chatgpt",
             "codex",

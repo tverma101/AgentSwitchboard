@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from loguru import logger
 
@@ -49,6 +49,10 @@ class BaseProvider(ABC):
 
     def __init__(self, config: ProviderConfig):
         self._config = config
+
+    def bind_egress_guard(self, guard: ProviderEgressGuard) -> None:
+        """Bind one runtime guard without changing the immutable policy."""
+        self._config = replace(self._config, egress_guard=guard)
 
     @abstractmethod
     def preflight_stream(
@@ -105,7 +109,15 @@ class BaseProvider(ABC):
             ",".join(cause_types) if cause_types else None,
         )
 
-    def _authorize_egress(self, url: str, *, category: str = "model") -> None:
+    def _authorize_egress(
+        self,
+        url: str,
+        *,
+        category: str = "model",
+        model: str | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+    ) -> None:
         """Enforce an optional launch-time egress policy before network I/O."""
         guard = self._config.egress_guard
         if guard is None:
@@ -113,7 +125,10 @@ class BaseProvider(ABC):
         allowed = guard.authorize_url(
             url,
             category=category,
+            model=model,
             provider_family=self._config.provider_family or None,
+            session_id=session_id,
+            request_id=request_id,
         )
         if not allowed:
             raise ProviderPolicyError(

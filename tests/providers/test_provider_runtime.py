@@ -23,6 +23,7 @@ from free_claude_code.config.provider_catalog import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     ZAI_DEFAULT_BASE,
 )
+from free_claude_code.core.provider_policy import ProviderPolicyError
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
@@ -560,6 +561,20 @@ def test_provider_runtime_caches_by_provider_id():
         second = runtime.resolve_provider("nvidia_nim")
 
     assert first is second
+
+
+def test_go_runtime_blocks_forbidden_provider_before_constructor() -> None:
+    constructor = MagicMock()
+    runtime = ProviderRuntime(
+        _make_settings(model="opencode_go/muse-spark-1.2-contributor"),
+        provider_constructor=constructor,
+    )
+
+    with pytest.raises(ProviderPolicyError, match="before network I/O"):
+        runtime.resolve_provider("openai")
+
+    constructor.assert_not_called()
+    assert runtime.egress_receipt()["blocked_counts"] == {"openai": 1}
 
 
 def test_provider_runtime_provider_owns_one_admission_controller() -> None:

@@ -36,6 +36,10 @@ from free_claude_code.core.openai_responses import (
     ResponsesStreamFailure,
     build_responses_provider_request,
 )
+from free_claude_code.core.provider_policy import (
+    ProviderEgressGuard,
+    ProviderPolicyError,
+)
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
     ReasoningControl,
@@ -109,6 +113,7 @@ def _record_failure(
     *,
     bridge: bool = False,
 ) -> None:
+    bridge = bridge or bool(getattr(error, "policy_blocked", False))
     code = getattr(error, "code", None)
     error_code = code if isinstance(code, str) else None
     status_code = getattr(error, "status_code", None)
@@ -153,12 +158,30 @@ def _trace_receipt(
     outcome: str,
     error: BaseException | None = None,
     started_at: float | None = None,
+    egress_guard: ProviderEgressGuard | None = None,
+    session_id: str | None = None,
 ) -> None:
     if started_at is not None:
         evidence.duration_ms = max(0, round((monotonic() - started_at) * 1000))
     fields: dict[str, Any] = {"outcome": outcome, **evidence.as_dict()}
     if error is not None:
         fields["error_type"] = type(error).__name__
+    if (
+        egress_guard is not None
+        and evidence.attempt_number > 0
+        and not isinstance(error, ProviderPolicyError)
+    ):
+        egress_guard.record_usage(
+            evidence.provider,
+            model=evidence.model,
+            session_id=session_id,
+            request_id=evidence.request_id,
+            input_tokens=evidence.input_tokens or 0,
+            output_tokens=evidence.output_tokens or 0,
+            cache_read_tokens=evidence.cache_read_tokens or 0,
+            cache_write_tokens=evidence.cache_write_tokens or 0,
+            retry_count=max(0, evidence.attempt_number - 1),
+        )
     trace_event(
         stage="provider",
         event="provider.fault_attribution",
@@ -293,6 +316,11 @@ class OpenCodeGoProvider(BaseProvider):
             responses_kwargs["http_client"] = self._native_http
         self._responses = AsyncOpenAI(**responses_kwargs)
 
+    def bind_egress_guard(self, guard: ProviderEgressGuard) -> None:
+        """Keep the native and chat sub-adapters on one session guard."""
+        super().bind_egress_guard(guard)
+        self._chat.bind_egress_guard(guard)
+
     def preflight_stream(
         self,
         request: MessagesRequest,
@@ -417,7 +445,12 @@ class OpenCodeGoProvider(BaseProvider):
             )
             _record_failure(evidence, error, bridge=True)
             _trace_receipt(
-                evidence, outcome="error", error=error, started_at=started_at
+                evidence,
+                outcome="error",
+                error=error,
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
             )
             raise
         body.pop("stream", None)
@@ -457,11 +490,18 @@ class OpenCodeGoProvider(BaseProvider):
                 attempt = await self._admission.open_attempt(retry_session)
                 evidence.attempt_number = retry_session.attempts_started
                 try:
-                    self._authorize_egress(self._base_url)
+                    self._authorize_egress(
+                        self._base_url,
+                        model=response_model,
+                        session_id=request.claude_session_id,
+                        request_id=request_id,
+                    )
                     upstream = await self._responses.responses.create(
                         **body, stream=True
                     )
                 except Exception as error:
+                    if isinstance(error, ProviderPolicyError):
+                        raise
                     should_retry = await attempt.retry(error)
                     await attempt.aclose()
                     attempt = None
@@ -501,23 +541,42 @@ class OpenCodeGoProvider(BaseProvider):
                 request_id=request_id,
                 protocol=GoProtocol.RESPONSES.value,
             )
-            _trace_receipt(evidence, outcome="completed", started_at=started_at)
+            _trace_receipt(
+                evidence,
+                outcome="completed",
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
+            )
             receipt_emitted = True
         except asyncio.CancelledError, GeneratorExit:
             evidence.fault_domain = FaultDomain.HARNESS_TRANSPORT
             evidence.confidence = FaultConfidence.HIGH
             evidence.evidence_codes.append("stream_cancelled")
             _sync_responses_evidence(evidence, stream_view)
-            _trace_receipt(evidence, outcome="cancelled", started_at=started_at)
+            _trace_receipt(
+                evidence,
+                outcome="cancelled",
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
+            )
             receipt_emitted = True
             raise
         except Exception as error:
             _sync_responses_evidence(evidence, stream_view)
             _record_failure(evidence, error)
             _trace_receipt(
-                evidence, outcome="error", error=error, started_at=started_at
+                evidence,
+                outcome="error",
+                error=error,
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
             )
             receipt_emitted = True
+            if isinstance(error, ProviderPolicyError):
+                raise
             self._log_stream_transport_error(
                 "OPENCODE_GO",
                 f" request_id={request_id}" if request_id else "",
@@ -544,7 +603,13 @@ class OpenCodeGoProvider(BaseProvider):
                     evidence,
                     RuntimeError("Responses stream closed before receipt emission."),
                 )
-                _trace_receipt(evidence, outcome="abandoned", started_at=started_at)
+                _trace_receipt(
+                    evidence,
+                    outcome="abandoned",
+                    started_at=started_at,
+                    egress_guard=self._config.egress_guard,
+                    session_id=request.claude_session_id,
+                )
             if attempt is not None:
                 await attempt.aclose()
 
@@ -572,7 +637,12 @@ class OpenCodeGoProvider(BaseProvider):
             )
             _record_failure(evidence, error, bridge=True)
             _trace_receipt(
-                evidence, outcome="error", error=error, started_at=started_at
+                evidence,
+                outcome="error",
+                error=error,
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
             )
             raise
         retry_session = self._admission.new_retry_session(request_id=request_id)
@@ -599,7 +669,12 @@ class OpenCodeGoProvider(BaseProvider):
                 attempt = await self._admission.open_attempt(retry_session)
                 evidence.attempt_number = retry_session.attempts_started
                 try:
-                    self._authorize_egress(f"{self._base_url}/messages")
+                    self._authorize_egress(
+                        f"{self._base_url}/messages",
+                        model=request.model,
+                        session_id=request.claude_session_id,
+                        request_id=request_id,
+                    )
                     response = await self._native_http.send(
                         self._native_http.build_request(
                             "POST",
@@ -630,6 +705,8 @@ class OpenCodeGoProvider(BaseProvider):
                             continue
                         raise error
                 except Exception as error:
+                    if isinstance(error, ProviderPolicyError):
+                        raise
                     if attempt is None:
                         raise
                     should_retry = await attempt.retry(error)
@@ -699,23 +776,42 @@ class OpenCodeGoProvider(BaseProvider):
                 request_id=request_id,
                 protocol=GoProtocol.MESSAGES.value,
             )
-            _trace_receipt(evidence, outcome="completed", started_at=started_at)
+            _trace_receipt(
+                evidence,
+                outcome="completed",
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
+            )
             receipt_emitted = True
         except asyncio.CancelledError, GeneratorExit:
             evidence.fault_domain = FaultDomain.HARNESS_TRANSPORT
             evidence.confidence = FaultConfidence.HIGH
             evidence.evidence_codes.append("stream_cancelled")
             evidence.output_committed = saw_payload
-            _trace_receipt(evidence, outcome="cancelled", started_at=started_at)
+            _trace_receipt(
+                evidence,
+                outcome="cancelled",
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
+            )
             receipt_emitted = True
             raise
         except Exception as error:
             evidence.output_committed = saw_payload
             _record_failure(evidence, error)
             _trace_receipt(
-                evidence, outcome="error", error=error, started_at=started_at
+                evidence,
+                outcome="error",
+                error=error,
+                started_at=started_at,
+                egress_guard=self._config.egress_guard,
+                session_id=request.claude_session_id,
             )
             receipt_emitted = True
+            if isinstance(error, ProviderPolicyError):
+                raise
             self._log_stream_transport_error(
                 "OPENCODE_GO",
                 f" request_id={request_id}" if request_id else "",
@@ -738,7 +834,13 @@ class OpenCodeGoProvider(BaseProvider):
                     evidence,
                     RuntimeError("Messages stream closed before receipt emission."),
                 )
-                _trace_receipt(evidence, outcome="abandoned", started_at=started_at)
+                _trace_receipt(
+                    evidence,
+                    outcome="abandoned",
+                    started_at=started_at,
+                    egress_guard=self._config.egress_guard,
+                    session_id=request.claude_session_id,
+                )
             if attempt is not None:
                 await attempt.aclose()
 

@@ -158,7 +158,8 @@ def _create_opencode_go(
     configured_model = "configured"
     if parse_provider_type(settings.model) == "opencode_go":
         configured_model = parse_model_name(settings.model)
-    policy = ProviderPolicy(
+    policy = ProviderPolicy.from_settings(
+        settings,
         primary_provider="opencode_go",
         primary_model=configured_model,
     )

@@ -112,7 +112,8 @@ def build_route_diagnostic(
             "allowed_helpers": [],
         },
         "provider_isolation": _provider_isolation_receipt(
-            ProviderPolicy(
+            ProviderPolicy.from_settings(
+                settings,
                 primary_provider=resolved.provider_id,
                 primary_model=resolved.provider_model,
             )
@@ -141,10 +142,12 @@ def _provider_isolation_receipt(policy: ProviderPolicy) -> dict[str, object]:
         "primary_model": policy.primary_model,
         "mode": policy.mode.value,
         "paid_fallback": policy.paid_fallback,
+        "allowed_helpers": sorted(policy.allowed_helpers),
         "allowed_local_tools": sorted(policy.allowed_local_tools),
         "forbidden_provider_families": forbidden,
         "fallback_decision": "blocked",
         "fallback_provider_families": forbidden,
+        "would_be_fallback": forbidden,
         "network": "none",
     }
 

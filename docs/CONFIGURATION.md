@@ -140,6 +140,17 @@ instead of becoming implicit fallbacks, and each allowed or blocked decision is
 recorded as metadata-only `provider.egress.decision` trace evidence. This does
 not claim that optional browser, computer-use, or vision helpers are enabled.
 
+The session policy is configured with `FCC_PROVIDER_POLICY_MODE=strict` by
+default. `FCC_PROVIDER_POLICY_ALLOWED_LOCAL_TOOLS` controls the existing local
+tool names (default `computer,browser`); it does not install or enable an
+adapter. Set `FCC_PROVIDER_POLICY_MODE=allow-listed` and provide exact
+`provider/model` values in `FCC_PROVIDER_POLICY_ALLOWED_HELPERS` only when a
+helper is intentionally allowed. `diagnostic` records a would-be fallback and
+still prevents the request from reaching a transport. `FCC_PROVIDER_POLICY_PAID_FALLBACK`
+cannot enable fallback under strict mode. Session receipts expose only hashed
+session identifiers, provider/category counts, token/cache/image/retry totals,
+and policy decisions; credentials, prompts, and response bodies are excluded.
+
 Image/document blocks are never silently discarded. Image requests require
 confirmed vision metadata; models with explicit non-vision metadata or missing
 vision confirmation are rejected at ingress. Provider adapters also fail before
