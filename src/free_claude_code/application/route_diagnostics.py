@@ -128,6 +128,8 @@ def build_route_diagnostic(
             "provider": resolved.provider_id,
             "model": resolved.provider_model,
             "model_ref": resolved.provider_model_ref,
+            "route_source": resolved.route_source,
+            "alias_applied": resolved.alias_applied,
             "protocol": _protocol_name(resolved.provider_id, resolved.provider_model),
             "virtual_context_window": resolved.virtual_context_window,
         },
