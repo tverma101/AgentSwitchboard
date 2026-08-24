@@ -132,6 +132,7 @@ class AttemptEvidence:
     provider_reasoning_tokens: int | None = None
     provider_reasoning_item: bool = False
     provider_visible_reasoning_summary: bool = False
+    provider_visible_reasoning_summary_length: int | None = None
     provider_reasoning_text: bool = False
     provider_opaque_reasoning: bool = False
     opaque_reasoning_hash: str | None = None

@@ -187,6 +187,9 @@ def _sync_responses_evidence(
     evidence.provider_visible_reasoning_summary = (
         stream_view.provider_visible_reasoning_summary
     )
+    evidence.provider_visible_reasoning_summary_length = (
+        stream_view.provider_visible_reasoning_summary_length
+    )
     evidence.provider_reasoning_text = stream_view.provider_reasoning_text
     evidence.provider_opaque_reasoning = stream_view.provider_opaque_reasoning
     evidence.opaque_reasoning_hash = stream_view.opaque_reasoning_hash

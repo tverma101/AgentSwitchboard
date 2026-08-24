@@ -65,6 +65,7 @@ class ResponsesProviderStream:
         self.effective_reasoning_effort: str | None = None
         self.provider_reasoning_item = False
         self.provider_visible_reasoning_summary = False
+        self.provider_visible_reasoning_summary_length: int | None = None
         self.provider_reasoning_text = False
         self.provider_opaque_reasoning = False
         self.opaque_reasoning_hash: str | None = None
@@ -134,6 +135,9 @@ class ResponsesProviderStream:
         self.provider_reasoning_item = True
         if summary:
             self.provider_visible_reasoning_summary = True
+            self.provider_visible_reasoning_summary_length = (
+                self.provider_visible_reasoning_summary_length or 0
+            ) + len(delta)
         else:
             self.provider_reasoning_text = True
         events = list(self.ledger.ensure_thinking_block())
