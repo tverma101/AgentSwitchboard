@@ -1,14 +1,19 @@
 """Synthetic zero-provider contracts for Responses reasoning presentation."""
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,
     text_content,
     thinking_content,
 )
+from free_claude_code.core.openai_responses.provider_input import (
+    build_responses_provider_request,
+)
 from free_claude_code.core.openai_responses.provider_stream import (
     ResponsesProviderStream,
 )
+from free_claude_code.core.reasoning import ReasoningPolicy
 
 
 def _complete(stream: ResponsesProviderStream, *, output_tokens: int = 2) -> list[str]:
@@ -106,3 +111,74 @@ def test_opaque_reasoning_never_fabricates_visible_summary() -> None:
         for event in events
         if event.event == "content_block_delta"
     )
+
+
+def test_opaque_reasoning_round_trips_into_next_provider_request() -> None:
+    opaque = "opaque-round-trip-token"
+    stream = ResponsesProviderStream(
+        message_id="msg_opaque_round_trip",
+        model="synthetic-model",
+        input_tokens=1,
+    )
+    output = stream.start()
+    output.extend(
+        stream.feed(
+            "response.output_item.added",
+            {"item": {"type": "reasoning", "id": "rs_round_trip"}},
+        )
+    )
+    output.extend(
+        stream.feed(
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "reasoning",
+                    "id": "rs_round_trip",
+                    "encrypted_content": opaque,
+                }
+            },
+        )
+    )
+    output.extend(stream.feed("response.output_text.delta", {"delta": "answer"}))
+    output.extend(_complete(stream))
+
+    events = parse_sse_text("".join(output))
+    redacted_blocks = [
+        event.data["content_block"]
+        for event in events
+        if event.event == "content_block_start"
+        and event.data["content_block"].get("type") == "redacted_thinking"
+    ]
+    assert redacted_blocks == [{"type": "redacted_thinking", "data": opaque}]
+
+    request = MessagesRequest.model_validate(
+        {
+            "model": "synthetic-model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        redacted_blocks[0],
+                        {"type": "text", "text": "answer"},
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+            ],
+        }
+    )
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"][0] == {
+        "type": "reasoning",
+        "summary": [],
+        "encrypted_content": opaque,
+    }
+    assert body["input"][1] == {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "answer"}],
+    }
+    assert body["include"] == ["reasoning.encrypted_content"]
