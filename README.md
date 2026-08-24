@@ -55,7 +55,7 @@ the open design backlog.
 
 | Status | Current scope |
 | --- | --- |
-| **Shipped and verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, provider-escape guard, bounded client context, global context-discipline policy, model catalog visibility, stable aliases, and compact/resume proof. |
+| **Shipped and verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context, global context-discipline policy, model catalog visibility, stable aliases, and compact/resume proof. |
 | **Implemented but boundary-specific** | Image metadata validation, focused-window Appshot capture, optional learning/memory/skills, Codex/Pi launchers, and messaging integrations. These require their own client/provider permissions and are not part of the minimal Muse release claim. |
 | **Planned or design-only** | Hard runtime tool-result governance, exhaustive reasoning presentation, full capability-aware fallback routing, browser/CDP control, computer use, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
@@ -192,6 +192,13 @@ The operation is idempotent, preserves unrelated `CLAUDE.md` text, and creates
 one recovery copy before its first mutation. Remove only the managed block with
 `fcc-learning context-policy uninstall`. This is advisory guidance; the
 launcher context cap remains the actual client budget.
+
+The compact/resume claim is backed by the sanitized
+[Muse receipt](smoke/receipts/muse-auto-compact-2026-08-23.json). It records the
+literal Claude Code version, the effective 50K context window, an automatic
+compact boundary, a post-compact tool turn, resume success, and the OpenCode Go
+Responses route. The local debug trace and prompt content are intentionally not
+published.
 
 ### Inspect usage and model labels
 
@@ -334,17 +341,22 @@ Providers that do not support a selected control retain their own behavior.
 
 ## Connect Your Client
 
-For terminal use, start `fcc-server`, then run `fcc-claude`, `fccdanger`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
+For the supported release path, start `fcc-server`, then run `fcc-claude`,
+`fccdanger`, `fcc-codex`, or `fcc-pi` in a terminal. The editor/App examples
+below are reference-only integrations; they are not part of the terminal-only
+Muse release proof and have not been used to establish the stable product gate.
 
-FCC owns Claude's gateway routing. Do not set `ANTHROPIC_BASE_URL`,
-`ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` in any active Claude settings
-`env` block: user `CLAUDE_CONFIG_DIR/settings.json`, project
-`.claude/settings.json`, project-local `.claude/settings.local.json`, or an
-explicit `--settings` overlay. Claude Code applies those settings over the
-process environment. Both `fcc-claude` and the managed desktop session fail
-closed with the source and conflicting key names instead of launching a session
-that could bypass FCC. If you use `--setting-sources` to disable a layer, FCC
-honors that explicit filter.
+FCC owns Claude's gateway routing for `fcc-claude`, `fccdanger`, and managed
+sessions. Do not set `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, or
+`ANTHROPIC_API_KEY` in an active Claude settings `env` block for those launchers:
+user `CLAUDE_CONFIG_DIR/settings.json`, project `.claude/settings.json`,
+project-local `.claude/settings.local.json`, or an explicit `--settings`
+overlay. Claude Code applies those settings over the process environment. The
+FCC launchers fail closed with the source and conflicting key names instead of
+launching a session that could bypass FCC. If you use `--setting-sources` to
+disable a layer, FCC honors that explicit filter. Direct editor integrations
+must be treated as separate, experimental clients because they configure their
+own environment rather than using the FCC launcher firewall.
 
 ### Visual attachments and Appshots
 
@@ -368,6 +380,10 @@ receipt and attach the image without injecting keystrokes into the Claude TUI.
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
+
+Reference-only: this configures the editor extension directly and is not part of
+the supported terminal-only release gate. Use `fcc-claude` or `fccdanger` for
+the verified path.
 
 Install the [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code). Open VS Code's user settings as JSON and add:
 
@@ -450,6 +466,10 @@ Match `model`, the port, and bearer token to `~/.fcc/.env`, then restart VS Code
 
 <details>
 <summary><strong>Claude Code in JetBrains ACP</strong></summary>
+
+Reference-only: this configures JetBrains' external ACP process directly and is
+not part of the supported terminal-only release gate. Use `fcc-claude` or
+`fccdanger` for the verified path.
 
 Edit the installed Claude ACP configuration:
 
@@ -606,6 +626,9 @@ On Windows, run `scripts/uninstall.ps1` in PowerShell.
 - [Report bugs or request features](https://github.com/tverma101/Harness/issues)
 - [Architecture and extension guide](ARCHITECTURE.md)
 - [Configuration reference](docs/CONFIGURATION.md)
+- [Claude context policy](docs/CLAUDE_CONTEXT_POLICY.md)
+- [Learning, memory, and skills](docs/CLAUDE_LEARNING.md)
+- [Terminal-only startup contract](docs/ADMIN_TERMINAL_BROWSER.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Contributing guide](CONTRIBUTING.md)
 

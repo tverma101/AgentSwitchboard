@@ -54,3 +54,8 @@ a single oversized message. It requires Claude's actual successful compact
 status/boundary and a resumed continuation marker; the FCC cap in that probe is
 50,000 tokens. The leash does not replace a future runtime tool-result
 governor.
+
+The current live compact/resume evidence is recorded in the sanitized
+[Muse auto-compact receipt](../smoke/receipts/muse-auto-compact-2026-08-23.json).
+That receipt is evidence for one installed-client boundary, not a claim that the
+advisory leash replaces the future hard runtime governor.

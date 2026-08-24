@@ -10,10 +10,18 @@ and how contributors should extend it.
 
 ## System Overview
 
-Free Claude Code is a local proxy for agent clients. It accepts Anthropic
-Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
-from Codex CLI, IDE, and App clients, routes the request to a configured
-upstream provider, and preserves the wire protocol expected by the caller.
+Free Claude Code is a local proxy for agent clients. In this personal fork, the
+supported release boundary is terminal-only: `fcc-server` starts the local
+gateway and `fcc-claude`/`fccdanger` run Claude Code through it. The proxy
+accepts Anthropic Messages traffic from Claude Code and Pi clients and OpenAI
+Responses traffic from Codex clients, routes requests to a configured upstream
+provider, and preserves the caller's wire protocol.
+
+The local Admin HTTP surface, desktop shell, messaging bridge, direct editor
+integrations, and tool-plane experiments remain package capabilities with their
+own permissions and evidence boundaries. They are not implied by, or required
+for, the terminal-only Muse release claim. `fcc-server` never opens a browser
+or launches a terminal-browser presentation.
 
 There are three runtime surfaces:
 
@@ -43,7 +51,7 @@ flowchart LR
     ClaudeCode[Claude Code CLI and Extensions] --> ProxyAPI[FastAPI Proxy]
     Codex[Codex CLI, IDE, and App] --> ProxyAPI
     Pi[Pi Coding Agent] --> ProxyAPI
-    AdminUI[Local Admin UI] --> ProxyAPI
+    AdminAPI[Local Admin API (not auto-opened)] --> ProxyAPI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
     ClientCLI --> ProxyAPI
@@ -161,9 +169,10 @@ FCC optimizes for installed user workflows, not internal compatibility. The
 behavior that must be preserved is that these user-facing surfaces run correctly
 for real prompts against supported providers:
 
-- `fcc-server`, the Windows/macOS FCC Desktop shell, and the local Admin UI for
-  configuring supported providers, model routing, auth, server tools, messaging,
-  and diagnostics.
+- `fcc-server` and the local terminal clients are the supported release
+  surface. The local Admin API and optional desktop shell can configure or
+  operate additional package features, but they are not part of the
+  terminal-only Muse release proof.
 - `fcc-claude`, Claude Code, and the Anthropic-compatible proxy behavior Claude
   Code relies on, including streaming text, native/interleaved thinking, tool
   use/results, model discovery, token counting, retries/recovery, and supported
@@ -175,10 +184,9 @@ for real prompts against supported providers:
 - `fcc-pi`, Pi, and the Anthropic-compatible proxy behavior Pi relies on,
   including an FCC-scoped model catalog, streaming text and reasoning, and tool
   use/results.
-- Configured Discord and Telegram messaging bridges, including command handling,
-  reply-based conversation branches, status updates, transcript rendering,
-  managed Claude/Codex task execution where configured, task stop/clear flows,
-  persistence, and optional voice-note transcription.
+- Configured Discord and Telegram messaging bridges remain optional package
+  surfaces with separate provider, credential, and live-client evidence; their
+  presence does not expand the terminal-only release contract.
 - Installation, update, and uninstall scripts insofar as they make the
   above workflows available on a user's machine.
 
@@ -269,15 +277,12 @@ incomplete ASGI shutdown therefore exits the supervisor instead of overlapping
 old and replacement graphs. On final shutdown it best-effort kills registered
 child processes.
 
-[cli/desktop.py](src/free_claude_code/cli/desktop.py) owns the platform-neutral
-desktop lifecycle. An operating-system file lock admits one desktop host, the
-tray remains on the process main thread for native event-loop compatibility, and
-one worker runs the same in-process `ServerSupervisor` with console output and
-automatic browser launch disabled. A second desktop launch waits for health,
-opens the existing Admin page, and exits. Tray restart delegates to the canonical
-supervisor; tray quit requests the same graceful ASGI and application-runtime
-shutdown as `fcc-server`. [cli/desktop_tray.py](src/free_claude_code/cli/desktop_tray.py)
-owns only native status-area presentation and callbacks.
+[cli/desktop.py](src/free_claude_code/cli/desktop.py) owns an optional
+platform-neutral desktop lifecycle. It is not the supported terminal-only
+startup path and must not be used as evidence for the Muse release gate. The
+canonical release entrypoint is [cli/entrypoints.py](src/free_claude_code/cli/entrypoints.py);
+it reports readiness in the terminal and never opens a browser. The optional
+desktop/tray modules own only their native presentation and callbacks.
 
 [runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
 supervisor supplies one settings snapshot and its restart callback; bootstrap
