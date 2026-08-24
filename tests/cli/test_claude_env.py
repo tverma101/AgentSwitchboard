@@ -62,6 +62,18 @@ def test_build_claude_proxy_env_uses_explicit_override() -> None:
     assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "192000"
 
 
+def test_build_claude_proxy_env_propagates_absolute_process_wrapper() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={},
+        model_id="muse-spark-1.2-contributor",
+        process_wrapper_path="/private/tmp/fcc-wrapper",
+    )
+
+    assert env["CLAUDE_CODE_PROCESS_WRAPPER"] == "/private/tmp/fcc-wrapper"
+
+
 def test_resolved_model_id_prefers_argv_over_env(tmp_path) -> None:
     base_env = _settings_env(
         tmp_path, saved="anthropic/opencode/deepseek-v4-flash-free"
