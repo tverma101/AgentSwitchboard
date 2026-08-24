@@ -15,6 +15,7 @@ from free_claude_code.core.diagnostics import (
     safe_exception_message,
 )
 from free_claude_code.core.openai_responses import openai_error_payload
+from free_claude_code.core.profile import ProfileIdentity, resolve_profile
 from free_claude_code.core.trace import (
     extract_claude_session_id_from_headers,
     trace_event,
@@ -34,11 +35,18 @@ from .routes import router
 from .validation_log import summarize_request_validation_body
 
 
-def create_app(services: ApiServices) -> FastAPI:
+def create_app(
+    services: ApiServices,
+    *,
+    profile: str | ProfileIdentity | None = None,
+) -> FastAPI:
     """Create the HTTP adapter around explicitly supplied runtime services."""
     app = FastAPI(title="Claude Code Proxy", version=package_version())
     app.state.services = services
-    app.add_middleware(RequestCorrelationMiddleware)
+    app.add_middleware(
+        RequestCorrelationMiddleware,
+        profile=resolve_profile(profile),
+    )
     app.add_middleware(AdminNoStoreMiddleware)
 
     app.include_router(admin_router)

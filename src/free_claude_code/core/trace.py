@@ -15,6 +15,7 @@ from typing import Any
 from loguru import logger
 
 from free_claude_code.core.async_iterators import try_close_async_iterator
+from free_claude_code.core.profile import current_profile
 
 TRACE_PAYLOAD_BINDING = "trace_payload"
 
@@ -67,11 +68,13 @@ def sanitize_trace_value(obj: Any) -> Any:
 
 def trace_event(*, stage: str, event: str, source: str, **fields: Any) -> None:
     """Emit one structured DEBUG trace row merged into JSON by the log sink."""
+    profile_fields = current_profile().receipt()
     payload = sanitize_trace_value(
         {
             "stage": stage,
             "event": event,
             "source": source,
+            **profile_fields,
             **fields,
         },
     )

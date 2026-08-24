@@ -124,6 +124,10 @@ def test_attempt_receipt_is_metadata_only_and_serializable() -> None:
     assert receipt["requested_reasoning_effort"] == "high"
     assert receipt["requested_reasoning_control"] == "on"
     assert receipt["provider_visible_reasoning_summary"] is True
+    assert receipt["profile"] == "default"
+    assert receipt["profile_namespace"] == "fcc.learning.profile/default"
+    assert receipt["profile_schema"] == "fcc.learning.profile"
+    assert receipt["profile_version"] == 1
 
 
 def test_attempt_receipt_defaults_timing_to_null_when_no_stream_started() -> None:

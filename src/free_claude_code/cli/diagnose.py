@@ -17,6 +17,7 @@ from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.model_protocols import OPENCODE_GO_MODEL_PROTOCOLS
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
+from free_claude_code.core.profile import ProfileIdentity, resolve_profile
 from free_claude_code.core.provider_policy import ProviderPolicy
 
 _SHAPES = frozenset(
@@ -51,6 +52,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             mode=CapabilityRoutingMode(args.mode),
             known_capabilities=_parse_capabilities(args.known),
             supported_capabilities=_parse_capabilities(args.supported),
+            profile=args.profile,
         )
     except (ValueError, CapabilityRoutingError) as exc:
         parser.error(str(exc))
@@ -65,9 +67,11 @@ def build_route_diagnostic(
     mode: CapabilityRoutingMode = CapabilityRoutingMode.STRICT,
     known_capabilities: frozenset[Capability] = frozenset(),
     supported_capabilities: frozenset[Capability] = frozenset(),
+    profile: str | ProfileIdentity | None = None,
 ) -> dict[str, Any]:
     """Build one synthetic route explanation without provider I/O."""
 
+    active_profile = resolve_profile(profile)
     requested_model = model or settings.model
     request = _synthetic_request(requested_model, shapes)
     resolved = ModelRouter(settings).resolve(request.model)
@@ -91,6 +95,7 @@ def build_route_diagnostic(
         "diagnostic": "capability_route",
         "network": "none",
         "billable_requests": 0,
+        **active_profile.receipt(),
         "controller": {
             "requested_model": requested_model,
             "provider": resolved.provider_id,
@@ -176,6 +181,10 @@ def _parser() -> argparse.ArgumentParser:
         "--supported",
         default="",
         help="comma-separated capability evidence names supported by the model",
+    )
+    route.add_argument(
+        "--profile",
+        help="launch-bound FCC profile to include in the diagnostic identity",
     )
     return parser
 

@@ -13,6 +13,7 @@ from free_claude_code.core.anthropic import (
     get_token_count,
 )
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.profile import current_profile
 from free_claude_code.core.trace import (
     extract_claude_session_id_from_headers,
     trace_event,
@@ -197,7 +198,7 @@ async def probe_root():
 
 @router.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", **current_profile().receipt()}
 
 
 @router.api_route("/health", methods=["HEAD", "OPTIONS"])

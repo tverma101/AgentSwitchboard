@@ -110,6 +110,10 @@ async def test_correlation_context_and_headers_span_the_complete_stream() -> Non
                 "http_path": "/v1/responses",
                 "claude_session_id": "session_test",
                 "request_id": app_request_id,
+                "profile": "default",
+                "profile_namespace": "fcc.learning.profile/default",
+                "profile_schema": "fcc.learning.profile",
+                "profile_version": 1,
             }
         ]
 

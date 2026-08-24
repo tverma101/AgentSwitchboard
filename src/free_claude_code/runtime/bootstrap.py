@@ -9,6 +9,7 @@ from free_claude_code.api.ports import ApiServices
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import server_log_path, usage_db_path
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.profile import resolve_profile
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
 from free_claude_code.providers.admission import ProviderAdmissionController
@@ -55,11 +56,13 @@ def build_asgi_app(
         connected_provider_ids=openai_auth.connected_provider_ids,
         model_catalog_publisher=CodexModelCatalogPublisher(),
     )
+    profile = resolve_profile()
     runtime = ApplicationRuntime(
         provider_manager,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
+        profile=profile,
     )
     services = ApiServices(
         requests=provider_manager,
@@ -67,7 +70,7 @@ def build_asgi_app(
         tasks=runtime,
         usage=UsageStore(usage_db_path()),
     )
-    return RuntimeASGIApp(create_app(services), runtime)
+    return RuntimeASGIApp(create_app(services, profile=profile), runtime)
 
 
 def _create_openai_provider(

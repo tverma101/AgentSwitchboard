@@ -10,12 +10,14 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from free_claude_code.core.profile import (
+    ProfileIdentity,
+    ProfileSwitchError,
+    resolve_profile,
+)
+
 from .config import (
-    PROFILE_SCHEMA,
-    PROFILE_VERSION,
-    configured_profile,
     learning_home,
-    normalize_profile,
     profile_database,
     profile_home,
 )
@@ -91,23 +93,44 @@ def _truncate(text: str, limit: int) -> str:
 class LearningStore:
     """SQLite-backed memory, skill-history, and learning-queue state."""
 
-    def __init__(self, path: Path | None = None, *, profile: str | None = None) -> None:
-        self.profile = (
-            normalize_profile(profile) if profile is not None else configured_profile()
-        )
-        self.path = path or profile_database(self.profile)
-        self.profile_home = profile_home(self.profile)
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        profile: str | ProfileIdentity | None = None,
+    ) -> None:
+        self._profile = resolve_profile(profile)
+        self.path = path or profile_database(self._profile.name)
+        self.profile_home = profile_home(self._profile.name)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+
+    @property
+    def profile(self) -> str:
+        """Return the immutable profile name captured when the store opened."""
+
+        return self._profile.name
+
+    @property
+    def profile_identity(self) -> ProfileIdentity:
+        """Return the complete immutable identity for diagnostics callers."""
+
+        return self._profile
+
+    def require_profile(self, profile: str | ProfileIdentity | None) -> None:
+        """Reject rebinding this store to another profile namespace."""
+
+        selected = resolve_profile(profile)
+        if selected != self._profile:
+            raise ProfileSwitchError(
+                f"learning store is bound to profile {self.profile!r}; "
+                f"cannot use {selected.name!r}"
+            )
 
     def profile_info(self) -> dict[str, str | int]:
         """Return stable profile metadata for status and diagnostics callers."""
 
-        return {
-            "profile": self.profile,
-            "profile_schema": PROFILE_SCHEMA,
-            "profile_version": PROFILE_VERSION,
-        }
+        return self._profile.receipt()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0)

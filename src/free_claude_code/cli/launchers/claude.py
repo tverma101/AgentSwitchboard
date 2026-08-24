@@ -41,7 +41,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         args, selected_profile = extract_profile_argument(args)
-        configured_profile()
+        launch_profile = selected_profile or configured_profile()
     except LearningProfileError as exc:
         print(f"FCC Learning profile selection failed: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
@@ -50,7 +50,10 @@ def launch(argv: Sequence[str] | None = None) -> None:
 
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
-    if error := preflight_proxy(proxy_root_url):
+    if error := preflight_proxy(
+        proxy_root_url,
+        expected_profile=launch_profile,
+    ):
         print(
             f"Free Claude Code proxy is not reachable at {proxy_root_url}: {error}",
             file=sys.stderr,

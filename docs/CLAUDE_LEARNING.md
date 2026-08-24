@@ -59,7 +59,7 @@ That means a project-specific learned procedure is visible as a normal working-t
 
 Every accepted skill revision is stored in the local `skill_revisions` table with a SHA-256 digest. Before an update, the previous bytes are retained. The current skill is provided to the distiller so an update must be a complete procedure; local validation requires frontmatter, bounded fields, no secrets or project-path leakage, and an explicit validation/check/test step. An update is rejected if it drops a normalized validation clause from the current skill. A prior revision can be restored byte-for-byte with `fcc-learning skill rollback <skill-key> <revision>`.
 
-Profile selection is explicit and fixed for the launched session:
+Profile selection is explicit and fixed for the launched process/session:
 
 ```bash
 fcc-claude --profile coding
@@ -71,9 +71,22 @@ fcc-learning memory list --cwd /path/to/project --profile coding
 `fcc-claude --profile` is consumed by the FCC launcher and is not forwarded to
 Claude Code. The selected environment is inherited by SessionStart,
 UserPromptSubmit, and Stop hooks. A SessionStart hook announces the active
-profile in its context, and `fcc-learning status` reports the profile schema,
-version, and database path. Switching profiles under a live Claude process is
-not supported; start a new session instead.
+profile and namespace in its context, and `fcc-learning status` reports the
+profile schema, version, namespace, and database path. The learning store
+captures that identity when it opens and has no profile mutation operation.
+The small runtime selector also rejects a switch while a session lease is live;
+start a new session instead. If an FCC server is already running, `/health`,
+Admin status, request traces, and provider fault receipts carry the server's
+launch-bound profile. `fcc-claude --profile` refuses a known live server whose
+profile differs, so a client cannot silently learn into one namespace while
+the gateway reports another.
+
+Profiles are learning namespaces only. They do not select providers, change
+billing/usage policy, or create a second memory/skill engine. The existing #5
+memory store, queue, hooks, and skill writer are reused inside the selected
+namespace. Profile switching from the Admin/App Mode surface and portable
+profile transfer remain separate follow-up work; this foundation does not add
+the full #68 bundle workflow.
 
 ## Learning-model route
 

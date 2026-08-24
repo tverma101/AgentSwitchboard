@@ -1,5 +1,6 @@
 """Shared process helpers for installed client CLI launchers."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -18,8 +19,12 @@ PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
 
 
-def preflight_proxy(proxy_root_url: str) -> str | None:
-    """Return an error message when the local proxy health check is unreachable."""
+def preflight_proxy(
+    proxy_root_url: str,
+    *,
+    expected_profile: str | None = None,
+) -> str | None:
+    """Check proxy health and optionally enforce its launch-bound profile."""
 
     url = f"{proxy_root_url.rstrip('/')}{PROXY_PREFLIGHT_PATH}"
     request = Request(url, method="GET")
@@ -28,6 +33,22 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
             request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
         ) as response:
             status_code = response.getcode()
+            if expected_profile is not None and 200 <= status_code < 300:
+                try:
+                    payload = json.loads(response.read().decode("utf-8"))
+                except UnicodeDecodeError, json.JSONDecodeError, OSError:
+                    payload = None
+                active_profile = (
+                    payload.get("profile") if isinstance(payload, dict) else None
+                )
+                if (
+                    isinstance(active_profile, str)
+                    and active_profile != expected_profile
+                ):
+                    return (
+                        f"server is using profile {active_profile!r}; requested "
+                        f"{expected_profile!r}. Stop and restart FCC before switching."
+                    )
     except HTTPError as exc:
         return f"returned HTTP {exc.code}"
     except URLError as exc:

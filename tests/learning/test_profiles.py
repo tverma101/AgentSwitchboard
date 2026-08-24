@@ -12,6 +12,10 @@ from unittest.mock import patch
 import pytest
 
 from free_claude_code.cli.launchers import claude
+from free_claude_code.core.profile import (
+    ProfileRuntime,
+    ProfileSwitchError,
+)
 from free_claude_code.learning import cli as learning_cli
 from free_claude_code.learning.config import (
     LearningProfileError,
@@ -164,6 +168,55 @@ def test_learning_cli_selects_profile_for_status_and_memory(
     )
     assert rows[0]["id"] == memory_id
     assert run("status", "--profile", "default")["memories"] == 0
+    assert status["profile_namespace"] == "fcc.learning.profile/coding"
+
+
+def test_profile_runtime_rejects_switching_a_live_session() -> None:
+    runtime = ProfileRuntime("coding")
+
+    with runtime.session("session-coding") as lease:
+        assert lease.profile.name == "coding"
+        lease.require("coding")
+        with pytest.raises(ProfileSwitchError, match="live"):
+            runtime.switch("school")
+        with pytest.raises(ProfileSwitchError, match="fixed"):
+            lease.require("school")
+
+    assert runtime.switch("school").name == "school"
+
+
+def test_named_profile_memory_namespaces_do_not_cross_contaminate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
+    coding = LearningStore(profile="coding")
+    school = LearningStore(profile="school")
+
+    coding.remember(
+        scope="global",
+        project_key=str(tmp_path),
+        text="Coding profile prefers focused tests.",
+        confidence=0.98,
+        source="user_explicit",
+    )
+    school.remember(
+        scope="global",
+        project_key=str(tmp_path),
+        text="School profile prefers lecture notes.",
+        confidence=0.98,
+        source="user_explicit",
+    )
+
+    coding_text = " ".join(
+        str(row["text"]) for row in coding.relevant_memories(project_key=str(tmp_path))
+    )
+    school_text = " ".join(
+        str(row["text"]) for row in school.relevant_memories(project_key=str(tmp_path))
+    )
+    assert "focused tests" in coding_text
+    assert "lecture notes" not in coding_text
+    assert "lecture notes" in school_text
+    assert "focused tests" not in school_text
 
 
 def test_launcher_profile_is_removed_from_claude_args_and_inherited(

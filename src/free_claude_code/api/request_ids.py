@@ -7,19 +7,31 @@ from loguru import logger
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from free_claude_code.core.profile import (
+    ProfileIdentity,
+    profile_context,
+    resolve_profile,
+)
 from free_claude_code.core.trace import extract_claude_session_id_from_headers
 
 REQUEST_ID_HEADER = "request-id"
 OPENAI_REQUEST_ID_HEADER = "x-request-id"
 _REQUEST_ID_STATE_ATTRIBUTE = "fcc_request_id"
+_PROFILE_STATE_ATTRIBUTE = "fcc_profile"
 _OPENAI_REQUEST_ID_PATHS = frozenset({"/v1/responses", "/v1/models"})
 
 
 class RequestCorrelationMiddleware:
     """Own one request id and logging context for the full ASGI response."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        profile: str | ProfileIdentity | None = None,
+    ) -> None:
         self._app = app
+        self._profile = resolve_profile(profile)
 
     async def __call__(
         self,
@@ -34,6 +46,7 @@ class RequestCorrelationMiddleware:
         request_id = new_request_id()
         state = scope.setdefault("state", {})
         state[_REQUEST_ID_STATE_ATTRIBUTE] = request_id
+        state[_PROFILE_STATE_ATTRIBUTE] = self._profile
         method = scope.get("method", "")
         path = scope.get("path", "")
         request_headers = Headers(scope=scope)
@@ -51,11 +64,12 @@ class RequestCorrelationMiddleware:
                 message["headers"] = raw_headers
             await send(message)
 
-        with logger.contextualize(
+        with profile_context(self._profile), logger.contextualize(
             http_method=method,
             http_path=path,
             claude_session_id=claude_sid,
             request_id=request_id,
+            **self._profile.receipt(),
         ):
             await self._app(scope, receive, send_with_correlation)
 

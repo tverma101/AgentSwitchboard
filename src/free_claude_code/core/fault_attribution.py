@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from free_claude_code.core.profile import current_profile, resolve_profile
+
 
 class FaultDomain(StrEnum):
     """Owners used for end-to-end failure attribution."""
@@ -140,6 +142,7 @@ class AttemptEvidence:
     stable_prefix_hash: str | None = None
     request_shape_hash: str | None = None
     tool_schema_hash: str | None = None
+    profile: str = field(default_factory=lambda: current_profile().name)
 
     def add_event(self, event_type: str, *, byte_count: int = 0) -> None:
         if len(self.event_types) < _MAX_EVENT_TYPES:
@@ -150,10 +153,14 @@ class AttemptEvidence:
         self.bytes_received += max(0, byte_count)
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self) | {
-            "fault_domain": self.fault_domain.value,
-            "confidence": self.confidence.value,
-        }
+        return (
+            asdict(self)
+            | resolve_profile(self.profile).receipt()
+            | {
+                "fault_domain": self.fault_domain.value,
+                "confidence": self.confidence.value,
+            }
+        )
 
 
 def classify_failure(

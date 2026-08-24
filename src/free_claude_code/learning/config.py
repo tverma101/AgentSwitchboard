@@ -1,38 +1,41 @@
 """Configuration and namespace helpers for FCC Learning profiles."""
 
 import os
-import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-PROFILE_ENV = "FCC_LEARNING_PROFILE"
-DEFAULT_PROFILE = "default"
-PROFILE_SCHEMA = "fcc.learning.profile"
-PROFILE_VERSION = 1
+from free_claude_code.core.profile import (
+    DEFAULT_PROFILE,
+    PROFILE_ENV,
+    PROFILE_SCHEMA,
+    PROFILE_VERSION,
+    ProfileNameError,
+    normalize_profile,
+    resolve_profile,
+)
 
-_PROFILE_RE = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,31})\Z")
+LearningProfileError = ProfileNameError
 
-
-class LearningProfileError(ValueError):
-    """Raised when an explicit learning profile name is unsafe or invalid."""
-
-
-def normalize_profile(profile: str | None) -> str:
-    """Normalize and validate one profile identifier."""
-
-    value = DEFAULT_PROFILE if profile is None else profile.strip().casefold()
-    if not _PROFILE_RE.fullmatch(value):
-        raise LearningProfileError(
-            "learning profile must use 1-32 lowercase letters, digits, '.', '_' or '-'"
-        )
-    return value
+__all__ = [
+    "DEFAULT_PROFILE",
+    "PROFILE_ENV",
+    "PROFILE_SCHEMA",
+    "PROFILE_VERSION",
+    "LearningProfileError",
+    "configured_profile",
+    "extract_profile_argument",
+    "learning_home",
+    "normalize_profile",
+    "profile_database",
+    "profile_home",
+    "qualify_skill_key",
+]
 
 
 def configured_profile(environment: Mapping[str, str] | None = None) -> str:
     """Return the explicit environment-selected profile or the default."""
 
-    values = os.environ if environment is None else environment
-    return normalize_profile(values.get(PROFILE_ENV))
+    return resolve_profile(environment=environment).name
 
 
 def learning_home() -> Path:

@@ -16,6 +16,11 @@ typed rejection decision. `--known` and `--supported` are explicit diagnostic
 assertions; they do not query a provider catalog. Omit them to see the safe
 unknown/strict rejection that applies when capability evidence is absent.
 
+Every route diagnostic also carries the launch-bound learning profile identity:
+`profile`, `profile_namespace`, `profile_schema`, and `profile_version`. Pass
+`--profile <name>` for a headless diagnostic of another profile; this changes
+metadata only and never changes provider routing, billing, or network behavior.
+
 The `provider_isolation` section is a metadata-only launch-policy preview. It
 shows the primary provider/model, local tool allowance, and forbidden fallback
 families. `fallback_decision` is `blocked` under the default strict policy; the
@@ -45,4 +50,6 @@ fields, each stream receipt includes media and timing metadata:
 These fields are metadata only. Prompts, response text, tool arguments, media
 bytes, and provider credentials are not placed in the receipt. Request-shape,
 stable-prefix, tool-schema, and media-type hashes remain one-way identifiers for
-comparing controlled runs without retaining payloads.
+comparing controlled runs without retaining payloads. The same four profile
+identity fields are included so receipts from isolated learning namespaces can
+be compared without treating a profile as a provider or billing partition.

@@ -12,14 +12,18 @@ from free_claude_code.cli.local_http import with_local_proxy_bypass
 
 
 @contextmanager
-def _status_server(status_code: int) -> Iterator[tuple[str, list[str]]]:
+def _status_server(
+    status_code: int, body: bytes = b""
+) -> Iterator[tuple[str, list[str]]]:
     hits: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             hits.append(self.path)
             self.send_response(status_code)
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            self.wfile.write(body)
 
         def log_message(self, format: str, *args: object) -> None:
             del format, args
@@ -72,6 +76,16 @@ def test_child_proxy_bypass_preserves_existing_proxy_policy() -> None:
     assert env["no_proxy"] == env["NO_PROXY"]
     assert base_env["NO_PROXY"] == "example.com, localhost"
     assert base_env["no_proxy"] == "10.0.0.0/8,EXAMPLE.COM"
+
+
+def test_proxy_preflight_rejects_a_live_server_with_another_profile() -> None:
+    body = b'{"status":"healthy","profile":"coding"}'
+    with _status_server(200, body) as (fcc_url, _):
+        error = preflight_proxy(fcc_url, expected_profile="school")
+
+    assert error is not None
+    assert "profile 'coding'" in error
+    assert "requested 'school'" in error
 
 
 def test_child_proxy_bypass_uses_all_loopback_spellings_without_duplicates() -> None:

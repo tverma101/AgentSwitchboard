@@ -23,10 +23,14 @@ def _settings() -> Settings:
 
 
 def test_route_diagnostic_is_zero_network_and_explains_muse_protocol() -> None:
-    payload = build_route_diagnostic(_settings(), shapes=("text",))
+    payload = build_route_diagnostic(_settings(), shapes=("text",), profile="research")
 
     assert payload["network"] == "none"
     assert payload["billable_requests"] == 0
+    assert payload["profile"] == "research"
+    assert payload["profile_namespace"] == "fcc.learning.profile/research"
+    assert payload["profile_schema"] == "fcc.learning.profile"
+    assert payload["profile_version"] == 1
     assert payload["controller"]["provider"] == "opencode_go"
     assert payload["controller"]["model"] == "muse-spark-1.2-contributor"
     assert payload["controller"]["protocol"] == "responses"

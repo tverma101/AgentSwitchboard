@@ -199,11 +199,20 @@ def _emit_hook_context(
     print(json.dumps(output))
 
 
+def _profile_context(store: LearningStore) -> str:
+    """Return an explicit profile banner without exposing filesystem paths."""
+
+    return (
+        f"FCC Learning active profile: {store.profile}.\n"
+        f"FCC Learning profile namespace: {store.profile_identity.namespace}."
+    )
+
+
 def handle_session_start(payload: dict[str, Any], store: LearningStore) -> None:
     cwd = str(payload.get("cwd") or os.getcwd())
     project_key = project_identity(cwd)
     rows = store.relevant_memories(project_key=project_key, limit=12)
-    context = f"FCC Learning active profile: {store.profile}."
+    context = _profile_context(store)
     memory_context = format_memory_context(rows, profile=store.profile)
     if memory_context:
         context = f"{context}\n{memory_context}"
@@ -230,7 +239,15 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
         limit=8,
     )
     _emit_hook_context(
-        "UserPromptSubmit", format_memory_context(rows, profile=store.profile)
+        "UserPromptSubmit",
+        "\n".join(
+            part
+            for part in (
+                _profile_context(store),
+                format_memory_context(rows, profile=store.profile),
+            )
+            if part
+        ),
     )
 
 

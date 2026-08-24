@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The local release head is version
-`4.30.25`; examples below describe this checkout, not every feature proposed in
+`4.30.26`; examples below describe this checkout, not every feature proposed in
 the open design backlog. Live smoke receipts retain the package version that
 was installed when each receipt was captured; read the receipt's own metadata
 before treating it as evidence for a later release head.
@@ -60,9 +60,9 @@ before treating it as evidence for a later release head.
 | --- | --- |
 | **Current-source verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
 | **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
-| **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
+| **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, launch-bound profiles, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
-| **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
+| **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, portable FCC profile bundles, Admin/App Mode profile switching, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
 <div align="center">
   <img src="assets/pic.png" alt="Claude Code running with Free Claude Code" width="700">

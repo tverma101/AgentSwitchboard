@@ -37,6 +37,7 @@ from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.profile import ProfileIdentity, resolve_profile
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
 from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
 from free_claude_code.messaging.platforms.ports import (
@@ -114,8 +115,10 @@ class ApplicationRuntime:
         transcriber: Transcriber | None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+        profile: str | ProfileIdentity | None = None,
     ) -> None:
         self.provider_manager = provider_manager
+        self._profile = resolve_profile(profile)
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
@@ -226,6 +229,7 @@ class ApplicationRuntime:
         settings = self.settings
         return {
             "status": "running",
+            **self._profile.receipt(),
             "host": settings.host,
             "port": settings.port,
             "model": settings.model,

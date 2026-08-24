@@ -80,7 +80,18 @@ def test_health(client: TestClient):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
+    assert response.json()["profile"] == "default"
+    assert response.json()["profile_namespace"] == "fcc.learning.profile/default"
     assert response.headers["request-id"].startswith("req_")
+
+
+def test_health_exposes_the_launch_bound_profile() -> None:
+    app = create_test_app(profile="school")
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.json()["profile"] == "school"
+    assert response.json()["profile_namespace"] == "fcc.learning.profile/school"
 
 
 def test_models_list(client: TestClient):
