@@ -169,6 +169,49 @@ def test_direct_danger_launch_preserves_skip_permissions_through_startup() -> No
     owner.assert_called_once_with(settings, ["--dangerously-skip-permissions"])
 
 
+def test_direct_owner_starts_control_center_with_original_client_args() -> None:
+    from free_claude_code.cli import server_startup, terminal_control
+    from free_claude_code.cli.launchers import claude
+
+    settings = _settings()
+    with (
+        patch.object(terminal_control, "terminal_control_available", return_value=True),
+        patch.object(server_startup, "server_port_is_occupied", return_value=False),
+        patch.object(terminal_control, "run_owned_control_center") as owner,
+    ):
+        started = claude._start_interactive_owner(settings, ("--model", "muse"))
+
+    assert started is True
+    owner.assert_called_once_with(settings, initial_argv=("--model", "muse"))
+
+
+def test_owned_control_center_launches_initial_client_after_health() -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    supervisor = MagicMock()
+    supervisor.schedule_run.return_value = True
+    server_thread = MagicMock()
+
+    with (
+        patch.object(terminal_control, "ServerSupervisor", return_value=supervisor),
+        patch.object(terminal_control.threading, "Thread", return_value=server_thread),
+        patch.object(terminal_control, "_wait_for_proxy", return_value=None),
+        patch.object(terminal_control, "_launch_claude") as launch,
+        patch.object(terminal_control, "run_control_menu") as menu,
+    ):
+        terminal_control.run_owned_control_center(
+            settings,
+            initial_argv=("--model", "muse"),
+        )
+
+    server_thread.start.assert_called_once_with()
+    launch.assert_called_once_with(danger=False, argv=("--model", "muse"))
+    menu.assert_called_once_with(settings, supervisor=supervisor)
+    supervisor.request_stop.assert_called_once_with()
+    server_thread.join.assert_called_once_with()
+
+
 def test_direct_owner_rejects_foreign_port_occupant() -> None:
     from free_claude_code.cli import server_startup, terminal_control
     from free_claude_code.cli.launchers import claude
