@@ -145,7 +145,7 @@ class BaseProvider(ABC):
 
     @abstractmethod
     async def cleanup(self) -> None:
-        """Release HTTP client resources."""
+        """Release any resources held by this provider."""
 
     @abstractmethod
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
