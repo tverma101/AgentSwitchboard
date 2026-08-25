@@ -23,6 +23,48 @@ class CapabilityEvidenceStatus(StrEnum):
     ACCEPTED_BUT_UNVERIFIED = "accepted-but-unverified"
 
 
+class CapabilityVerificationStatus(StrEnum):
+    """Outcome of an explicit capability verification run.
+
+    Verification is deliberately separate from capability truth. In particular,
+    a skipped or unverified live test is never evidence that a capability works.
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+    SKIPPED = "skipped"
+    UNVERIFIED = "unverified"
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityVerification:
+    """Metadata-only result of an explicit capability verification run."""
+
+    status: CapabilityVerificationStatus = CapabilityVerificationStatus.UNVERIFIED
+    evidence_source: str = "unknown"
+    observed_at: str | None = None
+    evidence_version: str | None = None
+    evidence_protocol: str | None = None
+
+    @property
+    def is_positive_evidence(self) -> bool:
+        """Return whether this run positively verified the capability path."""
+
+        return self.status is CapabilityVerificationStatus.PASS
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-safe diagnostic representation."""
+
+        return {
+            "status": self.status.value,
+            "positive_evidence": self.is_positive_evidence,
+            "evidence_source": self.evidence_source,
+            "observed_at": self.observed_at,
+            "evidence_version": self.evidence_version,
+            "evidence_protocol": self.evidence_protocol,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class CapabilityEvidence:
     """Metadata-only capability claims and their provenance."""
@@ -123,6 +165,9 @@ class ProviderModelInfo:
         default_factory=ReasoningCapabilityEvidence
     )
     capability_evidence: CapabilityEvidence = field(default_factory=CapabilityEvidence)
+    capability_verification: CapabilityVerification = field(
+        default_factory=CapabilityVerification
+    )
 
     def with_observed_at(self, observed_at: str) -> ProviderModelInfo:
         """Stamp the catalog observation time on general capability evidence."""
