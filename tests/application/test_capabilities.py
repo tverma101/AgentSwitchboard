@@ -208,6 +208,39 @@ def test_smart_go_router_rejects_non_go_helper_and_allows_explicit_go_helper() -
     assert plan.controller_model == "muse"
 
 
+def test_custom_router_uses_only_explicitly_allowlisted_helper() -> None:
+    required = RequiredCapabilitySet(frozenset({Capability.VISION_INPUT}))
+    blocked = CapabilityHelper(
+        helper_id="blocked",
+        provider_family="other",
+        model_ref="other/vision",
+        capabilities=frozenset({Capability.VISION_INPUT}),
+    )
+    allowed = CapabilityHelper(
+        helper_id="approved",
+        provider_family="custom-provider",
+        model_ref="custom-provider/vision",
+        capabilities=frozenset({Capability.VISION_INPUT}),
+    )
+    router = CapabilityRouter(
+        CapabilityRoutingPolicy(
+            mode=CapabilityRoutingMode.CUSTOM,
+            allowed_helpers=frozenset({"approved"}),
+        )
+    )
+
+    plan = router.plan(
+        required,
+        controller_provider="opencode_go",
+        controller_model="muse",
+        helpers=(blocked, allowed),
+    )
+
+    assert plan.decision == "helpers"
+    assert plan.helpers == (allowed,)
+    assert plan.controller_failover is False
+
+
 def test_controller_failover_is_not_implicit_even_when_requested() -> None:
     required = RequiredCapabilitySet(frozenset({Capability.VISION_INPUT}))
     router = CapabilityRouter(
