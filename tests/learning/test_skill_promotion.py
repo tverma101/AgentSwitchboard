@@ -19,7 +19,9 @@ _UPDATE_INSTRUCTIONS = (
 )
 
 
-def _skill_result(*, action: str, instructions: str, **extra: object) -> dict[str, object]:
+def _skill_result(
+    *, action: str, instructions: str, **extra: object
+) -> dict[str, object]:
     return {
         "memory_actions": [],
         "skill": {

@@ -205,6 +205,7 @@ def test_launcher_profile_is_removed_from_claude_args_and_inherited(
         "sonnet",
     ]
     assert os.environ["FCC_LEARNING_PROFILE"] == "coding"
+    os.environ.pop("FCC_LEARNING_PROFILE", None)
 
 
 def test_server_profile_option_selects_learning_environment(
@@ -218,6 +219,7 @@ def test_server_profile_option_selects_learning_environment(
 
     run.assert_called_once_with()
     assert os.environ["FCC_LEARNING_PROFILE"] == "school"
+    os.environ.pop("FCC_LEARNING_PROFILE", None)
 
 
 def test_profile_arguments_reject_invalid_and_duplicate_values() -> None:
