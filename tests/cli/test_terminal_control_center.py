@@ -139,3 +139,64 @@ def test_log_preview_formats_structured_json_and_keeps_plain_lines(
     assert len(lines) == 2
     assert _render_log_line(lines[0]).endswith("INFO     ready")
     assert _render_log_line(lines[1]) == "plain fallback"
+
+
+def test_direct_claude_launch_uses_owned_control_center_when_proxy_is_down() -> None:
+    from free_claude_code.cli.launchers import claude
+
+    settings = _settings()
+    with (
+        patch.object(claude, "get_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value="connection refused"),
+        patch.object(claude, "_start_interactive_owner", return_value=True) as owner,
+    ):
+        claude.launch(("--model", "muse"))
+
+    owner.assert_called_once_with(settings, ["--model", "muse"])
+
+
+def test_direct_danger_launch_preserves_skip_permissions_through_startup() -> None:
+    from free_claude_code.cli.launchers import claude
+
+    settings = _settings()
+    with (
+        patch.object(claude, "get_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value="connection refused"),
+        patch.object(claude, "_start_interactive_owner", return_value=True) as owner,
+    ):
+        claude.launch_danger(())
+
+    owner.assert_called_once_with(settings, ["--dangerously-skip-permissions"])
+
+
+def test_direct_owner_rejects_foreign_port_occupant() -> None:
+    from free_claude_code.cli import server_startup, terminal_control
+    from free_claude_code.cli.launchers import claude
+
+    settings = _settings(port=31339)
+    with (
+        patch.object(terminal_control, "terminal_control_available", return_value=True),
+        patch.object(server_startup, "server_port_is_occupied", return_value=True),
+        patch.object(terminal_control, "run_owned_control_center") as owner,
+        pytest.raises(SystemExit, match="1"),
+    ):
+        claude._start_interactive_owner(settings, ())
+
+    owner.assert_not_called()
+
+
+def test_noninteractive_direct_launch_does_not_create_hidden_server_owner() -> None:
+    from free_claude_code.cli import server_startup, terminal_control
+    from free_claude_code.cli.launchers import claude
+
+    settings = _settings()
+    with (
+        patch.object(terminal_control, "terminal_control_available", return_value=False),
+        patch.object(server_startup, "server_port_is_occupied") as port_probe,
+        patch.object(terminal_control, "run_owned_control_center") as owner,
+    ):
+        started = claude._start_interactive_owner(settings, ())
+
+    assert started is False
+    port_probe.assert_not_called()
+    owner.assert_not_called()
