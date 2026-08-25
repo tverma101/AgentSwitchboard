@@ -31,8 +31,9 @@ def _persisted_appshot(tmp_path: Path) -> tuple[Path, Path]:
 
 def test_persisted_helpers_use_core_receipt_without_exposing_path(tmp_path: Path) -> None:
     queue, receipt = _persisted_appshot(tmp_path)
+    receipt_name = Path(receipt.name)
 
-    inspected = inspect_appshot(receipt.name, root=queue)
+    inspected = inspect_appshot(receipt_name, root=queue)
 
     assert inspected.startswith("[img ")
     assert "Safari" in inspected
@@ -41,8 +42,8 @@ def test_persisted_helpers_use_core_receipt_without_exposing_path(tmp_path: Path
 
     opened: list[Path] = []
     copied: list[Path] = []
-    open_appshot(receipt.name, root=queue, opener=opened.append)
-    copy_appshot_path(receipt.name, root=queue, copier=copied.append)
+    open_appshot(receipt_name, root=queue, opener=opened.append)
+    copy_appshot_path(receipt_name, root=queue, copier=copied.append)
 
     assert len(opened) == 1
     assert copied == opened
@@ -56,7 +57,7 @@ def test_persisted_helper_rejects_receipt_name_metadata_mismatch(tmp_path: Path)
     receipt.rename(renamed)
 
     with pytest.raises(AppshotContractError, match="name does not match"):
-        inspect_appshot(renamed.name, root=queue)
+        inspect_appshot(Path(renamed.name), root=queue)
 
 
 def test_cli_inspect_action_does_not_require_session_id(
