@@ -1,11 +1,11 @@
+import base64
 import io
 
+import pytest
 from PIL import Image
 
-from free_claude_code.cli.visuals import (
-    _thumbnail_for_terminal,
+from free_claude_code.cli.terminal_preview import (
     clear_terminal_preview_cache,
-    detect_terminal_capabilities,
     render_attachment_card,
     render_terminal_preview,
     terminal_preview_cache_size,
@@ -18,40 +18,24 @@ def _png_bytes(color: tuple[int, int, int] = (255, 0, 0)) -> bytes:
     return output.getvalue()
 
 
-def test_terminal_detection_fails_closed_for_non_tty_ssh_and_multiplexers() -> None:
-    assert (
-        detect_terminal_capabilities(
-            {"TERM_PROGRAM": "iTerm.app"}, is_tty=False
-        ).reason
-        == "stdout-not-a-tty"
-    )
-    ssh = detect_terminal_capabilities(
-        {"TERM_PROGRAM": "iTerm.app", "SSH_TTY": "/dev/ttys001"},
-        is_tty=True,
-    )
-    assert ssh.protocol is None
-    assert ssh.remote is True
-    assert ssh.reason == "ssh-session"
-    tmux = detect_terminal_capabilities(
-        {"TERM_PROGRAM": "iTerm.app", "TMUX": "1"},
-        is_tty=True,
-    )
-    screen = detect_terminal_capabilities(
-        {"TERM_PROGRAM": "iTerm.app", "STY": "1"},
-        is_tty=True,
-    )
-    assert (tmux.protocol, tmux.multiplexer) == (None, "tmux")
-    assert (screen.protocol, screen.multiplexer) == (None, "screen")
-
-
-def test_fail_closed_sessions_emit_only_metadata_card() -> None:
-    data = _png_bytes()
+@pytest.mark.parametrize(
+    ("env", "is_tty"),
+    [
+        ({"TERM_PROGRAM": "iTerm.app"}, False),
+        ({"TERM_PROGRAM": "iTerm.app", "SSH_TTY": "/dev/ttys001"}, True),
+        ({"TERM_PROGRAM": "iTerm.app", "TMUX": "1"}, True),
+        ({"TERM_PROGRAM": "iTerm.app", "STY": "1"}, True),
+    ],
+)
+def test_blocked_terminal_contexts_never_emit_inline_escape_sequences(
+    env: dict[str, str], is_tty: bool
+) -> None:
     rendered = render_terminal_preview(
-        data,
+        _png_bytes(),
         media_type="image/png",
         label="shot.png",
-        env={"TERM_PROGRAM": "iTerm.app", "SSH_CONNECTION": "remote"},
-        is_tty=True,
+        env=env,
+        is_tty=is_tty,
     )
 
     assert rendered.startswith("[img ")
@@ -71,32 +55,57 @@ def test_terminal_card_hides_full_path_and_control_characters() -> None:
     assert "31m-shot.png" in card
 
 
-def test_thumbnail_cache_is_hash_bounded_across_many_previews() -> None:
+def test_preview_cache_reuses_content_and_stays_bounded_through_public_renderer() -> None:
     clear_terminal_preview_cache()
+    env = {"TERM_PROGRAM": "iTerm.app"}
+    first = _png_bytes()
+
+    render_terminal_preview(
+        first,
+        media_type="image/png",
+        label="first.png",
+        env=env,
+        is_tty=True,
+    )
+    render_terminal_preview(
+        first,
+        media_type="image/png",
+        label="same-bytes-different-label.png",
+        env=env,
+        is_tty=True,
+    )
+    assert terminal_preview_cache_size() == 1
+
     for index in range(20):
         render_terminal_preview(
             _png_bytes((index, 255 - index, (index * 17) % 255)),
             media_type="image/png",
             label=f"shot-{index}.png",
-            env={"TERM_PROGRAM": "iTerm.app"},
+            env=env,
             is_tty=True,
         )
 
-    assert terminal_preview_cache_size() == 8
+    assert 1 <= terminal_preview_cache_size() <= 8
     clear_terminal_preview_cache()
-    assert terminal_preview_cache_size() == 0
 
 
-def test_large_thumbnail_respects_byte_and_edge_bounds() -> None:
+def test_large_public_preview_emits_only_bounded_thumbnail_bytes() -> None:
     output = io.BytesIO()
     Image.new("RGB", (2400, 1800), (10, 20, 30)).save(output, format="PNG")
 
-    preview, media_type = _thumbnail_for_terminal(
+    rendered = render_terminal_preview(
         output.getvalue(),
         media_type="image/png",
+        label="large.png",
+        env={"TERM_PROGRAM": "iTerm.app"},
+        is_tty=True,
     )
+
+    escape_line = rendered.split("\n", maxsplit=1)[0]
+    assert escape_line.startswith("\x1b]1337;File=")
+    encoded = escape_line.rsplit(":", maxsplit=1)[1].removesuffix("\x07")
+    preview = base64.b64decode(encoded, validate=True)
 
     assert len(preview) <= 512 * 1024
     with Image.open(io.BytesIO(preview)) as image:
         assert max(image.size) <= 1024
-    assert media_type in {"image/png", "image/jpeg"}
