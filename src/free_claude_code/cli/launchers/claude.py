@@ -51,6 +51,8 @@ def launch(argv: Sequence[str] | None = None) -> None:
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
     if error := preflight_proxy(proxy_root_url):
+        if _start_interactive_owner(settings, args):
+            return
         print(
             f"Free Claude Code proxy is not reachable at {proxy_root_url}: {error}",
             file=sys.stderr,
@@ -107,6 +109,33 @@ def launch(argv: Sequence[str] | None = None) -> None:
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
     )
+
+
+def _start_interactive_owner(settings: object, args: Sequence[str]) -> bool:
+    """Start an explicit in-process server owner for an interactive direct launch."""
+
+    from free_claude_code.cli.server_startup import server_port_is_occupied
+    from free_claude_code.cli.terminal_control import (
+        run_owned_control_center,
+        terminal_control_available,
+    )
+
+    if not terminal_control_available():
+        return False
+
+    host = str(getattr(settings, "host", "0.0.0.0"))
+    port = int(getattr(settings, "port", 8082))
+    if server_port_is_occupied(host, port):
+        print(
+            f"FCC cannot start: port {port} is already in use, "
+            "but the service on it is not an FCC health endpoint.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    print("FCC server is not running; starting the terminal control center.")
+    run_owned_control_center(settings, initial_argv=args)
+    return True
 
 
 def _firewall_environment(settings: object) -> dict[str, str]:
