@@ -142,7 +142,11 @@ def _start_interactive_owner(args: Sequence[str]) -> bool:
         raise SystemExit(1)
 
     print("FCC server is not running; starting the terminal control center.")
-    run_owned_control_center(settings, initial_argv=args)
+    run_owned_control_center(
+        settings,
+        initial_argv=args,
+        launch_client=_launch_from_control,
+    )
     return True
 
 
@@ -168,6 +172,17 @@ def launch_danger(argv: Sequence[str] | None = None) -> None:
     if "--dangerously-skip-permissions" not in args:
         args.insert(0, "--dangerously-skip-permissions")
     launch(args)
+
+
+def _launch_from_control(*, danger: bool, argv: Sequence[str] = ()) -> None:
+    """Launch Claude from the terminal control center and contain its exit code."""
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")
 
 
 def claude_binary_name() -> str:
