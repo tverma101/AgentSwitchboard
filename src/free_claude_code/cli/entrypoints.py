@@ -12,9 +12,7 @@ from free_claude_code.learning.config import (
     extract_profile_argument,
 )
 
-_SERVER_USAGE = (
-    "fcc-server [--profile <name>] [--terminal|--no-browser] [--headless]"
-)
+_SERVER_USAGE = "fcc-server [--profile <name>] [--terminal|--no-browser] [--headless]"
 
 
 def serve(argv: Sequence[str] | None = None) -> None:
