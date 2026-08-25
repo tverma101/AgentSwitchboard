@@ -20,7 +20,7 @@ from free_claude_code.cli.claude_firewall import (
     ensure_process_wrapper,
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
-from free_claude_code.config.settings import get_settings
+from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.learning.config import (
     PROFILE_ENV,
     LearningProfileError,
@@ -111,7 +111,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
     )
 
 
-def _start_interactive_owner(settings: object, args: Sequence[str]) -> bool:
+def _start_interactive_owner(settings: Settings, args: Sequence[str]) -> bool:
     """Start an explicit in-process server owner for an interactive direct launch."""
 
     from free_claude_code.cli.server_startup import server_port_is_occupied
@@ -123,11 +123,9 @@ def _start_interactive_owner(settings: object, args: Sequence[str]) -> bool:
     if not terminal_control_available():
         return False
 
-    host = str(getattr(settings, "host", "0.0.0.0"))
-    port = int(getattr(settings, "port", 8082))
-    if server_port_is_occupied(host, port):
+    if server_port_is_occupied(settings.host, settings.port):
         print(
-            f"FCC cannot start: port {port} is already in use, "
+            f"FCC cannot start: port {settings.port} is already in use, "
             "but the service on it is not an FCC health endpoint.",
             file=sys.stderr,
         )
