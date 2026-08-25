@@ -64,12 +64,15 @@ class RequestCorrelationMiddleware:
                 message["headers"] = raw_headers
             await send(message)
 
-        with profile_context(self._profile), logger.contextualize(
-            http_method=method,
-            http_path=path,
-            claude_session_id=claude_sid,
-            request_id=request_id,
-            **self._profile.receipt(),
+        with (
+            profile_context(self._profile),
+            logger.contextualize(
+                http_method=method,
+                http_path=path,
+                claude_session_id=claude_sid,
+                request_id=request_id,
+                **self._profile.receipt(),
+            ),
         ):
             await self._app(scope, receive, send_with_correlation)
 

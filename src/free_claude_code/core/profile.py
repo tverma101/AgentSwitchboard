@@ -83,7 +83,8 @@ def resolve_profile(
     if isinstance(profile, ProfileIdentity):
         return profile
     values = os.environ if environment is None else environment
-    return ProfileIdentity(profile if profile is not None else values.get(PROFILE_ENV))
+    selected = profile if profile is not None else values.get(PROFILE_ENV)
+    return ProfileIdentity(DEFAULT_PROFILE if selected is None else selected)
 
 
 _CURRENT_PROFILE: contextvars.ContextVar[ProfileIdentity | None] = (

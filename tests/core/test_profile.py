@@ -37,3 +37,7 @@ def test_profile_context_is_scoped_and_does_not_mutate_launch_environment(
         assert current_profile() == resolve_profile("research")
 
     assert current_profile().name == "default"
+
+
+def test_missing_profile_environment_uses_default_profile() -> None:
+    assert resolve_profile(environment={}).name == "default"
