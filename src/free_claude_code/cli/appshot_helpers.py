@@ -30,7 +30,9 @@ def _file_queue(root: Path | None) -> FileAppshotQueue:
     return FileAppshotQueue(queue_root)
 
 
-def _read_receipt(receipt: Path, *, root: Path | None) -> tuple[FileAppshotQueue, AppshotReceipt]:
+def _read_receipt(
+    receipt: Path, *, root: Path | None
+) -> tuple[FileAppshotQueue, AppshotReceipt]:
     queue = _file_queue(root)
     queue_root = queue.root.resolve()
     candidate = receipt if receipt.is_absolute() else queue_root / receipt
