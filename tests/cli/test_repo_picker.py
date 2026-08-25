@@ -129,3 +129,43 @@ def test_launch_repo_execs_canonical_fccdanger_with_selected_cwd(
         os.chdir(previous)
 
     assert calls == [("fccdanger", ["fccdanger"], str(repo_path))]
+
+
+def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cached_path = tmp_path / "cached"
+    cached_path.mkdir()
+    explicit_root = tmp_path / "explicit-root"
+    explicit_root.mkdir()
+    wanted_path = explicit_root / "wanted"
+    wanted_path.mkdir()
+    cache = tmp_path / "repos.json"
+
+    cached = RepoEntry("cached", str(cached_path), "main", "acme/cached", 9.0)
+    wanted = RepoEntry("wanted", str(wanted_path), "main", "acme/wanted")
+    save_cached_repos([cached], cache)
+
+    scanned: list[tuple[Path, ...]] = []
+    launched: list[RepoEntry] = []
+
+    def fake_discover(roots: tuple[Path, ...]) -> list[RepoEntry]:
+        scanned.append(roots)
+        return [wanted]
+
+    def fake_launch(repo: RepoEntry) -> None:
+        launched.append(repo)
+        raise RuntimeError("launch intercepted")
+
+    monkeypatch.setattr(repo_picker, "cache_path", lambda: cache)
+    monkeypatch.setattr(repo_picker, "discover_repos", fake_discover)
+    monkeypatch.setattr(repo_picker, "choose_repo", lambda repos, _query: repos[0])
+    monkeypatch.setattr(repo_picker, "launch_repo", fake_launch)
+
+    with pytest.raises(RuntimeError, match="launch intercepted"):
+        repo_picker.main(["--root", str(explicit_root)])
+
+    assert scanned == [(explicit_root,)]
+    assert launched == [wanted]
+    assert load_cached_repos(cache) == [cached]

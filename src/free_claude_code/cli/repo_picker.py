@@ -346,23 +346,27 @@ def main(argv: list[str] | None = None) -> None:
     """CLI entrypoint for ``fcc-repos``."""
 
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
+    explicit_roots = bool(args.root)
     roots = tuple(Path(value).expanduser() for value in args.root) or default_roots()
     cache = cache_path()
 
-    repos = [] if args.refresh else load_cached_repos(cache)
-    if args.refresh or not repos or not cache_is_fresh(cache):
-        previous_last_used = {repo.path: repo.last_used for repo in repos}
-        repos = [
-            RepoEntry(
-                name=repo.name,
-                path=repo.path,
-                branch=repo.branch,
-                remote=repo.remote,
-                last_used=previous_last_used.get(repo.path, 0.0),
-            )
-            for repo in discover_repos(roots)
-        ]
-        save_cached_repos(repos, cache)
+    if explicit_roots:
+        repos = discover_repos(roots)
+    else:
+        repos = [] if args.refresh else load_cached_repos(cache)
+        if args.refresh or not repos or not cache_is_fresh(cache):
+            previous_last_used = {repo.path: repo.last_used for repo in repos}
+            repos = [
+                RepoEntry(
+                    name=repo.name,
+                    path=repo.path,
+                    branch=repo.branch,
+                    remote=repo.remote,
+                    last_used=previous_last_used.get(repo.path, 0.0),
+                )
+                for repo in discover_repos(roots)
+            ]
+            save_cached_repos(repos, cache)
 
     if not repos:
         print("No local GitHub-backed repositories found.", file=sys.stderr)
@@ -372,5 +376,6 @@ def main(argv: list[str] | None = None) -> None:
     selected = choose_repo(repos, args.query)
     if selected is None:
         return
-    save_cached_repos(_mark_used(repos, selected), cache)
+    if not explicit_roots:
+        save_cached_repos(_mark_used(repos, selected), cache)
     launch_repo(selected)
