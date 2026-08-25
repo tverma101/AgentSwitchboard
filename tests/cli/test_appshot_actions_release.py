@@ -29,7 +29,7 @@ def _persisted_appshot(tmp_path: Path) -> tuple[Path, Path]:
     return queue, receipt
 
 
-def test_persisted_helpers_use_core_receipt_without_exposing_path(tmp_path: Path) -> None:
+def test_persisted_helpers_hide_queue_path(tmp_path: Path) -> None:
     queue, receipt = _persisted_appshot(tmp_path)
     receipt_name = Path(receipt.name)
 
@@ -51,7 +51,7 @@ def test_persisted_helpers_use_core_receipt_without_exposing_path(tmp_path: Path
     assert opened[0].is_relative_to(queue.resolve())
 
 
-def test_persisted_helper_rejects_receipt_name_metadata_mismatch(tmp_path: Path) -> None:
+def test_helpers_reject_receipt_name_metadata_mismatch(tmp_path: Path) -> None:
     queue, receipt = _persisted_appshot(tmp_path)
     renamed = receipt.with_name("session-1-deadbeef.json")
     receipt.rename(renamed)
