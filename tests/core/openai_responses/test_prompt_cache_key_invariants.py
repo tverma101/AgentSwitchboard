@@ -7,7 +7,8 @@ from free_claude_code.core.openai_responses.provider_input import (
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 
-def test_session_cache_key_survives_turn_and_tool_schema_changes_without_prompt_leak() -> None:
+def test_session_cache_key_survives_turn_and_tool_schema_changes_without_prompt_leak(
+) -> None:
     session_id = "stable-session-123"
     first = MessagesRequest.model_validate(
         {
