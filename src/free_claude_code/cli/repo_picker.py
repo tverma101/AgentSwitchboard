@@ -53,7 +53,7 @@ class RepoEntry:
         if self.path == home:
             return "~"
         if self.path.startswith(f"{home}{os.sep}"):
-            return f"~{self.path[len(home):]}"
+            return f"~{self.path[len(home) :]}"
         return self.path
 
 
@@ -169,7 +169,7 @@ def load_cached_repos(path: Path | None = None) -> list[RepoEntry]:
     path = cache_path() if path is None else path
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
+    except OSError, json.JSONDecodeError, TypeError:
         return []
     if not isinstance(payload, dict):
         return []
@@ -186,7 +186,7 @@ def load_cached_repos(path: Path | None = None) -> list[RepoEntry]:
                 remote=str(raw.get("remote", "")),
                 last_used=float(raw.get("last_used", 0.0)),
             )
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
         if Path(entry.path).is_dir():
             entries.append(entry)
@@ -229,9 +229,7 @@ def fuzzy_match(repos: list[RepoEntry], query: str) -> list[RepoEntry]:
         score = _subsequence_score(haystack, query)
         if score is not None:
             scored.append((score, repo))
-    scored.sort(
-        key=lambda item: (item[0], -item[1].last_used, item[1].name.casefold())
-    )
+    scored.sort(key=lambda item: (item[0], -item[1].last_used, item[1].name.casefold()))
     return [repo for _, repo in scored]
 
 
@@ -275,8 +273,7 @@ def _picker(
         for row, repo in enumerate(matches[:visible_rows]):
             prefix = ">" if row == selected else " "
             text = (
-                f"{prefix} {repo.name:<22.22} {repo.branch:<18.18} "
-                f"{repo.display_path}"
+                f"{prefix} {repo.name:<22.22} {repo.branch:<18.18} {repo.display_path}"
             )
             screen.addnstr(row + 2, 0, text, max(1, width - 1))
 
@@ -331,7 +328,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         description="Pick a local GitHub repo and launch fccdanger"
     )
     parser.add_argument("query", nargs="?", default="", help="initial fuzzy filter")
-    parser.add_argument("--refresh", action="store_true", help="force repository rescan")
+    parser.add_argument(
+        "--refresh", action="store_true", help="force repository rescan"
+    )
     parser.add_argument(
         "--root",
         action="append",
