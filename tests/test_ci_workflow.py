@@ -5,7 +5,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def test_ci_workflow_routes_trusted_jobs_to_the_configured_runner() -> None:
+def test_ci_workflow_routes_only_trusted_pull_requests_to_self_hosted_runner() -> None:
     workflow = (_repo_root() / ".github" / "workflows" / "tests.yml").read_text(
         encoding="utf-8"
     )
@@ -22,6 +22,13 @@ def test_ci_workflow_routes_trusted_jobs_to_the_configured_runner() -> None:
     )
     assert "enable-cache: false" in workflow
     assert "cache-python: false" in workflow
+    assert workflow.count("uv run --no-sync") == 4
+    assert workflow.count("uv sync --locked") == 1
+    assert (
+        'environment_path="$environment_root/${RUNNER_OS}-${RUNNER_ARCH}-py314"'
+        in workflow
+    )
+    assert 'UV_PROJECT_ENVIRONMENT="$environment_path"' in workflow
 
 
 def test_issue_validator_remains_on_hosted_runner() -> None:

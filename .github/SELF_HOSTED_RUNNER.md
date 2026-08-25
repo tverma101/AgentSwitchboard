@@ -34,6 +34,20 @@ The runner is registered only for `tverma101/Harness`, with the custom label
 `com.tverma101.harness-actions-runner` and keeps its warm workspace and
 toolchain caches outside the repository checkout.
 
+Each quality job exact-syncs and then reuses the Harness environment at:
+
+```text
+$HOME/.cache/harness-actions/venvs/${RUNNER_OS}-${RUNNER_ARCH}-py314
+```
+
+The checks use `uv run --no-sync` after that sync, avoiding repeated dependency
+resolution and virtual-environment creation across the serial matrix jobs.
+
+The LaunchAgent is enabled with `RunAtLoad` and `KeepAlive`: it starts when
+the user’s macOS GUI session begins after a restart and respawns the runner if
+the listener exits. It is intentionally a user LaunchAgent rather than a
+pre-login system daemon because the runner uses this user’s credentials.
+
 Check service state:
 
 ```sh
