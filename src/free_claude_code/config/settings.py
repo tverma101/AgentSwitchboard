@@ -6,8 +6,6 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from free_claude_code.core.provider_policy import ProviderPolicyMode
-
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
 from .env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
@@ -173,8 +171,8 @@ class Settings(BaseSettings):
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 
     # ==================== Session provider/billing isolation ====================
-    provider_policy_mode: ProviderPolicyMode = Field(
-        default=ProviderPolicyMode.STRICT,
+    provider_policy_mode: str = Field(
+        default="strict",
         validation_alias="FCC_PROVIDER_POLICY_MODE",
     )
     provider_policy_allowed_helpers: str = Field(
