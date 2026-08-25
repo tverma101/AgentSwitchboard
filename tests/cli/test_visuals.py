@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 from free_claude_code.cli.visuals import (
+    MacOSFocusedWindowCapture,
     build_appshot_attachment,
+    capture_focused_window,
     enqueue_appshot,
     pending_appshots,
     render_attachment,
@@ -83,6 +85,69 @@ def test_terminal_preview_falls_back_to_metadata_for_sixel() -> None:
 
     assert rendered.startswith("[img ")
     assert "\x1b" not in rendered
+
+
+def test_capture_focused_window_uses_region_without_interactive_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        Path(command[-1]).write_bytes(_png_bytes())
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("free_claude_code.cli.visuals.subprocess.run", fake_run)
+
+    image = capture_focused_window(tmp_path, (10, 20, 640, 480))
+
+    assert image.read_bytes() == _png_bytes()
+    assert commands == [
+        [
+            "screencapture",
+            "-x",
+            "-R",
+            "10,20,640,480",
+            str(tmp_path / "appshot.png"),
+        ]
+    ]
+    assert "-w" not in commands[0]
+
+
+def test_macos_appshot_capture_uses_the_inspected_window_bounds(tmp_path: Path) -> None:
+    metadata = {
+        "app": "Safari",
+        "window": "localhost:3000",
+        "x": 12,
+        "y": 34,
+        "width": 800,
+        "height": 600,
+    }
+    captures: list[tuple[int, int, int, int]] = []
+
+    def read_metadata() -> dict[str, object]:
+        return dict(metadata)
+
+    def capture_region(
+        output_dir: Path, bounds: tuple[int, int, int, int]
+    ) -> Path:
+        captures.append(bounds)
+        image = output_dir / "appshot.png"
+        image.write_bytes(_png_bytes())
+        return image
+
+    source = MacOSFocusedWindowCapture(
+        metadata_reader=read_metadata,
+        capture_reader=capture_region,
+    )
+    inspected = source.inspect_focused_window()
+
+    assert inspected.width == 800
+    assert inspected.height == 600
+    assert source.capture_focused_window(inspected) == _png_bytes()
+    assert captures == [(12, 34, 800, 600)]
 
 
 def test_appshot_queue_is_explicit_session_scoped_and_metadata_only(
