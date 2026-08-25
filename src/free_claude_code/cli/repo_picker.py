@@ -171,6 +171,8 @@ def load_cached_repos(path: Path | None = None) -> list[RepoEntry]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         return []
+    if not isinstance(payload, dict):
+        return []
 
     entries: list[RepoEntry] = []
     for raw in payload.get("repos", []):
@@ -198,7 +200,9 @@ def save_cached_repos(repos: list[RepoEntry], path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"updated_at": time.time(), "repos": [asdict(repo) for repo in repos]}
     temporary = path.with_suffix(f"{path.suffix}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
     os.replace(temporary, path)
 
 
@@ -225,7 +229,9 @@ def fuzzy_match(repos: list[RepoEntry], query: str) -> list[RepoEntry]:
         score = _subsequence_score(haystack, query)
         if score is not None:
             scored.append((score, repo))
-    scored.sort(key=lambda item: (item[0], -item[1].last_used, item[1].name.casefold()))
+    scored.sort(
+        key=lambda item: (item[0], -item[1].last_used, item[1].name.casefold())
+    )
     return [repo for _, repo in scored]
 
 
@@ -249,7 +255,9 @@ def choose_repo(repos: list[RepoEntry], initial_query: str = "") -> RepoEntry | 
     return curses.wrapper(_picker, repos, initial_query)
 
 
-def _picker(screen: curses.window, repos: list[RepoEntry], initial_query: str) -> RepoEntry | None:
+def _picker(
+    screen: curses.window, repos: list[RepoEntry], initial_query: str
+) -> RepoEntry | None:
     curses.curs_set(0)
     screen.keypad(True)
     query = initial_query
@@ -265,8 +273,11 @@ def _picker(screen: curses.window, repos: list[RepoEntry], initial_query: str) -
 
         visible_rows = max(1, height - 4)
         for row, repo in enumerate(matches[:visible_rows]):
-            prefix = "›" if row == selected else " "
-            text = f"{prefix} {repo.name:<22.22} {repo.branch:<18.18} {repo.display_path}"
+            prefix = ">" if row == selected else " "
+            text = (
+                f"{prefix} {repo.name:<22.22} {repo.branch:<18.18} "
+                f"{repo.display_path}"
+            )
             screen.addnstr(row + 2, 0, text, max(1, width - 1))
 
         footer = "type filter · ↑↓ move · enter launch · esc quit"
@@ -316,7 +327,9 @@ def launch_repo(repo: RepoEntry) -> NoReturn:
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pick a local GitHub repo and launch fccdanger")
+    parser = argparse.ArgumentParser(
+        description="Pick a local GitHub repo and launch fccdanger"
+    )
     parser.add_argument("query", nargs="?", default="", help="initial fuzzy filter")
     parser.add_argument("--refresh", action="store_true", help="force repository rescan")
     parser.add_argument(
