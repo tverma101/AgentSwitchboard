@@ -103,7 +103,9 @@ def _print_home(
 ) -> None:
     owner = "this terminal" if supervisor is not None else "another process"
     status = (
-        supervisor.status.value if supervisor is not None else ServerStatus.RUNNING.value
+        supervisor.status.value
+        if supervisor is not None
+        else ServerStatus.RUNNING.value
     )
     print()
     print("FCC Harness")
