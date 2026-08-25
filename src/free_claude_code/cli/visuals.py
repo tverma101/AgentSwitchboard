@@ -1,7 +1,6 @@
 """Local terminal visual UX and focused-window Appshot capture."""
 
 import os
-import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -22,6 +21,11 @@ from free_claude_code.core.appshot import (
     capture_appshot,
 )
 
+from .macos_screenshot import (
+    capture_focused_window,
+    ensure_screen_recording_permission,
+    focused_window_metadata,
+)
 from .terminal_preview import (
     TerminalImageCapabilities,
     TerminalPreviewSession,
@@ -57,136 +61,14 @@ def _window_id(metadata: Mapping[str, object]) -> int:
     return value
 
 
-def _resolve_cg_window_id(pid: int, bounds: _WindowBounds) -> int:
-    """Resolve exactly one Core Graphics window for an inspected AX target."""
-    x, y, width, height = bounds
-    script = f"""
-ObjC.import('CoreGraphics');
-Ref.prototype.unwrap = function() {{
-    return ObjC.deepUnwrap(ObjC.castRefToObject(this));
-}};
-function run() {{
-    const pid = {pid};
-    const target = {{X: {x}, Y: {y}, Width: {width}, Height: {height}}};
-    const windows = $.CGWindowListCopyWindowInfo(
-        $.kCGWindowListOptionOnScreenOnly,
-        $.kCGNullWindowID
-    ).unwrap();
-    const ids = windows.filter(function(window) {{
-        const frame = window.kCGWindowBounds || {{}};
-        return Number(window.kCGWindowOwnerPID) === pid &&
-            Number(window.kCGWindowLayer) === 0 &&
-            Math.round(Number(frame.X)) === target.X &&
-            Math.round(Number(frame.Y)) === target.Y &&
-            Math.round(Number(frame.Width)) === target.Width &&
-            Math.round(Number(frame.Height)) === target.Height;
-    }}).map(function(window) {{
-        return String(window.kCGWindowNumber);
-    }});
-    return ids.join(',');
-}}
-""".strip()
-    try:
-        result = subprocess.run(
-            ["osascript", "-l", "JavaScript", "-e", script],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError("Core Graphics window-id lookup failed") from exc
-
-    candidates = [part.strip() for part in result.stdout.split(",") if part.strip()]
-    if len(candidates) != 1:
-        raise RuntimeError(
-            "focused window did not resolve to one unique Core Graphics window id"
-        )
-    try:
-        window_id = int(candidates[0])
-    except ValueError as exc:
-        raise RuntimeError("Core Graphics returned an invalid window id") from exc
-    if window_id <= 0:
-        raise RuntimeError("Core Graphics returned an invalid window id")
-    return window_id
-
-
-def capture_focused_window(output_dir: Path, window_id: int) -> Path:
-    """Capture one inspected macOS window surface without interactive selection."""
-    if isinstance(window_id, bool) or not isinstance(window_id, int) or window_id <= 0:
-        raise ValueError("focused window id must be a positive integer")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    destination = output_dir / "appshot.png"
-    result = subprocess.run(
-        [
-            "screencapture",
-            "-x",
-            "-l",
-            str(window_id),
-            str(destination),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0 or not destination.is_file():
-        raise RuntimeError(
-            "Focused-window capture failed; grant Screen Recording access"
-        )
-    return destination
-
-
-def focused_window_metadata() -> dict[str, object]:
-    """Read focused-window identity, bounds, and ephemeral CG window id."""
-    script = """
-tell application "System Events"
-    tell first process whose frontmost is true
-        set frontWindow to front window
-        set windowPosition to position of frontWindow
-        set windowSize to size of frontWindow
-        return name & linefeed & (value of attribute "AXTitle" of frontWindow) & linefeed & (unix id as text) & linefeed & (item 1 of windowPosition as text) & linefeed & (item 2 of windowPosition as text) & linefeed & (item 1 of windowSize as text) & linefeed & (item 2 of windowSize as text)
-    end tell
-end tell
-""".strip()
-    try:
-        result = subprocess.run(
-            ["osascript", "-e", script], check=True, text=True, capture_output=True
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError("Accessibility focused-window lookup failed") from exc
-    parts = result.stdout.splitlines()
-    if len(parts) < 7:
-        raise RuntimeError("Accessibility did not return focused-window bounds")
-    app = parts[0].strip() or "Unknown app"
-    title = "\n".join(parts[1:-5]).strip()
-    try:
-        pid, x, y, width, height = (int(float(value.strip())) for value in parts[-5:])
-    except ValueError as exc:
-        raise RuntimeError(
-            "Accessibility returned invalid focused-window metadata"
-        ) from exc
-    if pid <= 0:
-        raise RuntimeError("Accessibility returned invalid focused-window process id")
-    metadata: dict[str, object] = {
-        "app": app,
-        "window": title,
-        "x": x,
-        "y": y,
-        "width": width,
-        "height": height,
-    }
-    bounds = _window_bounds(metadata)
-    metadata["window_id"] = _resolve_cg_window_id(pid, bounds)
-    return metadata
-
-
 class MacOSFocusedWindowCapture:
     """Small macOS adapter for the provider-neutral capture port.
 
-    Accessibility identifies the focused window and its bounds before capture.
-    Core Graphics binds that inspected target to one ephemeral window id, and
-    ``screencapture -l`` reads that window surface without interactive selection
-    or composited rectangle capture. Identity, bounds, and window id must remain
-    stable before and after the one authorized capture attempt.
+    A Codex-derived Swift helper identifies the frontmost layer-0 Core Graphics
+    window directly, so Appshot does not need Accessibility permission or an
+    AppleScript/JXA remapping pass. Screen Recording is preflighted once before
+    inspection. Identity, bounds, and window id must remain stable before and
+    after the one authorized capture attempt.
     """
 
     def __init__(
@@ -194,14 +76,20 @@ class MacOSFocusedWindowCapture:
         *,
         metadata_reader: Callable[[], Mapping[str, object]] = focused_window_metadata,
         capture_reader: Callable[[Path, int], Path] = capture_focused_window,
+        permission_preflight: Callable[[], None] = ensure_screen_recording_permission,
     ) -> None:
         self._metadata_reader = metadata_reader
         self._capture_reader = capture_reader
+        self._permission_preflight = permission_preflight
+        self._permission_checked = False
         self._inspected_window: FocusedWindowMetadata | None = None
         self._inspected_bounds: _WindowBounds | None = None
         self._inspected_window_id: int | None = None
 
     def inspect_focused_window(self) -> FocusedWindowMetadata:
+        if not self._permission_checked:
+            self._permission_preflight()
+            self._permission_checked = True
         metadata = self._metadata_reader()
         window = FocusedWindowMetadata.from_mapping(metadata)
         self._inspected_window = window

@@ -8,7 +8,6 @@ from free_claude_code.cli.visuals import (
     build_appshot_attachment,
     capture_focused_window,
     enqueue_appshot,
-    focused_window_metadata,
     pending_appshots,
     render_attachment,
     render_attachment_card,
@@ -101,7 +100,9 @@ def test_capture_focused_window_uses_window_id_without_region_or_interaction(
         Path(command[-1]).write_bytes(_png_bytes())
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr("free_claude_code.cli.visuals.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "free_claude_code.cli.macos_screenshot.subprocess.run", fake_run
+    )
 
     image = capture_focused_window(tmp_path, 7312)
 
@@ -120,27 +121,6 @@ def test_capture_focused_window_uses_window_id_without_region_or_interaction(
     assert "-i" not in commands[0]
 
 
-def test_focused_window_metadata_rejects_ambiguous_cg_window_match(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import subprocess
-
-    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if command[1] == "-e":
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                "Safari\nlocalhost:3000\n123\n12\n34\n800\n600\n",
-                "",
-            )
-        return subprocess.CompletedProcess(command, 0, "7312,7313\n", "")
-
-    monkeypatch.setattr("free_claude_code.cli.visuals.subprocess.run", fake_run)
-
-    with pytest.raises(RuntimeError, match="one unique Core Graphics window id"):
-        focused_window_metadata()
-
-
 def test_macos_appshot_capture_uses_the_inspected_window_id() -> None:
     metadata = {
         "app": "Safari",
@@ -152,6 +132,7 @@ def test_macos_appshot_capture_uses_the_inspected_window_id() -> None:
         "window_id": 7312,
     }
     captures: list[int] = []
+    permission_checks: list[None] = []
 
     def read_metadata() -> dict[str, object]:
         return dict(metadata)
@@ -165,6 +146,7 @@ def test_macos_appshot_capture_uses_the_inspected_window_id() -> None:
     source = MacOSFocusedWindowCapture(
         metadata_reader=read_metadata,
         capture_reader=capture_window,
+        permission_preflight=lambda: permission_checks.append(None),
     )
     inspected = source.inspect_focused_window()
 
@@ -172,6 +154,7 @@ def test_macos_appshot_capture_uses_the_inspected_window_id() -> None:
     assert inspected.height == 600
     assert source.capture_focused_window(inspected) == _png_bytes()
     assert captures == [7312]
+    assert permission_checks == [None]
 
 
 def test_macos_appshot_rejects_bounds_change_before_reading_pixels() -> None:
@@ -198,6 +181,7 @@ def test_macos_appshot_rejects_bounds_change_before_reading_pixels() -> None:
     source = MacOSFocusedWindowCapture(
         metadata_reader=read_metadata,
         capture_reader=capture_window,
+        permission_preflight=lambda: None,
     )
     inspected = source.inspect_focused_window()
     metadata["x"] = 99
@@ -232,6 +216,7 @@ def test_macos_appshot_rejects_window_id_change_before_reading_pixels() -> None:
     source = MacOSFocusedWindowCapture(
         metadata_reader=read_metadata,
         capture_reader=capture_window,
+        permission_preflight=lambda: None,
     )
     inspected = source.inspect_focused_window()
     metadata["window_id"] = 7313
