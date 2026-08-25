@@ -34,13 +34,37 @@ from .terminal_preview import (
     terminal_preview_cache_size,
 )
 
+_WindowBounds = tuple[int, int, int, int]
 
-def capture_focused_window(output_dir: Path) -> Path:
-    """Capture only the focused macOS window using the system screenshot tool."""
+
+def _window_bounds(metadata: Mapping[str, object]) -> _WindowBounds:
+    values: list[int] = []
+    for name in ("x", "y", "width", "height"):
+        value = metadata.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise RuntimeError(f"focused window metadata is missing integer {name}")
+        values.append(value)
+    x, y, width, height = values
+    if width <= 0 or height <= 0:
+        raise RuntimeError("focused window metadata has invalid dimensions")
+    return x, y, width, height
+
+
+def capture_focused_window(output_dir: Path, bounds: _WindowBounds) -> Path:
+    """Capture the inspected macOS window rectangle without interactive selection."""
+    x, y, width, height = bounds
+    if width <= 0 or height <= 0:
+        raise ValueError("focused window bounds must have positive dimensions")
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "appshot.png"
     result = subprocess.run(
-        ["screencapture", "-w", "-o", "-x", str(destination)],
+        [
+            "screencapture",
+            "-x",
+            "-R",
+            f"{x},{y},{width},{height}",
+            str(destination),
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -52,34 +76,58 @@ def capture_focused_window(output_dir: Path) -> Path:
     return destination
 
 
-def focused_window_metadata() -> dict[str, str]:
-    """Read the frontmost app and window title through Accessibility metadata."""
-    script = (
-        'tell application "System Events" to tell first process whose frontmost is true '
-        'to return name & linefeed & (value of attribute "AXTitle" of front window)'
-    )
+def focused_window_metadata() -> dict[str, object]:
+    """Read focused-window identity and bounds through Accessibility metadata."""
+    script = """
+tell application "System Events"
+    tell first process whose frontmost is true
+        set frontWindow to front window
+        set windowPosition to position of frontWindow
+        set windowSize to size of frontWindow
+        return name & linefeed & (value of attribute "AXTitle" of frontWindow) & linefeed & (item 1 of windowPosition as text) & linefeed & (item 2 of windowPosition as text) & linefeed & (item 1 of windowSize as text) & linefeed & (item 2 of windowSize as text)
+    end tell
+end tell
+""".strip()
     result = subprocess.run(
         ["osascript", "-e", script], check=True, text=True, capture_output=True
     )
     parts = result.stdout.splitlines()
-    app = parts[0].strip() if parts else "Unknown app"
-    title = parts[1].strip() if len(parts) > 1 else ""
-    return {"app": app, "window": title}
+    if len(parts) < 6:
+        raise RuntimeError("Accessibility did not return focused-window bounds")
+    app = parts[0].strip() or "Unknown app"
+    title = "\n".join(parts[1:-4]).strip()
+    try:
+        x, y, width, height = (
+            int(float(value.strip())) for value in parts[-4:]
+        )
+    except ValueError as exc:
+        raise RuntimeError("Accessibility returned invalid focused-window bounds") from exc
+    metadata: dict[str, object] = {
+        "app": app,
+        "window": title,
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+    }
+    _window_bounds(metadata)
+    return metadata
 
 
 class MacOSFocusedWindowCapture:
     """Small macOS adapter for the provider-neutral capture port.
 
-    The system ``screencapture`` command still owns OS permission and window
-    selection. This adapter binds inspected metadata to captured bytes and
-    rejects a focus change during the operation.
+    Accessibility identifies the focused window and its bounds before capture.
+    The system ``screencapture`` command owns OS permission, but receives an
+    explicit rectangle so Appshot never enters interactive window-selection
+    mode. The adapter rejects focus changes before or during capture.
     """
 
     def __init__(
         self,
         *,
         metadata_reader: Callable[[], Mapping[str, object]] = focused_window_metadata,
-        capture_reader: Callable[[Path], Path] = capture_focused_window,
+        capture_reader: Callable[[Path, _WindowBounds], Path] = capture_focused_window,
     ) -> None:
         self._metadata_reader = metadata_reader
         self._capture_reader = capture_reader
@@ -88,10 +136,19 @@ class MacOSFocusedWindowCapture:
         return FocusedWindowMetadata.from_mapping(self._metadata_reader())
 
     def capture_focused_window(self, window: FocusedWindowMetadata) -> bytes:
+        current_metadata = self._metadata_reader()
+        current = FocusedWindowMetadata.from_mapping(current_metadata)
+        if current.display_title != window.display_title:
+            raise RuntimeError("focused window changed before capture")
+        bounds = _window_bounds(current_metadata)
         with tempfile.TemporaryDirectory(prefix="fcc-appshot-") as temporary:
-            image_path = self._capture_reader(Path(temporary))
-            after = self.inspect_focused_window()
-            if after.display_title != window.display_title:
+            image_path = self._capture_reader(Path(temporary), bounds)
+            after_metadata = self._metadata_reader()
+            after = FocusedWindowMetadata.from_mapping(after_metadata)
+            if (
+                after.display_title != window.display_title
+                or _window_bounds(after_metadata) != bounds
+            ):
                 raise RuntimeError("focused window changed during capture")
             return image_path.read_bytes()
 
