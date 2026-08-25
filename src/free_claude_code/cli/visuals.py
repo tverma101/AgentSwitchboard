@@ -159,9 +159,7 @@ end tell
     app = parts[0].strip() or "Unknown app"
     title = "\n".join(parts[1:-5]).strip()
     try:
-        pid, x, y, width, height = (
-            int(float(value.strip())) for value in parts[-5:]
-        )
+        pid, x, y, width, height = (int(float(value.strip())) for value in parts[-5:])
     except ValueError as exc:
         raise RuntimeError(
             "Accessibility returned invalid focused-window metadata"
@@ -214,11 +212,7 @@ class MacOSFocusedWindowCapture:
     def capture_focused_window(self, window: FocusedWindowMetadata) -> bytes:
         bounds = self._inspected_bounds
         window_id = self._inspected_window_id
-        if (
-            self._inspected_window is not window
-            or bounds is None
-            or window_id is None
-        ):
+        if self._inspected_window is not window or bounds is None or window_id is None:
             raise RuntimeError(
                 "focused window was not inspected by this capture source"
             )
