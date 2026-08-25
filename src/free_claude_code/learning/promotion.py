@@ -61,7 +61,7 @@ def _load_check(sidecar: Path, skill_key: str) -> SkillPromotionCheck | None:
         raise PromotionCheckConfigError("promotion sidecar exceeds size limit")
     try:
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
-    except OSError, json.JSONDecodeError as exc:
+    except (OSError, json.JSONDecodeError) as exc:
         raise PromotionCheckConfigError("promotion sidecar is invalid JSON") from exc
     if not isinstance(payload, dict) or payload.get("version") != _SIDECAR_VERSION:
         raise PromotionCheckConfigError("promotion sidecar version is unsupported")
@@ -200,10 +200,7 @@ def evaluate_skill_promotion(
             "{candidate}": str(candidate_path),
             "{project}": str(project),
         }
-        argv = [
-            substitutions.get(argument, argument)
-            for argument in check.argv
-        ]
+        argv = [substitutions.get(argument, argument) for argument in check.argv]
         try:
             completed = subprocess.run(
                 argv,
