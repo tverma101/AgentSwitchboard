@@ -12,7 +12,9 @@ from free_claude_code.learning.config import (
     extract_profile_argument,
 )
 
-_SERVER_USAGE = "fcc-server [--profile <name>] [--terminal|--no-browser]"
+_SERVER_USAGE = (
+    "fcc-server [--profile <name>] [--terminal|--no-browser] [--headless]"
+)
 
 
 def serve(argv: Sequence[str] | None = None) -> None:
@@ -28,24 +30,33 @@ def serve(argv: Sequence[str] | None = None) -> None:
     if profile is not None:
         os.environ[PROFILE_ENV] = profile
     _parse_server_options(remaining)
-    _run_server_entrypoint()
+    _run_server_entrypoint(headless="--headless" in remaining)
 
 
-def _run_server_entrypoint() -> None:
+def _run_server_entrypoint(*, headless: bool = False) -> None:
     """Run the server after command-line parsing and version short-circuits."""
 
     # Keep the server composition root off metadata-only command paths.
     from free_claude_code.cli import commands
     from free_claude_code.cli.launchers.common import preflight_proxy
+    from free_claude_code.cli.terminal_control import (
+        run_attached_control_center,
+        run_owned_control_center,
+        terminal_control_available,
+    )
     from free_claude_code.config.server_urls import local_proxy_root_url
 
     settings = commands.load_server_settings()
+    interactive = not headless and terminal_control_available()
     preflight_error = preflight_proxy(local_proxy_root_url(settings))
     if preflight_error is None:
-        print(
-            "FCC server is already running at "
-            f"{local_proxy_root_url(settings)}; terminal-only mode is active."
-        )
+        if interactive:
+            run_attached_control_center(settings)
+        else:
+            print(
+                "FCC server is already running at "
+                f"{local_proxy_root_url(settings)}; terminal-only mode is active."
+            )
         return
 
     if _server_port_is_occupied(settings.host, settings.port):
@@ -57,13 +68,17 @@ def _run_server_entrypoint() -> None:
         )
         raise SystemExit(1)
 
+    if interactive:
+        run_owned_control_center(settings)
+        return
+
     commands.serve()
 
 
 def _parse_server_options(args: Sequence[str]) -> bool | None:
     """Parse the small, side-effect-free option surface of ``fcc-server``."""
 
-    allowed = {"--help", "-h", "--terminal", "--no-browser"}
+    allowed = {"--help", "-h", "--terminal", "--no-browser", "--headless"}
     unknown = [arg for arg in args if arg not in allowed]
     if unknown:
         print(f"Usage: {_SERVER_USAGE}", file=sys.stderr)
@@ -73,9 +88,10 @@ def _parse_server_options(args: Sequence[str]) -> bool | None:
         print(
             "Start the local Free Claude Code proxy.\n\n"
             f"Usage: {_SERVER_USAGE}\n\n"
-            "This personal fork is terminal-only: FCC never launches a browser.\n"
-            "--terminal and --no-browser are accepted as explicit no-op\n"
-            "compatibility flags."
+            "Interactive terminals open the FCC terminal control center.\n"
+            "--headless keeps the blocking server-only behavior.\n"
+            "--terminal and --no-browser remain explicit no-op compatibility flags.\n"
+            "FCC never launches a browser automatically."
         )
         raise SystemExit(0)
 
