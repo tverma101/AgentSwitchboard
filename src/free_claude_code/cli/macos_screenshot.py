@@ -98,9 +98,7 @@ def _permission_message(env: Mapping[str, str]) -> str:
     )
 
 
-def ensure_screen_recording_permission(
-    env: Mapping[str, str] | None = None,
-) -> None:
+def ensure_screen_recording_permission(env: Mapping[str, str] | None = None) -> None:
     """Preflight Screen Recording and request it once without terminal prompt spam."""
     if screen_recording_granted():
         return
@@ -141,9 +139,7 @@ def focused_window_metadata() -> dict[str, object]:
         "y": _required_int(bounds.get("y"), name="y"),
         "width": _required_int(bounds.get("width"), name="width", positive=True),
         "height": _required_int(bounds.get("height"), name="height", positive=True),
-        "window_id": _required_int(
-            selected.get("id"), name="window_id", positive=True
-        ),
+        "window_id": _required_int(selected.get("id"), name="window_id", positive=True),
     }
     if isinstance(bundle_id, str) and bundle_id.strip():
         metadata["bundle_id"] = bundle_id
@@ -152,11 +148,7 @@ def focused_window_metadata() -> dict[str, object]:
 
 def capture_focused_window(output_dir: Path, window_id: int) -> Path:
     """Capture one Core Graphics window id without interactive selection."""
-    if (
-        isinstance(window_id, bool)
-        or not isinstance(window_id, int)
-        or window_id <= 0
-    ):
+    if isinstance(window_id, bool) or not isinstance(window_id, int) or window_id <= 0:
         raise ValueError("focused window id must be a positive integer")
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "appshot.png"

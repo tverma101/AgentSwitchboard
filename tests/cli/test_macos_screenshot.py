@@ -33,8 +33,7 @@ def test_screen_recording_permission_is_requested_once_without_terminal_output(
     permission_commands = [
         command
         for command in commands
-        if command[-1].endswith("macos_permissions.swift")
-        or command[-1] == "--request"
+        if command[-1].endswith("macos_permissions.swift") or command[-1] == "--request"
     ]
     request_commands = [command for command in commands if command[-1] == "--request"]
     assert len(permission_commands) == 5
