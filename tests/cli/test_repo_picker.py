@@ -1,13 +1,16 @@
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import free_claude_code.cli.repo_picker as repo_picker
 from free_claude_code.cli.repo_picker import (
     RepoEntry,
     _is_github_remote,
     _remote_slug,
+    choose_repo,
     discover_repos,
     fuzzy_match,
     launch_repo,
@@ -92,6 +95,17 @@ def test_fuzzy_match_prefers_tighter_match_and_recent_when_empty(
 
     assert fuzzy_match(repos, "harn")[0].name == "Harness"
     assert fuzzy_match(repos, "")[0].name == "HugeHarnessThing"
+
+
+def test_non_tty_filter_with_no_match_returns_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repos = [RepoEntry("Harness", str(tmp_path), "main", "acme/Harness")]
+    non_tty = SimpleNamespace(isatty=lambda: False)
+    monkeypatch.setattr(repo_picker.sys, "stdin", non_tty)
+    monkeypatch.setattr(repo_picker.sys, "stdout", non_tty)
+
+    assert choose_repo(repos, "definitely-no-match") is None
 
 
 def test_launch_repo_execs_canonical_fccdanger_with_selected_cwd(
