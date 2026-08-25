@@ -1,121 +1,135 @@
 """Trusted per-skill promotion checks for FCC Learning.
 
-Promotion checks are registered by trusted local code, never read from generated
-``SKILL.md`` content.  Evaluators are intentionally in-process callables rather
-than shell commands so candidate prose cannot become executable instructions.
+The promotion sidecar is user/profile-authored state, never generated from
+``SKILL.md``. Checks run as bounded direct argv calls (never through a shell),
+with secure temporary paths substituted for the current and candidate skill.
 """
 
 import hashlib
-from collections.abc import Callable
+import json
+import os
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from time import monotonic
-from typing import Literal
+from typing import Any, Literal
 
 from free_claude_code.core.trace import trace_event
 
 PromotionDecision = Literal["pass", "fail", "error"]
-
-
-@dataclass(frozen=True, slots=True)
-class SkillPromotionContext:
-    """Owned inputs supplied to one trusted candidate evaluator."""
-
-    skill_key: str
-    current_content: str
-    candidate_content: str
-    project_key: str
+_SIDECAR_VERSION = 1
+_MAX_SIDECAR_BYTES = 256 * 1024
+_MAX_ARGV_ITEMS = 32
+_MAX_ARG_LENGTH = 512
+_MAX_TIMEOUT_SECONDS = 120.0
 
 
 @dataclass(frozen=True, slots=True)
 class SkillPromotionCheck:
-    """One trusted, versioned promotion evaluator."""
+    """One trusted, bounded promotion check loaded from the profile sidecar."""
 
     check_id: str
     version: str
-    evaluator: Callable[[SkillPromotionContext], bool]
+    argv: tuple[str, ...]
+    timeout_seconds: float
 
 
-_CHECKS: dict[str, SkillPromotionCheck] = {}
+class PromotionCheckConfigError(ValueError):
+    """Raised when an opted-in promotion sidecar cannot be trusted as written."""
 
 
-def register_skill_promotion_check(
-    skill_key: str,
-    *,
-    check_id: str,
-    version: str,
-    evaluator: Callable[[SkillPromotionContext], bool],
-) -> None:
-    """Register a trusted gate for one generated skill key.
+def _nonempty_string(value: Any, *, field: str, limit: int) -> str:
+    if not isinstance(value, str):
+        raise PromotionCheckConfigError(f"{field} must be a string")
+    normalized = value.strip()
+    if not normalized or len(normalized) > limit:
+        raise PromotionCheckConfigError(f"{field} must be 1..{limit} characters")
+    return normalized
 
-    Registration is an explicit local-code action.  Generated candidate text is
-    never consulted when selecting the evaluator.
-    """
 
-    normalized_key = skill_key.strip()
-    normalized_id = check_id.strip()
-    normalized_version = version.strip()
-    if not normalized_key or len(normalized_key) > 200:
-        raise ValueError("skill promotion key must be 1..200 characters")
-    if not normalized_id or len(normalized_id) > 100:
-        raise ValueError("skill promotion check id must be 1..100 characters")
-    if not normalized_version or len(normalized_version) > 50:
-        raise ValueError("skill promotion check version must be 1..50 characters")
-    if not callable(evaluator):
-        raise TypeError("skill promotion evaluator must be callable")
+def _load_check(sidecar: Path, skill_key: str) -> SkillPromotionCheck | None:
+    """Load one externally selected check without consulting candidate content."""
 
-    candidate = SkillPromotionCheck(
-        check_id=normalized_id,
-        version=normalized_version,
-        evaluator=evaluator,
+    try:
+        size = sidecar.stat().st_size
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise PromotionCheckConfigError("promotion sidecar is unreadable") from exc
+    if size > _MAX_SIDECAR_BYTES:
+        raise PromotionCheckConfigError("promotion sidecar exceeds size limit")
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError as exc:
+        raise PromotionCheckConfigError("promotion sidecar is invalid JSON") from exc
+    if not isinstance(payload, dict) or payload.get("version") != _SIDECAR_VERSION:
+        raise PromotionCheckConfigError("promotion sidecar version is unsupported")
+    skills = payload.get("skills")
+    if not isinstance(skills, dict):
+        raise PromotionCheckConfigError("promotion sidecar skills must be an object")
+    raw = skills.get(skill_key)
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise PromotionCheckConfigError("promotion check entry must be an object")
+
+    check_id = _nonempty_string(raw.get("check_id"), field="check_id", limit=100)
+    version = _nonempty_string(
+        raw.get("check_version"), field="check_version", limit=50
     )
-    existing = _CHECKS.get(normalized_key)
-    if existing is not None and existing != candidate:
-        raise ValueError(f"skill promotion check already registered for {normalized_key!r}")
-    _CHECKS[normalized_key] = candidate
+    argv = raw.get("argv")
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or len(argv) > _MAX_ARGV_ITEMS
+        or not all(isinstance(item, str) for item in argv)
+    ):
+        raise PromotionCheckConfigError("promotion check argv is invalid")
+    normalized_argv = tuple(argv)
+    if any(not item or len(item) > _MAX_ARG_LENGTH for item in normalized_argv):
+        raise PromotionCheckConfigError("promotion check argv item is invalid")
+
+    timeout = raw.get("timeout_seconds", 30.0)
+    if isinstance(timeout, bool) or not isinstance(timeout, int | float):
+        raise PromotionCheckConfigError("promotion check timeout must be numeric")
+    timeout_seconds = float(timeout)
+    if not 0.1 <= timeout_seconds <= _MAX_TIMEOUT_SECONDS:
+        raise PromotionCheckConfigError("promotion check timeout is out of bounds")
+    return SkillPromotionCheck(
+        check_id=check_id,
+        version=version,
+        argv=normalized_argv,
+        timeout_seconds=timeout_seconds,
+    )
 
 
-def unregister_skill_promotion_check(skill_key: str) -> None:
-    """Remove one trusted registration, primarily for lifecycle/test cleanup."""
+def _check_environment() -> dict[str, str]:
+    """Expose only ordinary process/tooling environment, never provider secrets."""
 
-    _CHECKS.pop(skill_key.strip(), None)
+    allowed = (
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "TMPDIR",
+        "UV_CACHE_DIR",
+        "VIRTUAL_ENV",
+    )
+    return {key: os.environ[key] for key in allowed if key in os.environ}
 
 
-def evaluate_skill_promotion(
+def _receipt(
     *,
     skill_key: str,
     current_content: str,
     candidate_content: str,
-    project_key: str,
-) -> PromotionDecision | None:
-    """Evaluate a registered replacement gate and emit a metadata-only receipt."""
-
-    check = _CHECKS.get(skill_key)
-    if check is None:
-        return None
-
-    context = SkillPromotionContext(
-        skill_key=skill_key,
-        current_content=current_content,
-        candidate_content=candidate_content,
-        project_key=project_key,
-    )
-    started = monotonic()
-    error_type: str | None = None
-    try:
-        result = check.evaluator(context)
-    except Exception as exc:
-        decision: PromotionDecision = "error"
-        error_type = type(exc).__name__
-    else:
-        if result is True:
-            decision = "pass"
-        elif result is False:
-            decision = "fail"
-        else:
-            decision = "error"
-            error_type = "InvalidPromotionCheckResult"
-
-    runtime_ms = max(0, round((monotonic() - started) * 1000))
+    check_id: str,
+    check_version: str,
+    decision: PromotionDecision,
+    runtime_ms: int,
+    error_type: str | None,
+) -> None:
     trace_event(
         stage="learning",
         event="learning.skill_promotion",
@@ -123,10 +137,99 @@ def evaluate_skill_promotion(
         skill_key=skill_key,
         current_digest=hashlib.sha256(current_content.encode()).hexdigest(),
         candidate_digest=hashlib.sha256(candidate_content.encode()).hexdigest(),
+        check_id=check_id,
+        check_version=check_version,
+        decision=decision,
+        runtime_ms=runtime_ms,
+        error_type=error_type,
+    )
+
+
+def evaluate_skill_promotion(
+    *,
+    sidecar: Path,
+    skill_key: str,
+    current_content: str,
+    candidate_content: str,
+    project_key: str,
+) -> PromotionDecision | None:
+    """Run the trusted replacement gate and emit a metadata-only receipt."""
+
+    started = monotonic()
+    try:
+        check = _load_check(sidecar, skill_key)
+    except PromotionCheckConfigError as exc:
+        _receipt(
+            skill_key=skill_key,
+            current_content=current_content,
+            candidate_content=candidate_content,
+            check_id="sidecar-config",
+            check_version=str(_SIDECAR_VERSION),
+            decision="error",
+            runtime_ms=max(0, round((monotonic() - started) * 1000)),
+            error_type=type(exc).__name__,
+        )
+        return "error"
+    if check is None:
+        return None
+
+    project = Path(project_key)
+    if not project.is_dir():
+        _receipt(
+            skill_key=skill_key,
+            current_content=current_content,
+            candidate_content=candidate_content,
+            check_id=check.check_id,
+            check_version=check.version,
+            decision="error",
+            runtime_ms=max(0, round((monotonic() - started) * 1000)),
+            error_type="PromotionProjectUnavailable",
+        )
+        return "error"
+
+    decision: PromotionDecision
+    error_type: str | None = None
+    with tempfile.TemporaryDirectory(prefix="fcc-skill-promotion-") as temp_dir:
+        temp_root = Path(temp_dir)
+        current_path = temp_root / "current.md"
+        candidate_path = temp_root / "candidate.md"
+        current_path.write_text(current_content, encoding="utf-8")
+        candidate_path.write_text(candidate_content, encoding="utf-8")
+        substitutions = {
+            "{current}": str(current_path),
+            "{candidate}": str(candidate_path),
+            "{project}": str(project),
+        }
+        argv = [
+            substitutions.get(argument, argument)
+            for argument in check.argv
+        ]
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=project,
+                env=_check_environment(),
+                capture_output=True,
+                timeout=check.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            decision = "error"
+            error_type = "PromotionCheckTimeout"
+        except OSError:
+            decision = "error"
+            error_type = "PromotionCheckExecError"
+        else:
+            decision = "pass" if completed.returncode == 0 else "fail"
+
+    _receipt(
+        skill_key=skill_key,
+        current_content=current_content,
+        candidate_content=candidate_content,
         check_id=check.check_id,
         check_version=check.version,
         decision=decision,
-        runtime_ms=runtime_ms,
+        runtime_ms=max(0, round((monotonic() - started) * 1000)),
         error_type=error_type,
     )
     return decision
