@@ -25,7 +25,6 @@ from free_claude_code.core.appshot import (
 from .terminal_preview import (
     TerminalImageCapabilities,
     TerminalPreviewSession,
-    _thumbnail_for_terminal,
     clear_terminal_preview_cache,
     detect_terminal_capabilities,
     render_attachment,
