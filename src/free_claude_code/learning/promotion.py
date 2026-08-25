@@ -98,7 +98,8 @@ def evaluate_skill_promotion(
 
     A missing gate preserves the existing structural-validation policy. A
     registered gate must return the literal boolean ``True``; false results and
-    ordinary evaluator errors fail closed for that replacement.
+    ordinary evaluator errors fail closed for that replacement. If a trusted
+    gate is configured, failure to persist its receipt also fails closed.
     """
 
     check = _TRUSTED_CHECKS.get(skill_key)
@@ -124,18 +125,21 @@ def evaluate_skill_promotion(
             decision = "error"
         runtime_ms = max(0, round((monotonic() - started) * 1000))
 
-    _append_receipt(
-        receipt_root,
-        {
-            "skill_key": skill_key,
-            "current_digest": _digest(current_content),
-            "candidate_digest": _digest(candidate_content),
-            "check_id": check_id,
-            "check_version": check_version,
-            "decision": decision,
-            "runtime_ms": runtime_ms,
-        },
-    )
+    try:
+        _append_receipt(
+            receipt_root,
+            {
+                "skill_key": skill_key,
+                "current_digest": _digest(current_content),
+                "candidate_digest": _digest(candidate_content),
+                "check_id": check_id,
+                "check_version": check_version,
+                "decision": decision,
+                "runtime_ms": runtime_ms,
+            },
+        )
+    except OSError:
+        return check is None
     return decision in {"pass", "no_gate"}
 
 
@@ -154,6 +158,11 @@ def _append_receipt(root: Path, receipt: dict[str, str | int]) -> None:
         0o600,
     )
     try:
-        os.write(descriptor, payload)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("skill promotion receipt write made no progress")
+            remaining = remaining[written:]
     finally:
         os.close(descriptor)
