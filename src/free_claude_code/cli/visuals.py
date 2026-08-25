@@ -97,9 +97,7 @@ end tell
     app = parts[0].strip() or "Unknown app"
     title = "\n".join(parts[1:-4]).strip()
     try:
-        x, y, width, height = (
-            int(float(value.strip())) for value in parts[-4:]
-        )
+        x, y, width, height = (int(float(value.strip())) for value in parts[-4:])
     except ValueError as exc:
         raise RuntimeError("Accessibility returned invalid focused-window bounds") from exc
     metadata: dict[str, object] = {
