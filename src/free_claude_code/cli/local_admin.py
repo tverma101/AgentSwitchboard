@@ -62,7 +62,10 @@ def _request_json(
         headers={"Content-Type": "application/json"},
     )
     try:
-        with open_local_request(request, timeout=ADMIN_REQUEST_TIMEOUT_SECONDS) as response:
+        with open_local_request(
+            request,
+            timeout=ADMIN_REQUEST_TIMEOUT_SECONDS,
+        ) as response:
             raw = response.read()
     except HTTPError as exc:
         raise LocalAdminError(f"Admin request returned HTTP {exc.code}") from exc
