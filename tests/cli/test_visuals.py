@@ -149,6 +149,41 @@ def test_macos_appshot_capture_uses_the_inspected_window_bounds(tmp_path: Path) 
     assert captures == [(12, 34, 800, 600)]
 
 
+def test_macos_appshot_rejects_bounds_change_before_reading_pixels(
+    tmp_path: Path,
+) -> None:
+    metadata = {
+        "app": "Safari",
+        "window": "localhost:3000",
+        "x": 12,
+        "y": 34,
+        "width": 800,
+        "height": 600,
+    }
+    captures: list[tuple[int, int, int, int]] = []
+
+    def read_metadata() -> dict[str, object]:
+        return dict(metadata)
+
+    def capture_region(output_dir: Path, bounds: tuple[int, int, int, int]) -> Path:
+        captures.append(bounds)
+        image = output_dir / "appshot.png"
+        image.write_bytes(_png_bytes())
+        return image
+
+    source = MacOSFocusedWindowCapture(
+        metadata_reader=read_metadata,
+        capture_reader=capture_region,
+    )
+    inspected = source.inspect_focused_window()
+    metadata["x"] = 99
+
+    with pytest.raises(RuntimeError, match="changed before capture"):
+        source.capture_focused_window(inspected)
+
+    assert captures == []
+
+
 def test_appshot_queue_is_explicit_session_scoped_and_metadata_only(
     tmp_path: Path,
 ) -> None:

@@ -120,7 +120,7 @@ class MacOSFocusedWindowCapture:
     Accessibility identifies the focused window and its bounds before capture.
     The system ``screencapture`` command owns OS permission, but receives an
     explicit rectangle so Appshot never enters interactive window-selection
-    mode. The adapter rejects focus changes before or during capture.
+    mode. The adapter rejects focus or bounds changes before or during capture.
     """
 
     def __init__(
@@ -131,16 +131,37 @@ class MacOSFocusedWindowCapture:
     ) -> None:
         self._metadata_reader = metadata_reader
         self._capture_reader = capture_reader
+        self._inspected_window: FocusedWindowMetadata | None = None
+        self._inspected_bounds: _WindowBounds | None = None
 
     def inspect_focused_window(self) -> FocusedWindowMetadata:
-        return FocusedWindowMetadata.from_mapping(self._metadata_reader())
+        metadata = self._metadata_reader()
+        window = FocusedWindowMetadata.from_mapping(metadata)
+        self._inspected_window = window
+        self._inspected_bounds = _window_bounds(metadata)
+        return window
 
     def capture_focused_window(self, window: FocusedWindowMetadata) -> bytes:
+        bounds = self._inspected_bounds
+        if self._inspected_window is not window or bounds is None:
+            raise RuntimeError(
+                "focused window was not inspected by this capture source"
+            )
+
+        # Each inspection authorizes exactly one capture attempt. Clear the
+        # retained target before any further OS reads so failure cannot reuse a
+        # stale sensitive-window authorization.
+        self._inspected_window = None
+        self._inspected_bounds = None
+
         current_metadata = self._metadata_reader()
         current = FocusedWindowMetadata.from_mapping(current_metadata)
-        if current.display_title != window.display_title:
+        if (
+            current.display_title != window.display_title
+            or _window_bounds(current_metadata) != bounds
+        ):
             raise RuntimeError("focused window changed before capture")
-        bounds = _window_bounds(current_metadata)
+
         with tempfile.TemporaryDirectory(prefix="fcc-appshot-") as temporary:
             image_path = self._capture_reader(Path(temporary), bounds)
             after_metadata = self._metadata_reader()
