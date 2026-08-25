@@ -10,6 +10,7 @@ from free_claude_code.providers.openai_chat.request_policy import (
 from free_claude_code.providers.opencode_go import build_native_messages_body
 
 
+# Regression provenance: https://github.com/musistudio/claude-code-router/issues/1643
 def test_tool_association_survives_each_go_protocol_without_mutating_request() -> None:
     call_id = "call_normalization_contract"
     request = MessagesRequest.model_validate(
