@@ -55,7 +55,7 @@ def test_terminal_card_hides_full_path_and_control_characters() -> None:
     assert "31m-shot.png" in card
 
 
-def test_preview_cache_reuses_content_and_stays_bounded_through_public_renderer() -> None:
+def test_preview_cache_reuses_content_and_stays_bounded() -> None:
     clear_terminal_preview_cache()
     env = {"TERM_PROGRAM": "iTerm.app"}
     first = _png_bytes()
