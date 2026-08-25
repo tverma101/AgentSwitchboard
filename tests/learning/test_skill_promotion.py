@@ -96,6 +96,7 @@ def test_trusted_failing_gate_rejects_candidate_selected_bypass(
     tmp_path: Path, monkeypatch
 ) -> None:
     store, path, original = _baseline(tmp_path, monkeypatch)
+    marker = tmp_path / "candidate-owned-marker"
     register_trusted_skill_promotion_check(
         _SKILL_KEY,
         check_id="trusted-fail",
@@ -108,7 +109,7 @@ def test_trusted_failing_gate_rejects_candidate_selected_bypass(
                 action="update",
                 instructions=_UPDATE_INSTRUCTIONS,
                 check_id="candidate-owned-pass",
-                promotion_command="touch candidate-owned-marker",
+                promotion_command=f"touch {marker}",
             ),
             cwd=str(tmp_path),
             store=store,
@@ -127,7 +128,7 @@ def test_trusted_failing_gate_rejects_candidate_selected_bypass(
     raw_receipt = json.dumps(receipt)
     assert "candidate-owned-pass" not in raw_receipt
     assert "promotion_command" not in raw_receipt
-    assert not Path("candidate-owned-marker").exists()
+    assert not marker.exists()
 
 
 def test_trusted_gate_error_fails_closed_without_revision_change(
