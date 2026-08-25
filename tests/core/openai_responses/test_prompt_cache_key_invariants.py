@@ -97,9 +97,9 @@ def test_session_cache_identity_does_not_perturb_stable_prefix_hash() -> None:
     )
 
     assert first_body["prompt_cache_key"] != second_body["prompt_cache_key"]
-    assert {
-        key: value for key, value in first_body.items() if key != "prompt_cache_key"
-    } == {
-        key: value for key, value in second_body.items() if key != "prompt_cache_key"
-    }
+    first_semantic_body = dict(first_body)
+    second_semantic_body = dict(second_body)
+    first_semantic_body.pop("prompt_cache_key")
+    second_semantic_body.pop("prompt_cache_key")
+    assert first_semantic_body == second_semantic_body
     assert stable_prefix_hash(first_body) == stable_prefix_hash(second_body)
