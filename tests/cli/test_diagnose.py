@@ -1,6 +1,15 @@
 import json
 
-from free_claude_code.application.capabilities import Capability, CapabilityRoutingMode
+from free_claude_code.application.capabilities import (
+    Capability,
+    CapabilityHelper,
+    CapabilityRoutingMode,
+)
+from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    CapabilityEvidenceStatus,
+    ProviderModelInfo,
+)
 from free_claude_code.cli.diagnose import build_route_diagnostic
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
@@ -65,7 +74,9 @@ def test_route_diagnostic_rejects_unknown_vision_before_provider_io() -> None:
     assert payload["capability_evidence"][-1] == {
         "capability": "vision_input",
         "state": "unknown",
-        "evidence_source": "cli-asserted",
+        "evidence_status": "unknown",
+        "confidence": "unknown",
+        "evidence_source": "unknown",
     }
     assert payload["decision"]["decision"] == "rejected"
     assert "vision_input" in payload["decision"]["error"]
@@ -88,6 +99,73 @@ def test_route_diagnostic_can_explain_an_explicitly_evidenced_capability() -> No
     assert {row["capability"]: row["state"] for row in payload["capability_evidence"]}[
         "reasoning_effort"
     ] == "supported"
+
+
+def test_route_diagnostic_uses_cached_model_evidence_without_provider_io() -> None:
+    payload = build_route_diagnostic(
+        _settings(),
+        shapes=("vision",),
+        model_info=ProviderModelInfo(
+            "muse-spark-1.2-contributor",
+            capability_evidence=CapabilityEvidence(
+                statuses=(("vision_input", CapabilityEvidenceStatus.SUPPORTED),),
+                evidence_source="provider_catalog",
+                observed_at="2026-08-24T00:00:00Z",
+                evidence_version="catalog-1",
+            ),
+        ),
+    )
+
+    assert payload["decision"]["decision"] == "primary"
+    assert payload["capability_evidence"][-1] == {
+        "capability": "vision_input",
+        "state": "supported",
+        "evidence_status": "supported",
+        "confidence": "confirmed",
+        "evidence_source": "provider_catalog",
+    }
+    assert payload["effective_capabilities"] == {
+        "evidence_source": "provider_catalog",
+        "observed_at": "2026-08-24T00:00:00Z",
+        "evidence_version": "catalog-1",
+        "evidence_protocol": None,
+        "states": {
+            "text_input": "supported",
+            "text_output": "supported",
+            "vision_input": "supported",
+        },
+    }
+
+
+def test_route_diagnostic_surfaces_an_allowlisted_helper_plan() -> None:
+    helper = CapabilityHelper(
+        helper_id="local-vision",
+        provider_family="local",
+        model_ref="local/vision",
+        capabilities=frozenset({Capability.VISION_INPUT}),
+        local=True,
+    )
+
+    payload = build_route_diagnostic(
+        _settings(),
+        shapes=("vision",),
+        mode=CapabilityRoutingMode.SMART_LOCAL,
+        helpers=(helper,),
+        allowed_helpers=frozenset({"local-vision"}),
+    )
+
+    assert payload["policy"]["allowed_helpers"] == ["local-vision"]
+    assert payload["decision"]["decision"] == "helpers"
+    assert payload["decision"]["helpers"] == [
+        {
+            "helper_id": "local-vision",
+            "provider_family": "local",
+            "model_ref": "local/vision",
+            "capabilities": ["vision_input"],
+            "local": True,
+            "billable": False,
+        }
+    ]
 
 
 def test_route_diagnostic_output_is_json_serializable_without_request_content() -> None:

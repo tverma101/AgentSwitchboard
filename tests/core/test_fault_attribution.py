@@ -89,6 +89,33 @@ def test_fault_classifier_prioritizes_bridge_and_model_output_evidence() -> None
     ]
 
 
+def test_generic_transport_failure_does_not_blame_harness_without_proof() -> None:
+    domain, confidence, codes = classify_failure(transport=True)
+
+    assert domain is FaultDomain.UNKNOWN
+    assert confidence is FaultConfidence.MEDIUM
+    assert codes == ["transport_failure_ownership_unproven"]
+
+
+def test_proven_local_transport_failure_can_blame_harness() -> None:
+    domain, confidence, codes = classify_failure(harness_transport=True)
+
+    assert domain is FaultDomain.HARNESS_TRANSPORT
+    assert confidence is FaultConfidence.HIGH
+    assert codes == ["local_transport_failure_proven"]
+
+
+def test_explicit_upstream_error_outranks_generic_transport_signal() -> None:
+    domain, confidence, codes = classify_failure(
+        error_code="http_502",
+        transport=True,
+    )
+
+    assert domain is FaultDomain.OPENCODE_GATEWAY
+    assert confidence is FaultConfidence.HIGH
+    assert codes == ["upstream_error:http_502"]
+
+
 def test_attempt_receipt_is_metadata_only_and_serializable() -> None:
     evidence = AttemptEvidence(
         turn_id="turn_1",

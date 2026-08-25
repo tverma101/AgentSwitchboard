@@ -39,6 +39,8 @@ class ResolvedModel:
     provider_model_ref: str
     reasoning_preference: ReasoningPreference
     virtual_context_window: int | None = None
+    route_source: str = "unknown"
+    alias_applied: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +66,9 @@ class ModelRouter:
         )
 
     def resolve(self, claude_model_name: str) -> ResolvedModel:
-        requested_model = self._model_aliases.resolve_if_configured(claude_model_name)
-        normalized_requested = normalize_model_ref(requested_model)
+        alias_target = self._model_aliases.resolve_if_configured(claude_model_name)
+        alias_applied = alias_target != claude_model_name
+        normalized_requested = normalize_model_ref(alias_target)
         requested_model = normalized_requested.model_ref
         virtual_context_window = normalized_requested.virtual_context_window
         (
@@ -79,12 +82,14 @@ class ModelRouter:
                 if force_reasoning_off
                 else self._settings.reasoning_policy
             )
+            route_source = "model_alias" if alias_applied else "request_model"
             logger.debug(
-                "MODEL DIRECT: '{}' -> provider='{}' model='{}' reasoning={}",
+                "MODEL DIRECT: '{}' -> provider='{}' model='{}' reasoning={} source={}",
                 claude_model_name,
                 direct_provider_id,
                 direct_provider_model,
                 reasoning_preference.value,
+                route_source,
             )
             return ResolvedModel(
                 original_model=claude_model_name,
@@ -93,9 +98,14 @@ class ModelRouter:
                 provider_model_ref=requested_model,
                 reasoning_preference=reasoning_preference,
                 virtual_context_window=virtual_context_window,
+                route_source=route_source,
+                alias_applied=alias_applied,
             )
 
-        configured_model = normalize_model_ref(self._resolve_model_ref(requested_model))
+        configured_ref, route_source = self._resolve_model_ref_with_source(
+            requested_model
+        )
+        configured_model = normalize_model_ref(configured_ref)
         provider_model_ref = configured_model.model_ref
         if virtual_context_window is None:
             virtual_context_window = configured_model.virtual_context_window
@@ -105,7 +115,10 @@ class ModelRouter:
         provider_model = parse_model_name(provider_model_ref)
         if provider_model != claude_model_name:
             logger.debug(
-                "MODEL MAPPING: '{}' -> '{}'", claude_model_name, provider_model
+                "MODEL MAPPING: '{}' -> '{}' source={}",
+                claude_model_name,
+                provider_model,
+                route_source,
             )
         return ResolvedModel(
             original_model=claude_model_name,
@@ -114,6 +127,8 @@ class ModelRouter:
             provider_model_ref=provider_model_ref,
             reasoning_preference=reasoning_preference,
             virtual_context_window=virtual_context_window,
+            route_source=route_source,
+            alias_applied=alias_applied,
         )
 
     @staticmethod
@@ -146,12 +161,18 @@ class ModelRouter:
     def _resolve_model_ref(self, claude_model_name: str) -> str:
         """Resolve a Claude model name to the configured provider/model ref."""
 
+        model_ref, _source = self._resolve_model_ref_with_source(claude_model_name)
+        return model_ref
+
+    def _resolve_model_ref_with_source(self, claude_model_name: str) -> tuple[str, str]:
+        """Resolve the model ref and retain the exact setting that selected it."""
+
         route = self._matched_route(claude_model_name)
         if route is not None:
             model = getattr(self._settings, route[1])
             if isinstance(model, str):
-                return model
-        return self._settings.model
+                return model, route[1]
+        return self._settings.model, "model"
 
     def _resolve_reasoning_preference(
         self, claude_model_name: str

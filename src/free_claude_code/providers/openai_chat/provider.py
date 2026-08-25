@@ -97,6 +97,7 @@ class OpenAIChatProvider(BaseProvider):
         admission: ProviderAdmissionController,
         default_headers: Mapping[str, str] | None = None,
         api_key_provider: OpenAIAsyncCredentialProvider | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ):
         super().__init__(config)
         self._profile = profile
@@ -107,8 +108,7 @@ class OpenAIChatProvider(BaseProvider):
         # later requests clamp proactively instead of paying the 400 each time.
         self._model_output_caps: dict[str, int] = {}
         self._admission = admission
-        http_client = None
-        if config.proxy:
+        if http_client is None and config.proxy:
             http_client = httpx.AsyncClient(
                 proxy=config.proxy,
                 timeout=httpx.Timeout(

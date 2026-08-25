@@ -17,6 +17,7 @@ from free_claude_code.core.trace import (
     extract_claude_session_id_from_headers,
     trace_event,
 )
+from free_claude_code.core.version import package_version
 
 from .dependencies import (
     get_services,
@@ -197,7 +198,7 @@ async def probe_root():
 
 @router.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": package_version()}
 
 
 @router.api_route("/health", methods=["HEAD", "OPTIONS"])

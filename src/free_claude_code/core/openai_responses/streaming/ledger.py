@@ -17,6 +17,7 @@ class ResponsesOutputLedger:
         self._input_tokens: int | None = None
         self._output_tokens: int | None = None
         self._reasoning_tokens_estimate = 0
+        self._committed_tool_call_ids: set[str] = set()
 
     def active_block(self, index: int) -> BlockState | None:
         return self._active_blocks.get(index)
@@ -43,6 +44,13 @@ class ResponsesOutputLedger:
         while output_index >= len(self._output_slots):
             self._output_slots.append(None)
         self._output_slots[output_index] = item
+        if item.get("type") in {"function_call", "custom_tool_call"}:
+            call_id = item.get("call_id")
+            if isinstance(call_id, str) and call_id:
+                self._committed_tool_call_ids.add(call_id)
+
+    def has_committed_tool_call(self, call_id: str) -> bool:
+        return call_id in self._committed_tool_call_ids
 
     def output(self) -> list[dict[str, Any]]:
         return [item for item in self._output_slots if item is not None]

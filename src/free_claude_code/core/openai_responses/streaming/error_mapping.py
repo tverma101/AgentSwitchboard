@@ -26,3 +26,12 @@ def replay_unsafe_function_call_error() -> dict[str, Any]:
         "param": None,
         "code": None,
     }
+
+
+def empty_response_error() -> dict[str, Any]:
+    return {
+        "message": "Upstream Responses stream ended without output.",
+        "type": "api_error",
+        "param": None,
+        "code": "empty_completed_response",
+    }

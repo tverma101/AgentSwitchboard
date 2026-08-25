@@ -23,6 +23,7 @@ from . import event_builders as events
 from .blocks import ReasoningBlockState, TextBlockState, ToolBlockState
 from .completion import ResponseBlockCompleter, reasoning_output_item, tool_item
 from .error_mapping import (
+    empty_response_error,
     openai_error_from_anthropic_error,
     replay_unsafe_function_call_error,
 )
@@ -114,6 +115,9 @@ class ResponsesStreamAssembler:
             return chunks
         if self._stop_reason == "max_tokens":
             chunks.extend(self._finish_incomplete_response())
+            return chunks
+        if not self._ledger.output():
+            chunks.extend(self._finish_failed_response(empty_response_error()))
             return chunks
         self.final_response = self.response_payload(status="completed")
         chunks.append(events.response_completed(self.final_response))
@@ -296,18 +300,21 @@ class ResponsesStreamAssembler:
         return chunks, state
 
     def _start_tool_block(self, index: int, block: Mapping[str, Any]) -> list[str]:
-        chunks = self._complete_existing_block(index)
-        if self.terminal:
-            return chunks
         identity = responses_tool_identity_from_anthropic_name(
             self._request.tools, _string_value(block.get("name"))
         )
+        call_id = _string_value(block.get("id")) or new_call_id()
+        chunks = self._complete_existing_block(index)
+        if self.terminal:
+            return chunks
+        if self._ledger.has_committed_tool_call(call_id):
+            return chunks
         state = ToolBlockState(
             index=index,
             output_index=self._ledger.reserve_output_slot(),
             item_id=f"{'ctc' if identity.kind == 'custom' else 'fc'}_"
             f"{uuid.uuid4().hex[:24]}",
-            call_id=_string_value(block.get("id")) or new_call_id(),
+            call_id=call_id,
             kind=identity.kind,
             name=identity.name,
             namespace=identity.namespace,

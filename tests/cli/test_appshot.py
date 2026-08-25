@@ -12,7 +12,7 @@ def test_appshot_cli_uses_explicit_session_and_prints_local_receipt(
     monkeypatch.setattr(
         appshot,
         "capture_and_enqueue_appshot",
-        lambda *, session_id, root: (
+        lambda *, session_id, root, session_source: (
             _attachment(session_id, image),
             tmp_path / "queue" / "session-1.json",
         ),

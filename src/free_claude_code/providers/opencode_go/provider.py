@@ -187,6 +187,9 @@ def _sync_responses_evidence(
     evidence.provider_visible_reasoning_summary = (
         stream_view.provider_visible_reasoning_summary
     )
+    evidence.provider_visible_reasoning_summary_length = (
+        stream_view.provider_visible_reasoning_summary_length
+    )
     evidence.provider_reasoning_text = stream_view.provider_reasoning_text
     evidence.provider_opaque_reasoning = stream_view.provider_opaque_reasoning
     evidence.opaque_reasoning_hash = stream_view.opaque_reasoning_hash
@@ -257,11 +260,7 @@ class OpenCodeGoProvider(BaseProvider):
         super().__init__(config)
         self._admission = admission
         self._base_url = config.base_url.rstrip("/")
-        self._chat = OpenAIChatProvider(
-            config,
-            profile=OPENAI_CHAT_PROFILES["opencode_go"],
-            admission=admission,
-        )
+        self._cleanup_complete = False
         timeout = httpx.Timeout(
             config.http_read_timeout,
             connect=config.http_connect_timeout,
@@ -269,16 +268,33 @@ class OpenCodeGoProvider(BaseProvider):
             write=config.http_write_timeout,
         )
         max_connections = max(4, config.max_concurrency * 2)
+        limits = httpx.Limits(
+            max_connections=max_connections,
+            max_keepalive_connections=max(2, config.max_concurrency),
+            keepalive_expiry=30.0,
+        )
+        self._chat_http = httpx.AsyncClient(
+            proxy=config.proxy or None,
+            timeout=timeout,
+            trust_env=False,
+            follow_redirects=False,
+            limits=limits,
+        )
+        chat_http: httpx.AsyncClient | None = (
+            self._chat_http if isinstance(httpx.AsyncClient, type) else None
+        )
+        self._chat = OpenAIChatProvider(
+            config,
+            profile=OPENAI_CHAT_PROFILES["opencode_go"],
+            admission=admission,
+            http_client=chat_http,
+        )
         self._native_http = httpx.AsyncClient(
             proxy=config.proxy or None,
             timeout=timeout,
             trust_env=False,
             follow_redirects=False,
-            limits=httpx.Limits(
-                max_connections=max_connections,
-                max_keepalive_connections=max(2, config.max_concurrency),
-                keepalive_expiry=30.0,
-            ),
+            limits=limits,
         )
         responses_kwargs: dict[str, Any] = {
             "api_key": config.api_key,
@@ -313,6 +329,9 @@ class OpenCodeGoProvider(BaseProvider):
     async def cleanup(self) -> None:
         """Close both long-lived protocol transport pools."""
 
+        if self._cleanup_complete:
+            return
+        self._cleanup_complete = True
         await self._chat.cleanup()
         await self._responses.close()
 

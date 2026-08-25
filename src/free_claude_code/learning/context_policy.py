@@ -106,6 +106,18 @@ def _managed_span(document: str) -> tuple[int, int] | None:
             "cannot safely update Claude instructions: FCC context policy "
             "end marker precedes begin marker"
         )
+    begin_end = begin + len(POLICY_BEGIN)
+    end_end = end_marker + len(POLICY_END)
+    if (
+        (begin and document[begin - 1] != "\n")
+        or (begin_end < len(document) and document[begin_end] != "\n")
+        or (end_marker and document[end_marker - 1] != "\n")
+        or (end_end < len(document) and document[end_end] != "\n")
+    ):
+        raise ValueError(
+            "cannot safely update Claude instructions: FCC context policy "
+            "markers must occupy complete lines"
+        )
     line_start = document.rfind("\n", 0, begin) + 1
     line_end = document.find("\n", end_marker + len(POLICY_END))
     if line_end == -1:
@@ -120,17 +132,45 @@ def _read(path: Path) -> str:
         return ""
 
 
-def _atomic_write(path: Path, document: str) -> None:
+def _ensure_safe_target(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError(
+            "cannot safely update Claude instructions: target is a symbolic link"
+        )
+    if path.exists() and not path.is_file():
+        raise ValueError(
+            "cannot safely update Claude instructions: target is not a regular file"
+        )
+
+
+def _ensure_safe_backup(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError(
+            "cannot safely update Claude instructions: recovery copy is a symbolic link"
+        )
+    if path.exists() and not path.is_file():
+        raise ValueError(
+            "cannot safely update Claude instructions: recovery copy is not a regular file"
+        )
+
+
+def _atomic_write_bytes(path: Path, content: bytes, *, mode: int | None = None) -> None:
+    _ensure_safe_target(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    if mode is not None:
+        file_mode = mode
+    elif path.exists():
+        file_mode = path.stat().st_mode & 0o777
+    else:
+        file_mode = 0o600
     temporary_name: str | None = None
     try:
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.", dir=path.parent
         )
-        os.fchmod(descriptor, mode)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(document)
+        os.fchmod(descriptor, file_mode)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
         os.replace(temporary_name, path)
         temporary_name = None
     finally:
@@ -139,10 +179,30 @@ def _atomic_write(path: Path, document: str) -> None:
                 os.unlink(temporary_name)
 
 
+def _atomic_write(path: Path, document: str) -> None:
+    _atomic_write_bytes(path, document.encode("utf-8"))
+
+
+def _backup_once(path: Path) -> None:
+    if not path.exists():
+        return
+    _ensure_safe_target(path)
+    recovery = backup_path(path)
+    _ensure_safe_backup(recovery)
+    if recovery.exists():
+        return
+    _atomic_write_bytes(
+        recovery,
+        path.read_bytes(),
+        mode=0o600,
+    )
+
+
 def install_context_policy(config_dir: Path | None = None) -> bool:
     """Install or update the managed global context policy idempotently."""
 
     path = instructions_path(config_dir)
+    _ensure_safe_target(path)
     existing = _read(path)
     block = policy_block()
     span = _managed_span(existing)
@@ -161,9 +221,7 @@ def install_context_policy(config_dir: Path | None = None) -> bool:
             return False
         updated = f"{existing[:start]}{block}{existing[end:]}"
 
-    recovery = backup_path(path)
-    if path.exists() and not recovery.exists():
-        recovery.write_bytes(path.read_bytes())
+    _backup_once(path)
     _atomic_write(path, updated)
     return True
 
@@ -172,6 +230,7 @@ def uninstall_context_policy(config_dir: Path | None = None) -> bool:
     """Remove only the managed block, leaving user instructions untouched."""
 
     path = instructions_path(config_dir)
+    _ensure_safe_target(path)
     if not path.exists():
         return False
     existing = _read(path)
@@ -179,6 +238,7 @@ def uninstall_context_policy(config_dir: Path | None = None) -> bool:
     if span is None:
         return False
     start, end = span
+    _backup_once(path)
     _atomic_write(path, f"{existing[:start]}{existing[end:]}")
     return True
 
@@ -187,6 +247,7 @@ def context_policy_status(config_dir: Path | None = None) -> dict[str, object]:
     """Return a sanitized, machine-readable policy installation receipt."""
 
     path = instructions_path(config_dir)
+    _ensure_safe_target(path)
     installed = False
     installed_version: str | None = None
     installed_digest: str | None = None
@@ -207,5 +268,5 @@ def context_policy_status(config_dir: Path | None = None) -> dict[str, object]:
         "policy_digest": installed_digest,
         "expected_digest": policy_digest(),
         "backup_path": str(recovery),
-        "backup_exists": recovery.is_file(),
+        "backup_exists": recovery.is_file() and not recovery.is_symlink(),
     }

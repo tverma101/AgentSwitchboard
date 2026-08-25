@@ -1,139 +1,44 @@
 """Local terminal visual UX and focused-window Appshot capture."""
 
-import io
-import json
 import os
-import re
-import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from PIL import Image
-
-from free_claude_code.core.visual_attachments import (
-    VisualAttachmentReceipt,
-    validate_image_bytes,
+from free_claude_code.core.appshot import (
+    AppshotAttachment,
+    AppshotPolicy,
+    AppshotQueuePort,
+    AppshotReceipt,
+    FileAppshotQueue,
+    FocusedWindowCapturePort,
+    FocusedWindowMetadata,
+    InMemoryAppshotQueue,
+    TerminalSessionAssociation,
+    capture_appshot,
 )
 
-_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
-_DEFAULT_APPSHOT_QUEUE = Path.home() / ".fcc" / "appshots"
-_PREVIEW_MAX_EDGE = 1024
-_PREVIEW_MAX_BYTES = 512 * 1024
-
-
-def terminal_image_protocol(env: dict[str, str] | None = None) -> str | None:
-    """Return a supported inline-image protocol, or None for text fallback."""
-    values = os.environ if env is None else env
-    if values.get("TMUX") or values.get("STY"):
-        return None
-    if values.get("TERM_PROGRAM") == "iTerm.app":
-        return "iterm2"
-    if values.get("KITTY_WINDOW_ID"):
-        return "kitty"
-    if values.get("TERM", "").lower().startswith("xterm-kitty"):
-        return "kitty"
-    if values.get("SIXEL_SUPPORT") == "1" or "sixel" in values.get("TERM", "").lower():
-        return "sixel"
-    return None
-
-
-def render_attachment_card(data: bytes, *, media_type: str, label: str) -> str:
-    """Produce the safe fallback card used when inline graphics are unavailable."""
-    return validate_image_bytes(data, media_type=media_type, label=label).card()
-
-
-def render_attachment(
-    data: bytes,
-    *,
-    media_type: str,
-    label: str,
-    env: dict[str, str] | None = None,
-) -> str:
-    """Render one local attachment with a protocol preview or compact fallback."""
-    receipt = validate_image_bytes(data, media_type=media_type, label=label)
-    protocol = terminal_image_protocol(env)
-    if protocol == "iterm2":
-        return f"{_iterm2_image(data, media_type=media_type)}\n{receipt.card()}"
-    if protocol == "kitty":
-        return f"{_kitty_image(data)}\n{receipt.card()}"
-    # Sixel support is detected for telemetry, but encoding is intentionally not
-    # bundled: emitting a guessed sixel stream is worse than a truthful card.
-    return receipt.card()
-
-
-def render_terminal_preview(
-    data: bytes,
-    *,
-    media_type: str,
-    label: str,
-    env: dict[str, str] | None = None,
-) -> str:
-    """Render a bounded local preview followed by the original metadata card.
-
-    Preview bytes are produced only for terminal display and never enter a
-    provider request or receipt. Unsupported terminals receive the same
-    metadata-only card without escape sequences.
-    """
-    receipt = validate_image_bytes(data, media_type=media_type, label=label)
-    protocol = terminal_image_protocol(env)
-    if protocol is None:
-        return receipt.card()
-    preview_data, preview_type = _thumbnail_for_terminal(data, media_type=media_type)
-    if protocol == "iterm2":
-        rendered = _iterm2_image(preview_data, media_type=preview_type)
-    elif protocol == "kitty":
-        rendered = _kitty_image(preview_data)
-    else:
-        # Sixel detection is intentionally truthful but encoding is not bundled.
-        return receipt.card()
-    return f"{rendered}\n{receipt.card()}"
-
-
-def _thumbnail_for_terminal(data: bytes, *, media_type: str) -> tuple[bytes, str]:
-    """Return the original image when small, otherwise a bounded JPEG preview."""
-    with Image.open(io.BytesIO(data)) as source:
-        if len(data) <= _PREVIEW_MAX_BYTES and max(source.size) <= _PREVIEW_MAX_EDGE:
-            return data, media_type
-        image = source.convert("RGB")
-        image.thumbnail(
-            (_PREVIEW_MAX_EDGE, _PREVIEW_MAX_EDGE), Image.Resampling.LANCZOS
-        )
-        output = io.BytesIO()
-        image.save(output, format="JPEG", quality=80, optimize=True)
-    return output.getvalue(), "image/jpeg"
-
-
-def _iterm2_image(data: bytes, *, media_type: str) -> str:
-    import base64
-
-    encoded = base64.b64encode(data).decode("ascii")
-    return (
-        "\x1b]1337;File="
-        "inline=1;preserveAspectRatio=1;"
-        f"size={len(data)};type={media_type}:{encoded}\x07"
-    )
-
-
-def _kitty_image(data: bytes) -> str:
-    import base64
-
-    encoded = base64.b64encode(data).decode("ascii")
-    chunks = [encoded[index : index + 4096] for index in range(0, len(encoded), 4096)]
-    return "".join(
-        f"\x1b_Ga=T,f=100,t=d,m={int(index < len(chunks) - 1)};{chunk}\x1b\\"
-        for index, chunk in enumerate(chunks)
-    )
+from .terminal_preview import (
+    TerminalImageCapabilities,
+    TerminalPreviewSession,
+    clear_terminal_preview_cache,
+    detect_terminal_capabilities,
+    render_attachment,
+    render_attachment_card,
+    render_terminal_preview,
+    terminal_image_protocol,
+    terminal_preview_cache_size,
+)
 
 
 def capture_focused_window(output_dir: Path) -> Path:
     """Capture only the focused macOS window using the system screenshot tool."""
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "appshot.png"
-    # ``-w`` asks macOS to capture a window; the OS permission/selection UI is
-    # deliberately retained rather than simulating a click into another app.
     result = subprocess.run(
         ["screencapture", "-w", "-o", "-x", str(destination)],
         check=False,
@@ -162,35 +67,47 @@ def focused_window_metadata() -> dict[str, str]:
     return {"app": app, "window": title}
 
 
-def write_appshot_receipt(path: Path, *, metadata: dict[str, Any]) -> Path:
-    """Write a local queue receipt consumed by a wrapper/session integration."""
-    receipt = path.with_suffix(".json")
-    receipt.write_text(json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8")
-    return receipt
+class MacOSFocusedWindowCapture:
+    """Small macOS adapter for the provider-neutral capture port.
+
+    The system ``screencapture`` command still owns OS permission and window
+    selection. This adapter binds inspected metadata to captured bytes and
+    rejects a focus change during the operation.
+    """
+
+    def __init__(
+        self,
+        *,
+        metadata_reader: Callable[[], Mapping[str, object]] = focused_window_metadata,
+        capture_reader: Callable[[Path], Path] = capture_focused_window,
+    ) -> None:
+        self._metadata_reader = metadata_reader
+        self._capture_reader = capture_reader
+
+    def inspect_focused_window(self) -> FocusedWindowMetadata:
+        return FocusedWindowMetadata.from_mapping(self._metadata_reader())
+
+    def capture_focused_window(self, window: FocusedWindowMetadata) -> bytes:
+        with tempfile.TemporaryDirectory(prefix="fcc-appshot-") as temporary:
+            image_path = self._capture_reader(Path(temporary))
+            after = self.inspect_focused_window()
+            if after.display_title != window.display_title:
+                raise RuntimeError("focused window changed during capture")
+            return image_path.read_bytes()
 
 
 @dataclass(frozen=True, slots=True)
-class AppshotAttachment:
-    """Local Appshot metadata queued for one explicitly named Claude session."""
+class _StaticFocusedWindowCapture:
+    metadata: FocusedWindowMetadata
+    image_bytes: bytes
 
-    session_id: str
-    image_path: Path
-    visual: VisualAttachmentReceipt
-    app: str
-    window: str
+    def inspect_focused_window(self) -> FocusedWindowMetadata:
+        return self.metadata
 
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "image_path": str(self.image_path),
-            "app": self.app,
-            "window": self.window,
-            "visual": self.visual.as_dict(),
-        }
-
-    def confirmation(self) -> str:
-        title = f"{self.app} — {self.window}" if self.window else self.app
-        return f"[appshot: {title} · {self.visual.width}\u00d7{self.visual.height}]"
+    def capture_focused_window(self, window: FocusedWindowMetadata) -> bytes:
+        if window != self.metadata:
+            raise RuntimeError("focused window metadata changed before capture")
+        return self.image_bytes
 
 
 def build_appshot_attachment(
@@ -199,88 +116,104 @@ def build_appshot_attachment(
     session_id: str,
     metadata: dict[str, str],
 ) -> AppshotAttachment:
-    """Validate a captured image and bind it to an explicit session id."""
-    if not _SESSION_ID_RE.fullmatch(session_id):
-        raise ValueError("session_id must be a short opaque identifier")
+    """Validate a local image and bind it to an explicit session id."""
     data = image_path.read_bytes()
-    visual = validate_image_bytes(data, media_type="image/png", label="appshot")
-    return AppshotAttachment(
-        session_id=session_id,
-        image_path=image_path,
-        visual=visual,
-        app=metadata.get("app", "Unknown app"),
-        window=metadata.get("window", ""),
+    attachment, _ = capture_appshot(
+        _StaticFocusedWindowCapture(
+            metadata=FocusedWindowMetadata.from_mapping(metadata),
+            image_bytes=data,
+        ),
+        TerminalSessionAssociation.explicit(session_id),
+        policy=AppshotPolicy(),
+        monotonic=lambda: 0.0,
     )
+    return replace(attachment, image_path=image_path)
 
 
-def appshot_queue_dir(root: Path | None = None) -> Path:
-    """Return the local, demand-only Appshot queue directory."""
+def appshot_queue_dir(root: Path | None = None) -> Path | None:
+    """Return an explicitly configured queue directory, or no persistence."""
     if root is not None:
-        return root
+        return root.expanduser()
     configured = os.environ.get("FCC_APPSHOT_QUEUE")
-    return Path(configured).expanduser() if configured else _DEFAULT_APPSHOT_QUEUE
+    return Path(configured).expanduser() if configured else None
 
 
 def enqueue_appshot(attachment: AppshotAttachment, *, root: Path | None = None) -> Path:
-    """Persist metadata for a wrapper/session consumer without storing image bytes."""
-    queue = appshot_queue_dir(root)
-    queue.mkdir(parents=True, exist_ok=True)
-    destination = (
-        queue / f"{attachment.session_id}-{attachment.visual.attachment_id}.json"
-    )
-    temporary = destination.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(attachment.as_dict(), sort_keys=True) + "\n", encoding="utf-8"
-    )
-    temporary.replace(destination)
-    return destination
+    """Persist one attachment only when a queue root is explicitly supplied."""
+    queue_root = appshot_queue_dir(root)
+    if queue_root is None:
+        raise ValueError("Appshot persistence is disabled; supply an explicit queue")
+    queue = FileAppshotQueue(queue_root)
+    receipt = queue.enqueue(attachment)
+    return queue.receipt_path(receipt)
 
 
 def pending_appshots(session_id: str, *, root: Path | None = None) -> tuple[Path, ...]:
-    """List only the queued receipts for one explicit session."""
-    if not _SESSION_ID_RE.fullmatch(session_id):
-        raise ValueError("session_id must be a short opaque identifier")
-    queue = appshot_queue_dir(root)
-    return tuple(sorted(queue.glob(f"{session_id}-*.json")))
+    """List only persisted receipts for one explicit session."""
+    association = TerminalSessionAssociation.explicit(session_id)
+    queue_root = appshot_queue_dir(root)
+    if queue_root is None:
+        return ()
+    return tuple(sorted(queue_root.glob(f"{association.session_id}-*.json")))
 
 
 def capture_and_enqueue_appshot(
-    *, session_id: str, root: Path | None = None
-) -> tuple[AppshotAttachment, Path]:
-    """Capture the focused window and enqueue it for one named session."""
-    if not _SESSION_ID_RE.fullmatch(session_id):
-        raise ValueError("session_id must be a short opaque identifier")
-    queue = appshot_queue_dir(root)
-    queue.mkdir(parents=True, exist_ok=True)
-    work_dir = Path(tempfile.mkdtemp(prefix="fcc-appshot-", dir=queue))
-    try:
-        image_path = capture_focused_window(work_dir)
-        metadata = focused_window_metadata()
-        attachment = build_appshot_attachment(
-            image_path,
-            session_id=session_id,
-            metadata=metadata,
-        )
-        session_dir = queue / session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
-        final_path = session_dir / f"{attachment.visual.attachment_id}.png"
-        if final_path.exists():
-            image_path.unlink()
-        else:
-            image_path.replace(final_path)
-        persisted = AppshotAttachment(
-            session_id=attachment.session_id,
-            image_path=final_path,
-            visual=attachment.visual,
-            app=attachment.app,
-            window=attachment.window,
-        )
-        receipt = enqueue_appshot(persisted, root=queue)
-        return persisted, receipt
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+    *,
+    session_id: str,
+    root: Path | None = None,
+    source: FocusedWindowCapturePort | None = None,
+    policy: AppshotPolicy | None = None,
+    session_source: str = "explicit",
+    monotonic: Callable[[], float] = time.monotonic,
+    timestamp: Callable[[], datetime] | None = None,
+) -> tuple[AppshotAttachment, AppshotReceipt | Path]:
+    """Capture the focused window for one session without implicit persistence."""
+    queue_root = appshot_queue_dir(root)
+    queue: AppshotQueuePort
+    file_queue: FileAppshotQueue | None = None
+    if queue_root is None:
+        queue = InMemoryAppshotQueue()
+    else:
+        file_queue = FileAppshotQueue(queue_root)
+        queue = file_queue
+    attachment, receipt = capture_appshot(
+        source or MacOSFocusedWindowCapture(),
+        TerminalSessionAssociation(session_id=session_id, source=session_source),
+        queue=queue,
+        policy=policy,
+        monotonic=monotonic,
+        timestamp=timestamp,
+    )
+    if file_queue is None:
+        return attachment, receipt
+    return (
+        replace(attachment, image_path=file_queue.asset_path(receipt)),
+        file_queue.receipt_path(receipt),
+    )
 
 
 def appshot_temp_dir() -> tempfile.TemporaryDirectory[str]:
     """Create a demand-only Appshot directory; callers own its cleanup."""
     return tempfile.TemporaryDirectory(prefix="fcc-appshot-")
+
+
+__all__ = [
+    "MacOSFocusedWindowCapture",
+    "TerminalImageCapabilities",
+    "TerminalPreviewSession",
+    "appshot_queue_dir",
+    "appshot_temp_dir",
+    "build_appshot_attachment",
+    "capture_and_enqueue_appshot",
+    "capture_focused_window",
+    "clear_terminal_preview_cache",
+    "detect_terminal_capabilities",
+    "enqueue_appshot",
+    "focused_window_metadata",
+    "pending_appshots",
+    "render_attachment",
+    "render_attachment_card",
+    "render_terminal_preview",
+    "terminal_image_protocol",
+    "terminal_preview_cache_size",
+]
