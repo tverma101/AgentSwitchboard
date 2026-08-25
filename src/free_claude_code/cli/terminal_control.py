@@ -43,10 +43,7 @@ def run_owned_control_center(
     if not supervisor.schedule_run():
         raise RuntimeError("FCC server worker could not be scheduled")
 
-    server_thread = threading.Thread(
-        target=supervisor.run,
-        name="fcc-terminal-server",
-    )
+    server_thread = threading.Thread(target=supervisor.run, name="fcc-terminal-server")
     server_thread.start()
     try:
         error = _wait_for_proxy(settings, server_thread)
@@ -172,11 +169,7 @@ def _render_log_line(line: str) -> str:
     return f"{timestamp:>8} {level:<8} {message}".rstrip()
 
 
-def _launch_claude(
-    *,
-    danger: bool,
-    argv: Sequence[str] = (),
-) -> None:
+def _launch_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
     from free_claude_code.cli.launchers.claude import launch, launch_danger
 
     launcher = launch_danger if danger else launch
