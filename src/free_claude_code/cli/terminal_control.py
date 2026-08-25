@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
@@ -31,7 +32,11 @@ def terminal_control_available(
     return stdin.isatty() and stdout.isatty()
 
 
-def run_owned_control_center(settings: Settings) -> None:
+def run_owned_control_center(
+    settings: Settings,
+    *,
+    initial_argv: Sequence[str] | None = None,
+) -> None:
     """Own one FCC server worker while the terminal menu stays in foreground."""
 
     supervisor = ServerSupervisor(console_logging=False)
@@ -48,6 +53,8 @@ def run_owned_control_center(settings: Settings) -> None:
         if error is not None:
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
+        if initial_argv is not None:
+            _launch_claude(danger=False, argv=initial_argv)
         run_control_menu(settings, supervisor=supervisor)
     finally:
         supervisor.request_stop()
@@ -165,12 +172,16 @@ def _render_log_line(line: str) -> str:
     return f"{timestamp:>8} {level:<8} {message}".rstrip()
 
 
-def _launch_claude(*, danger: bool) -> None:
+def _launch_claude(
+    *,
+    danger: bool,
+    argv: Sequence[str] = (),
+) -> None:
     from free_claude_code.cli.launchers.claude import launch, launch_danger
 
     launcher = launch_danger if danger else launch
     try:
-        launcher(())
+        launcher(tuple(argv))
     except SystemExit as exc:
         if exc.code not in {None, 0}:
             print(f"Claude exited with status {exc.code}.")
