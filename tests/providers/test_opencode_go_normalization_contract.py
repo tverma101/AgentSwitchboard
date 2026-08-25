@@ -1,7 +1,13 @@
 from typing import Any
 
+import pytest
+
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.openai_responses import build_responses_provider_request
+from free_claude_code.core.openai_responses import (
+    ResponsesConversionError,
+    build_responses_provider_request,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
 from free_claude_code.providers.openai_chat import OPENAI_CHAT_PROFILES
 from free_claude_code.providers.openai_chat.request_policy import (
@@ -72,6 +78,38 @@ def test_tool_association_survives_each_go_protocol_without_mutating_request() -
     assert _native_tool_association(messages_body) == (call_id, call_id)
     assert _responses_tool_association(responses_body) == (call_id, call_id)
     assert _chat_tool_association(chat_body) == (call_id, call_id)
+    assert request.model_dump(mode="python") == original
+
+
+def test_unknown_top_level_field_is_never_silently_dropped() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "semantic-test-model",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+            "future_protocol_hint": {"mode": "strict"},
+        }
+    )
+    original = request.model_dump(mode="python")
+
+    native_body = build_native_messages_body(request)
+    assert native_body["future_protocol_hint"] == {"mode": "strict"}
+
+    with pytest.raises(ResponsesConversionError, match="future_protocol_hint"):
+        build_responses_provider_request(
+            request,
+            reasoning=DEFAULT_REASONING_POLICY,
+        )
+
+    chat_profile = OPENAI_CHAT_PROFILES["opencode_go"]
+    with pytest.raises(InvalidRequestError, match="future_protocol_hint"):
+        build_openai_chat_request_body(
+            request,
+            reasoning=DEFAULT_REASONING_POLICY,
+            policy=chat_profile.request_policy,
+            postprocessors=chat_profile.request_postprocessors,
+        )
+
     assert request.model_dump(mode="python") == original
 
 
