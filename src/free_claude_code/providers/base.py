@@ -13,7 +13,11 @@ from free_claude_code.core.diagnostics import (
     exception_cause_types,
     redacted_exception_traceback,
 )
-from free_claude_code.core.fault_attribution import classify_failure
+from free_claude_code.core.fault_attribution import (
+    FaultConfidence,
+    FaultDomain,
+    classify_failure,
+)
 from free_claude_code.core.provider_policy import (
     ProviderEgressGuard,
     ProviderPolicyError,
@@ -78,10 +82,19 @@ class BaseProvider(ABC):
             if isinstance(http_status, int) and 100 <= http_status <= 599
             else None
         )
-        fault_domain, confidence, evidence_codes = classify_failure(
-            error_code=error_code,
-            transport=error_code is None,
-        )
+        if error_code is None:
+            fault_domain, confidence, evidence_codes = classify_failure(transport=True)
+        elif tag.strip().upper() == "OPENCODE_GO":
+            fault_domain, confidence, evidence_codes = classify_failure(
+                error_code=error_code
+            )
+        else:
+            fault_domain = FaultDomain.UNKNOWN
+            confidence = FaultConfidence.MEDIUM
+            evidence_codes = [
+                f"upstream_error:{error_code}",
+                "upstream_provider_domain_unmodeled",
+            ]
         cause_types = exception_cause_types(error)
         trace_event(
             stage="provider",
@@ -132,7 +145,7 @@ class BaseProvider(ABC):
 
     @abstractmethod
     async def cleanup(self) -> None:
-        """Release any resources held by this provider."""
+        """Release HTTP client resources."""
 
     @abstractmethod
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
