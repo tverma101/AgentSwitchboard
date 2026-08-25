@@ -88,7 +88,8 @@ def test_terminal_preview_falls_back_to_metadata_for_sixel() -> None:
 
 
 def test_capture_focused_window_uses_region_without_interactive_selection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import subprocess
 
@@ -130,9 +131,7 @@ def test_macos_appshot_capture_uses_the_inspected_window_bounds(tmp_path: Path) 
     def read_metadata() -> dict[str, object]:
         return dict(metadata)
 
-    def capture_region(
-        output_dir: Path, bounds: tuple[int, int, int, int]
-    ) -> Path:
+    def capture_region(output_dir: Path, bounds: tuple[int, int, int, int]) -> Path:
         captures.append(bounds)
         image = output_dir / "appshot.png"
         image.write_bytes(_png_bytes())
