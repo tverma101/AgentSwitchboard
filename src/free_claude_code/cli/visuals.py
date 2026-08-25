@@ -99,7 +99,9 @@ end tell
     try:
         x, y, width, height = (int(float(value.strip())) for value in parts[-4:])
     except ValueError as exc:
-        raise RuntimeError("Accessibility returned invalid focused-window bounds") from exc
+        raise RuntimeError(
+            "Accessibility returned invalid focused-window bounds"
+        ) from exc
     metadata: dict[str, object] = {
         "app": app,
         "window": title,
