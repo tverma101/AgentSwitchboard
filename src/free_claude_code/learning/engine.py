@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .config import qualify_skill_key
+from .promotion import evaluate_skill_promotion
 from .store import LearningStore, project_identity, redact_sensitive
 
 _ALLOWED_MEMORY_EVIDENCE = {"user_explicit", "verified_fact", "successful_workflow"}
@@ -406,6 +407,16 @@ def _write_skill(
 
     if current is not None and not _preserves_validation_contract(
         current, instructions
+    ):
+        return None
+
+    if current is not None and not evaluate_skill_promotion(
+        skill_key=skill_key,
+        current_content=current,
+        candidate_content=content,
+        scope=scope,
+        project_key=effective_project,
+        receipt_root=store.path.parent,
     ):
         return None
 
