@@ -20,7 +20,7 @@ from free_claude_code.cli.claude_firewall import (
     ensure_process_wrapper,
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
-from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.config.settings import get_settings
 from free_claude_code.learning.config import (
     PROFILE_ENV,
     LearningProfileError,
@@ -51,7 +51,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
     if error := preflight_proxy(proxy_root_url):
-        if _start_interactive_owner(settings, args):
+        if _start_interactive_owner(args):
             return
         print(
             f"Free Claude Code proxy is not reachable at {proxy_root_url}: {error}",
@@ -111,9 +111,10 @@ def launch(argv: Sequence[str] | None = None) -> None:
     )
 
 
-def _start_interactive_owner(settings: Settings, args: Sequence[str]) -> bool:
+def _start_interactive_owner(args: Sequence[str]) -> bool:
     """Start an explicit in-process server owner for an interactive direct launch."""
 
+    from free_claude_code.cli import commands
     from free_claude_code.cli.server_startup import server_port_is_occupied
     from free_claude_code.cli.terminal_control import (
         run_owned_control_center,
@@ -122,6 +123,15 @@ def _start_interactive_owner(settings: Settings, args: Sequence[str]) -> bool:
 
     if not terminal_control_available():
         return False
+
+    # The client may have loaded Settings before a legacy env migration. Refresh
+    # through the same startup path as fcc-server so the owner and child agree.
+    get_settings.cache_clear()
+    settings = commands.load_server_settings()
+    proxy_root_url = local_proxy_root_url(settings)
+    if preflight_proxy(proxy_root_url) is None:
+        launch(args)
+        return True
 
     if server_port_is_occupied(settings.host, settings.port):
         print(
