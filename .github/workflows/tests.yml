@@ -1,5 +1,5 @@
 # Branch protection: require every status check this workflow reports, for example:
-#   Ban suppressions and legacy future annotations
+#   Ban suppressions and legacy annotations
 #   ruff-format, ruff-check, ty, pytest
 # GitHub may prefix with the workflow name (e.g. "CI / ruff-format"); use the names the branch protection UI offers after a run.
 
