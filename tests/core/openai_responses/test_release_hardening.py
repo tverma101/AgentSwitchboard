@@ -1,4 +1,6 @@
-from free_claude_code.core.openai_responses.provider_stream import ResponsesProviderStream
+from free_claude_code.core.openai_responses.provider_stream import (
+    ResponsesProviderStream,
+)
 
 
 def test_duplicate_function_call_id_is_emitted_only_once() -> None:
