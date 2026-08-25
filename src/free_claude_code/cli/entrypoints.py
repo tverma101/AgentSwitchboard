@@ -1,10 +1,12 @@
 """Lightweight entry points for installed Free Claude Code commands."""
 
 import os
-import socket
 import sys
 from collections.abc import Sequence
 
+from free_claude_code.cli.server_startup import (
+    server_port_is_occupied as _server_port_is_occupied,
+)
 from free_claude_code.core.version import package_version
 from free_claude_code.learning.config import (
     PROFILE_ENV,
@@ -101,20 +103,6 @@ def _parse_server_options(args: Sequence[str]) -> bool | None:
         )
         raise SystemExit(2)
     return None
-
-
-def _server_port_is_occupied(host: str, port: int) -> bool:
-    """Detect a listener before Uvicorn can emit a noisy bind traceback."""
-
-    connect_host = host.strip() if host else "127.0.0.1"
-    if connect_host in {"0.0.0.0", "::", "[::]"}:
-        connect_host = "127.0.0.1"
-    connect_host = connect_host.strip("[]")
-    try:
-        with socket.create_connection((connect_host, port), timeout=0.2):
-            return True
-    except OSError:
-        return False
 
 
 def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
