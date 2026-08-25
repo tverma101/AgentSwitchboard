@@ -48,6 +48,33 @@ uv run pytest -v --tb=short
 
 GitHub CI runs Ruff in check-only mode and also bans `# type: ignore`, `# ty: ignore`, and legacy annotation workarounds. Fix underlying typing and import-boundary problems instead of suppressing them.
 
+### GitHub Actions checks and manual retrigger
+
+Every pull request targeting `main` should receive the `CI` workflow on its exact head SHA. The required job names emitted by the workflow are:
+
+- `Ban suppressions and legacy annotations`
+- `ruff-format`
+- `ruff-check`
+- `ty`
+- `pytest`
+
+A normal push to the pull-request branch should trigger a fresh `pull_request` run automatically. Do not create a no-op production-code change just to make Actions run.
+
+If a run exists but a job was cancelled or failed for an infrastructure reason, use **Actions -> CI -> Re-run jobs** in GitHub, or with GitHub CLI:
+
+```bash
+gh run rerun <run-id> --failed
+```
+
+If the pull request has no run at all, dispatch the same workflow against the existing PR head branch without changing repository content:
+
+```bash
+gh workflow run tests.yml --ref <pr-head-branch>
+gh run list --workflow tests.yml --branch <pr-head-branch>
+```
+
+Before treating the result as merge evidence, verify the workflow run's head SHA is the pull request's current head SHA. A stale green run is not merge evidence. Repository branch protection should require the five check names above; changing or weakening the workflow to manufacture a green status is not an acceptable retrigger strategy.
+
 ## Project Standards
 
 - Target Python 3.14 and rely on native lazy annotations; do not add `from __future__ import annotations`.
