@@ -249,7 +249,8 @@ def choose_repo(repos: list[RepoEntry], initial_query: str = "") -> RepoEntry | 
     """Open the tiny curses picker and return the selected repository."""
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        return fuzzy_match(repos, initial_query)[0] if repos else None
+        matches = fuzzy_match(repos, initial_query)
+        return matches[0] if matches else None
     return curses.wrapper(_picker, repos, initial_query)
 
 
