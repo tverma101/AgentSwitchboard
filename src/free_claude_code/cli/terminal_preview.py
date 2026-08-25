@@ -68,7 +68,11 @@ def detect_terminal_capabilities(
     process environment and the real stdout TTY state.
     """
     values = os.environ if env is None else env
-    tty = (sys.stdout.isatty() if env is None else True) if is_tty is None else is_tty
+    tty = (
+        (sys.stdout.isatty() if env is None else True)
+        if is_tty is None
+        else is_tty
+    )
     if not tty:
         return TerminalImageCapabilities(None, False, False, None, "stdout-not-a-tty")
     if values.get("SSH_CONNECTION") or values.get("SSH_TTY"):
