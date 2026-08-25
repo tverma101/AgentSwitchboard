@@ -8,6 +8,7 @@ from free_claude_code.cli.visuals import (
     build_appshot_attachment,
     capture_focused_window,
     enqueue_appshot,
+    focused_window_metadata,
     pending_appshots,
     render_attachment,
     render_attachment_card,
@@ -87,7 +88,7 @@ def test_terminal_preview_falls_back_to_metadata_for_sixel() -> None:
     assert "\x1b" not in rendered
 
 
-def test_capture_focused_window_uses_region_without_interactive_selection(
+def test_capture_focused_window_uses_window_id_without_region_or_interaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -102,22 +103,45 @@ def test_capture_focused_window_uses_region_without_interactive_selection(
 
     monkeypatch.setattr("free_claude_code.cli.visuals.subprocess.run", fake_run)
 
-    image = capture_focused_window(tmp_path, (10, 20, 640, 480))
+    image = capture_focused_window(tmp_path, 7312)
 
     assert image.read_bytes() == _png_bytes()
     assert commands == [
         [
             "screencapture",
             "-x",
-            "-R",
-            "10,20,640,480",
+            "-l",
+            "7312",
             str(tmp_path / "appshot.png"),
         ]
     ]
+    assert "-R" not in commands[0]
     assert "-w" not in commands[0]
+    assert "-i" not in commands[0]
 
 
-def test_macos_appshot_capture_uses_the_inspected_window_bounds(tmp_path: Path) -> None:
+def test_focused_window_metadata_rejects_ambiguous_cg_window_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if command[1] == "-e":
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "Safari\nlocalhost:3000\n123\n12\n34\n800\n600\n",
+                "",
+            )
+        return subprocess.CompletedProcess(command, 0, "7312,7313\n", "")
+
+    monkeypatch.setattr("free_claude_code.cli.visuals.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="one unique Core Graphics window id"):
+        focused_window_metadata()
+
+
+def test_macos_appshot_capture_uses_the_inspected_window_id() -> None:
     metadata = {
         "app": "Safari",
         "window": "localhost:3000",
@@ -125,33 +149,32 @@ def test_macos_appshot_capture_uses_the_inspected_window_bounds(tmp_path: Path) 
         "y": 34,
         "width": 800,
         "height": 600,
+        "window_id": 7312,
     }
-    captures: list[tuple[int, int, int, int]] = []
+    captures: list[int] = []
 
     def read_metadata() -> dict[str, object]:
         return dict(metadata)
 
-    def capture_region(output_dir: Path, bounds: tuple[int, int, int, int]) -> Path:
-        captures.append(bounds)
+    def capture_window(output_dir: Path, window_id: int) -> Path:
+        captures.append(window_id)
         image = output_dir / "appshot.png"
         image.write_bytes(_png_bytes())
         return image
 
     source = MacOSFocusedWindowCapture(
         metadata_reader=read_metadata,
-        capture_reader=capture_region,
+        capture_reader=capture_window,
     )
     inspected = source.inspect_focused_window()
 
     assert inspected.width == 800
     assert inspected.height == 600
     assert source.capture_focused_window(inspected) == _png_bytes()
-    assert captures == [(12, 34, 800, 600)]
+    assert captures == [7312]
 
 
-def test_macos_appshot_rejects_bounds_change_before_reading_pixels(
-    tmp_path: Path,
-) -> None:
+def test_macos_appshot_rejects_bounds_change_before_reading_pixels() -> None:
     metadata = {
         "app": "Safari",
         "window": "localhost:3000",
@@ -159,24 +182,59 @@ def test_macos_appshot_rejects_bounds_change_before_reading_pixels(
         "y": 34,
         "width": 800,
         "height": 600,
+        "window_id": 7312,
     }
-    captures: list[tuple[int, int, int, int]] = []
+    captures: list[int] = []
 
     def read_metadata() -> dict[str, object]:
         return dict(metadata)
 
-    def capture_region(output_dir: Path, bounds: tuple[int, int, int, int]) -> Path:
-        captures.append(bounds)
+    def capture_window(output_dir: Path, window_id: int) -> Path:
+        captures.append(window_id)
         image = output_dir / "appshot.png"
         image.write_bytes(_png_bytes())
         return image
 
     source = MacOSFocusedWindowCapture(
         metadata_reader=read_metadata,
-        capture_reader=capture_region,
+        capture_reader=capture_window,
     )
     inspected = source.inspect_focused_window()
     metadata["x"] = 99
+
+    with pytest.raises(RuntimeError, match="changed before capture"):
+        source.capture_focused_window(inspected)
+
+    assert captures == []
+
+
+def test_macos_appshot_rejects_window_id_change_before_reading_pixels() -> None:
+    metadata = {
+        "app": "Safari",
+        "window": "localhost:3000",
+        "x": 12,
+        "y": 34,
+        "width": 800,
+        "height": 600,
+        "window_id": 7312,
+    }
+    captures: list[int] = []
+
+    def read_metadata() -> dict[str, object]:
+        return dict(metadata)
+
+    def capture_window(output_dir: Path, window_id: int) -> Path:
+        captures.append(window_id)
+        image = output_dir / "appshot.png"
+        image.write_bytes(_png_bytes())
+        return image
+
+    source = MacOSFocusedWindowCapture(
+        metadata_reader=read_metadata,
+        capture_reader=capture_window,
+    )
+    inspected = source.inspect_focused_window()
+    metadata["window_id"] = 7313
 
     with pytest.raises(RuntimeError, match="changed before capture"):
         source.capture_focused_window(inspected)
