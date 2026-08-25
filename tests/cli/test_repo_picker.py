@@ -80,10 +80,16 @@ def test_cache_round_trip_drops_deleted_paths(tmp_path: Path) -> None:
     assert load_cached_repos(cache) == [repos[0]]
 
 
-def test_fuzzy_match_prefers_tighter_match_and_recent_when_empty(tmp_path: Path) -> None:
+def test_fuzzy_match_prefers_tighter_match_and_recent_when_empty(
+    tmp_path: Path,
+) -> None:
     repos = [
-        RepoEntry("Harness", str(tmp_path / "Harness"), "main", "acme/Harness", 1.0),
-        RepoEntry("HugeHarnessThing", str(tmp_path / "other"), "main", "acme/other", 2.0),
+        RepoEntry(
+            "Harness", str(tmp_path / "Harness"), "main", "acme/Harness", 1.0
+        ),
+        RepoEntry(
+            "HugeHarnessThing", str(tmp_path / "other"), "main", "acme/other", 2.0
+        ),
     ]
 
     assert fuzzy_match(repos, "harn")[0].name == "Harness"
