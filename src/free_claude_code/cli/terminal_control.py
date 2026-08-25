@@ -7,11 +7,16 @@ import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from free_claude_code.cli.claude_env import context_cap_tokens
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.launchers.common import preflight_proxy
+from free_claude_code.cli.local_admin import (
+    LocalAdminError,
+    apply_admin_values,
+    get_admin_config,
+)
 from free_claude_code.config.paths import managed_env_path, server_log_path
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings
@@ -84,7 +89,7 @@ def run_control_menu(
         elif choice in {"d", "danger"}:
             _launch_claude(danger=True)
         elif choice in {"s", "settings"}:
-            _print_settings(settings)
+            _run_settings_menu(settings)
         elif choice in {"l", "logs"}:
             _print_logs(server_log_path())
         elif choice in {"r", "restart"}:
@@ -111,11 +116,12 @@ def _print_home(
         if supervisor is not None
         else ServerStatus.RUNNING.value
     )
+    model = _current_admin_value(settings, "MODEL", fallback=settings.model)
     print()
     print("FCC Harness")
     print("-----------")
     print(f"Server    {status} ({owner})")
-    print(f"Model     {settings.model}")
+    print(f"Model     {model}")
     print(f"Profile   {configured_profile()}")
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
     print()
@@ -123,17 +129,136 @@ def _print_home(
     print("[R] Restart        [Q] Quit")
 
 
-def _print_settings(settings: Settings) -> None:
-    print()
-    print("Settings")
-    print("--------")
-    print(f"Managed config  {managed_env_path()}")
-    print(f"Model           {settings.model}")
-    print(f"Reasoning       {settings.reasoning_policy.value}")
-    print(f"Profile         {configured_profile()}")
-    print(f"Context         {context_cap_tokens(os.environ):,} tokens")
-    print(f"Server          {local_proxy_root_url(settings)}")
-    print("Config editing will use the canonical Admin apply/validate path in the next slice.")
+def _run_settings_menu(settings: Settings) -> None:
+    """Edit the small high-value settings surface through the Admin API."""
+
+    while True:
+        try:
+            config = get_admin_config(settings)
+        except LocalAdminError as exc:
+            print(f"Settings unavailable: {exc}")
+            return
+        fields = _field_map(config)
+        model = fields.get("MODEL", {})
+        reasoning = fields.get("REASONING_POLICY", {})
+        print()
+        print("Settings")
+        print("--------")
+        print(f"Managed config  {managed_env_path()}")
+        print(f"Model           {_field_value(model, settings.model)}")
+        print(f"Reasoning       {_field_value(reasoning, settings.reasoning_policy.value)}")
+        print(f"Profile         {configured_profile()}")
+        print(f"Context         {context_cap_tokens(os.environ):,} tokens")
+        print()
+        print("[M] Model   [R] Reasoning   [B] Back")
+        try:
+            choice = input("Settings> ").strip().casefold()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if choice in {"b", "back", "q", "quit"}:
+            return
+        if choice in {"m", "model"}:
+            _edit_setting(settings, model, key="MODEL", prompt="Model (provider/model)> ")
+            continue
+        if choice in {"r", "reasoning"}:
+            options = _field_options(reasoning)
+            if options:
+                print("Reasoning choices: " + ", ".join(options))
+            _edit_setting(
+                settings,
+                reasoning,
+                key="REASONING_POLICY",
+                prompt="Reasoning> ",
+            )
+            continue
+        print("Unknown setting. Use M, R, or B.")
+
+
+def _edit_setting(
+    settings: Settings,
+    field: dict[str, Any],
+    *,
+    key: str,
+    prompt: str,
+) -> None:
+    if not field:
+        print(f"{key} is not exposed by the canonical Admin manifest.")
+        return
+    if field.get("locked") is True:
+        source = str(field.get("source", "external source"))
+        print(f"{key} is locked by {source}; change it at that source instead.")
+        return
+    try:
+        value = input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if not value:
+        print("No change.")
+        return
+    try:
+        result = apply_admin_values(settings, {key: value})
+    except LocalAdminError as exc:
+        print(f"Could not apply {key}: {exc}")
+        return
+    _print_apply_result(key, result)
+
+
+def _print_apply_result(key: str, result: dict[str, Any]) -> None:
+    if result.get("applied") is not True:
+        errors = result.get("errors")
+        if isinstance(errors, list) and errors:
+            print(f"Rejected {key}: " + "; ".join(str(error) for error in errors))
+        else:
+            print(f"Rejected {key}.")
+        return
+    print(f"Applied {key}.")
+    restart = result.get("restart")
+    if isinstance(restart, dict) and restart.get("automatic") is True:
+        print("FCC is applying the required server restart.")
+
+
+def _field_map(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    fields = config.get("fields")
+    if not isinstance(fields, list):
+        return {}
+    mapped: dict[str, dict[str, Any]] = {}
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        key = field.get("key")
+        if isinstance(key, str):
+            mapped[key] = field
+    return mapped
+
+
+def _field_value(field: dict[str, Any], fallback: str) -> str:
+    value = field.get("value")
+    return str(value) if value is not None else fallback
+
+
+def _field_options(field: dict[str, Any]) -> tuple[str, ...]:
+    options = field.get("options")
+    if not isinstance(options, list):
+        return ()
+    values: list[str] = []
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        value = option.get("value")
+        if isinstance(value, str) and value:
+            values.append(value)
+    return tuple(values)
+
+
+def _current_admin_value(settings: Settings, key: str, *, fallback: str) -> str:
+    try:
+        field = _field_map(get_admin_config(settings)).get(key, {})
+    except LocalAdminError:
+        return fallback
+    return _field_value(field, fallback)
 
 
 def _print_logs(path: Path, *, limit: int = LOG_PREVIEW_LINES) -> None:
