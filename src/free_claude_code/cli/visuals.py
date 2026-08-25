@@ -144,7 +144,9 @@ class MacOSFocusedWindowCapture:
     def capture_focused_window(self, window: FocusedWindowMetadata) -> bytes:
         bounds = self._inspected_bounds
         if self._inspected_window is not window or bounds is None:
-            raise RuntimeError("focused window was not inspected by this capture source")
+            raise RuntimeError(
+                "focused window was not inspected by this capture source"
+            )
 
         # Each inspection authorizes exactly one capture attempt. Clear the
         # retained target before any further OS reads so failure cannot reuse a
