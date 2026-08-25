@@ -24,11 +24,7 @@ class CapabilityEvidenceStatus(StrEnum):
 
 
 class CapabilityVerificationStatus(StrEnum):
-    """Outcome of an explicit capability verification run.
-
-    Verification is deliberately separate from capability truth. In particular,
-    a skipped or unverified live test is never evidence that a capability works.
-    """
+    """Outcome of an explicit capability verification run."""
 
     PASS = "pass"
     FAIL = "fail"
@@ -38,26 +34,44 @@ class CapabilityVerificationStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CapabilityVerification:
-    """Metadata-only result of an explicit capability verification run."""
+    """Metadata-only explicit verification results, separate from capability truth.
 
-    status: CapabilityVerificationStatus = CapabilityVerificationStatus.UNVERIFIED
+    A skipped or unverified live test is never positive evidence that a capability
+    works. Keeping verification results separate also prevents test execution
+    state from silently changing model routing policy.
+    """
+
+    statuses: tuple[tuple[str, CapabilityVerificationStatus], ...] = ()
     evidence_source: str = "unknown"
     observed_at: str | None = None
     evidence_version: str | None = None
     evidence_protocol: str | None = None
 
-    @property
-    def is_positive_evidence(self) -> bool:
-        """Return whether this run positively verified the capability path."""
+    def status_for(self, capability: str) -> CapabilityVerificationStatus:
+        """Return the recorded verification result, or unverified if absent."""
 
-        return self.status is CapabilityVerificationStatus.PASS
+        for name, status in self.statuses:
+            if name == capability:
+                return status
+        return CapabilityVerificationStatus.UNVERIFIED
+
+    def is_positive_evidence(self, capability: str) -> bool:
+        """Return whether the capability has an explicit passing verification."""
+
+        return self.status_for(capability) is CapabilityVerificationStatus.PASS
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-safe diagnostic representation."""
 
         return {
-            "status": self.status.value,
-            "positive_evidence": self.is_positive_evidence,
+            "statuses": {
+                capability: status.value for capability, status in self.statuses
+            },
+            "positive_evidence": sorted(
+                capability
+                for capability, status in self.statuses
+                if status is CapabilityVerificationStatus.PASS
+            ),
             "evidence_source": self.evidence_source,
             "observed_at": self.observed_at,
             "evidence_version": self.evidence_version,
