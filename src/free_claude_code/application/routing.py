@@ -66,11 +66,18 @@ class ModelRouter:
         )
 
     def resolve(self, claude_model_name: str) -> ResolvedModel:
-        alias_target = self._model_aliases.resolve_if_configured(claude_model_name)
-        alias_applied = alias_target != claude_model_name
-        normalized_requested = normalize_model_ref(alias_target)
-        requested_model = normalized_requested.model_ref
-        virtual_context_window = normalized_requested.virtual_context_window
+        normalized_inbound = normalize_model_ref(claude_model_name)
+        alias_target = self._model_aliases.resolve_if_configured(
+            normalized_inbound.model_ref
+        )
+        alias_applied = alias_target != normalized_inbound.model_ref
+        normalized_target = normalize_model_ref(alias_target)
+        requested_model = normalized_target.model_ref
+        virtual_context_window = (
+            normalized_inbound.virtual_context_window
+            if normalized_inbound.virtual_context_window is not None
+            else normalized_target.virtual_context_window
+        )
         (
             direct_provider_id,
             direct_provider_model,
