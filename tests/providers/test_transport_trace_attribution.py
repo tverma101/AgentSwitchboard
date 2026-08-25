@@ -42,10 +42,23 @@ def _provider() -> _TraceProbeProvider:
     )
 
 
+def _status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://example.invalid/v1/messages")
+    response = httpx.Response(status, request=request)
+    return httpx.HTTPStatusError(
+        "upstream error",
+        request=request,
+        response=response,
+    )
+
+
 def test_ambiguous_transport_trace_does_not_blame_harness() -> None:
     with patch("free_claude_code.providers.base.trace_event") as trace:
         _provider()._log_stream_transport_error(
-            "TEST", " request_id=req", ConnectionError("socket reset"), request_id="req"
+            "OPENCODE_GO",
+            " request_id=req",
+            ConnectionError("socket reset"),
+            request_id="req",
         )
 
     receipt = trace.call_args.kwargs
@@ -54,18 +67,13 @@ def test_ambiguous_transport_trace_does_not_blame_harness() -> None:
     assert receipt["evidence_codes"] == ["transport_failure_ownership_unproven"]
 
 
-def test_http_status_trace_attributes_explicit_upstream_response() -> None:
-    request = httpx.Request("POST", "https://example.invalid/v1/messages")
-    response = httpx.Response(503, request=request)
-    error = httpx.HTTPStatusError(
-        "service unavailable",
-        request=request,
-        response=response,
-    )
-
+def test_opencode_go_http_status_trace_attributes_gateway() -> None:
     with patch("free_claude_code.providers.base.trace_event") as trace:
         _provider()._log_stream_transport_error(
-            "TEST", " request_id=req", error, request_id="req"
+            "OPENCODE_GO",
+            " request_id=req",
+            _status_error(503),
+            request_id="req",
         )
 
     receipt = trace.call_args.kwargs
@@ -73,3 +81,22 @@ def test_http_status_trace_attributes_explicit_upstream_response() -> None:
     assert receipt["fault_domain"] == "opencode_gateway"
     assert receipt["confidence"] == "high"
     assert receipt["evidence_codes"] == ["upstream_error:http_503"]
+
+
+def test_other_provider_http_status_does_not_claim_opencode_gateway() -> None:
+    with patch("free_claude_code.providers.base.trace_event") as trace:
+        _provider()._log_stream_transport_error(
+            "OPEN_ROUTER",
+            " request_id=req",
+            _status_error(503),
+            request_id="req",
+        )
+
+    receipt = trace.call_args.kwargs
+    assert receipt["http_status"] == 503
+    assert receipt["fault_domain"] == "unknown"
+    assert receipt["confidence"] == "medium"
+    assert receipt["evidence_codes"] == [
+        "upstream_error:http_503",
+        "upstream_provider_domain_unmodeled",
+    ]
