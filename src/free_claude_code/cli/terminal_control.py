@@ -2,6 +2,8 @@
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -23,7 +25,9 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.learning.config import configured_profile
 
 CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
+CODEX_STATUS_TIMEOUT_SECONDS = 5.0
 LOG_PREVIEW_LINES = 30
+_CODEX_API_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
 
 
 def terminal_control_available(
@@ -88,6 +92,8 @@ def run_control_menu(
             _launch_claude(danger=False)
         elif choice in {"d", "danger"}:
             _launch_claude(danger=True)
+        elif choice in {"x", "connect", "codex"}:
+            _connect_codex()
         elif choice in {"s", "settings"}:
             _run_settings_menu(settings)
         elif choice in {"l", "logs"}:
@@ -104,7 +110,7 @@ def run_control_menu(
         elif choice in {"q", "quit", "exit"}:
             return
         else:
-            print("Unknown command. Use Enter/C, D, S, L, R, or Q.")
+            print("Unknown command. Use Enter/C, D, X, S, L, R, or Q.")
 
 
 def _print_home(
@@ -127,8 +133,8 @@ def _print_home(
     print(f"Profile   {configured_profile()}")
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
     print()
-    print("[Enter/C] Claude   [D] Danger   [S] Settings   [L] Logs")
-    print("[R] Restart        [Q] Quit")
+    print("[Enter/C] Claude   [D] Danger   [X] Connect Codex")
+    print("[S] Settings       [L] Logs     [R] Restart   [Q] Quit")
 
 
 def _run_settings_menu(settings: Settings) -> None:
@@ -302,6 +308,63 @@ def _render_log_line(line: str) -> str:
     level = str(payload.get("level", "INFO"))
     message = str(payload.get("message", ""))
     return f"{timestamp:>8} {level:<8} {message}".rstrip()
+
+
+def _codex_subscription_environment() -> dict[str, str]:
+    """Build a Codex child env that cannot silently prefer API-key auth."""
+
+    environment = dict(os.environ)
+    for key in _CODEX_API_ENV_KEYS:
+        environment.pop(key, None)
+    return environment
+
+
+def _codex_chatgpt_connected(executable: str) -> bool:
+    """Return whether Codex reports an active ChatGPT sign-in."""
+
+    try:
+        result = subprocess.run(
+            [executable, "login", "status"],
+            env=_codex_subscription_environment(),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=CODEX_STATUS_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = f"{result.stdout}\n{result.stderr}".casefold()
+    return result.returncode == 0 and "logged in using chatgpt" in output
+
+
+def _connect_codex() -> None:
+    """Explicitly connect the installed Codex CLI with ChatGPT subscription auth."""
+
+    executable = shutil.which("codex")
+    if executable is None:
+        print("Codex CLI was not found on PATH. Install/open Codex, then retry.")
+        return
+    if _codex_chatgpt_connected(executable):
+        print("Codex is already connected using ChatGPT.")
+        return
+
+    print("Starting Codex ChatGPT sign-in; Harness will not use an API key.")
+    try:
+        result = subprocess.run(
+            [executable, "login"],
+            env=_codex_subscription_environment(),
+            check=False,
+        )
+    except OSError as exc:
+        print(f"Could not start Codex login: {type(exc).__name__}.")
+        return
+    if result.returncode != 0:
+        print(f"Codex login exited with status {result.returncode}.")
+        return
+    if _codex_chatgpt_connected(executable):
+        print("Codex connected using ChatGPT subscription auth.")
+    else:
+        print("Codex login finished, but ChatGPT connection was not confirmed.")
 
 
 def _launch_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
