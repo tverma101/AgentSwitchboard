@@ -1,9 +1,13 @@
 # Harness self-hosted CI runner
 
-The main `CI` workflow prefers the repository variable `HARNESS_RUNNER`.
-Set it to `harness-local` to use the repository-scoped Apple Silicon runner on
-the designated Mac. If the variable is absent, the workflow uses
-`ubuntu-latest`.
+The main `CI` workflow prefers the repository variable `HARNESS_RUNNER` for
+trusted repository work. Set it to `harness-local` to use the
+repository-scoped Apple Silicon runner on the designated Mac. If the variable
+is absent, the workflow uses `ubuntu-latest`.
+
+Pull requests from the same repository use the configured runner. Pull
+requests from forks always use `ubuntu-latest`, even when `HARNESS_RUNNER` is
+set, because their code is not trusted to run on the persistent Mac.
 
 GitHub does not automatically treat a self-hosted label and a GitHub-hosted
 label as an `OR` choice. If the local runner is offline while
@@ -24,6 +28,20 @@ The runner is registered only for `tverma101/Harness`, with the custom label
 `harness-local`. It runs as the user LaunchAgent
 `com.tverma101.harness-actions-runner` and keeps its warm workspace and
 toolchain caches outside the repository checkout.
+
+Each quality job exact-syncs and then reuses the Harness environment at:
+
+```text
+$HOME/.cache/harness-actions/venvs/${RUNNER_OS}-${RUNNER_ARCH}-py314
+```
+
+The checks use `uv run --no-sync` after that sync, avoiding repeated dependency
+resolution and virtual-environment creation across the serial matrix jobs.
+
+The LaunchAgent is enabled with `RunAtLoad` and `KeepAlive`: it starts when
+the user’s macOS GUI session begins after a restart and respawns the runner if
+the listener exits. It is intentionally a user LaunchAgent rather than a
+pre-login system daemon because the runner uses this user’s credentials.
 
 Check service state:
 
