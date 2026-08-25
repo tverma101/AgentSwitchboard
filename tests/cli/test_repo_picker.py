@@ -84,9 +84,7 @@ def test_fuzzy_match_prefers_tighter_match_and_recent_when_empty(
     tmp_path: Path,
 ) -> None:
     repos = [
-        RepoEntry(
-            "Harness", str(tmp_path / "Harness"), "main", "acme/Harness", 1.0
-        ),
+        RepoEntry("Harness", str(tmp_path / "Harness"), "main", "acme/Harness", 1.0),
         RepoEntry(
             "HugeHarnessThing", str(tmp_path / "other"), "main", "acme/other", 2.0
         ),
