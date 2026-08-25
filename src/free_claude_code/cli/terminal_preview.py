@@ -68,11 +68,7 @@ def detect_terminal_capabilities(
     process environment and the real stdout TTY state.
     """
     values = os.environ if env is None else env
-    tty = (
-        (sys.stdout.isatty() if env is None else True)
-        if is_tty is None
-        else is_tty
-    )
+    tty = (sys.stdout.isatty() if env is None else True) if is_tty is None else is_tty
     if not tty:
         return TerminalImageCapabilities(None, False, False, None, "stdout-not-a-tty")
     if values.get("SSH_CONNECTION") or values.get("SSH_TTY"):
@@ -81,7 +77,10 @@ def detect_terminal_capabilities(
         return TerminalImageCapabilities(None, True, False, "tmux", "multiplexer")
     if values.get("STY"):
         return TerminalImageCapabilities(None, True, False, "screen", "multiplexer")
-    if values.get("TERM_PROGRAM") == "iTerm.app" or values.get("LC_TERMINAL") == "iTerm2":
+    if (
+        values.get("TERM_PROGRAM") == "iTerm.app"
+        or values.get("LC_TERMINAL") == "iTerm2"
+    ):
         return TerminalImageCapabilities("iterm2", True, False, None, "iterm2")
     if values.get("KITTY_WINDOW_ID") or values.get("TERM", "").lower().startswith(
         "xterm-kitty"
@@ -115,7 +114,7 @@ class TerminalPreviewSession:
         env: Mapping[str, str] | None = None,
         *,
         is_tty: bool | None = None,
-    ) -> "TerminalPreviewSession":
+    ) -> TerminalPreviewSession:
         return cls(detect_terminal_capabilities(env, is_tty=is_tty))
 
     def render(self, data: bytes, *, media_type: str, label: str) -> str:

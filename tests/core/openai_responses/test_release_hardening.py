@@ -10,28 +10,34 @@ def test_duplicate_function_call_id_is_emitted_only_once() -> None:
         input_tokens=0,
     )
 
-    assert stream.feed(
-        "response.output_item.added",
-        {
-            "item": {
-                "type": "function_call",
-                "id": "fc_primary",
-                "call_id": "call_shared",
-                "name": "lookup",
-            }
-        },
-    ) == []
-    assert stream.feed(
-        "response.output_item.added",
-        {
-            "item": {
-                "type": "function_call",
-                "id": "fc_duplicate",
-                "call_id": "call_shared",
-                "name": "lookup",
-            }
-        },
-    ) == []
+    assert (
+        stream.feed(
+            "response.output_item.added",
+            {
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_primary",
+                    "call_id": "call_shared",
+                    "name": "lookup",
+                }
+            },
+        )
+        == []
+    )
+    assert (
+        stream.feed(
+            "response.output_item.added",
+            {
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_duplicate",
+                    "call_id": "call_shared",
+                    "name": "lookup",
+                }
+            },
+        )
+        == []
+    )
 
     primary_done = stream.feed(
         "response.output_item.done",

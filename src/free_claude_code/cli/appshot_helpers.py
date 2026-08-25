@@ -40,7 +40,9 @@ def _read_receipt(
         resolved = candidate.resolve(strict=True)
         resolved.relative_to(queue_root)
     except (OSError, ValueError) as exc:
-        raise AppshotContractError("Appshot receipt is outside the local queue") from exc
+        raise AppshotContractError(
+            "Appshot receipt is outside the local queue"
+        ) from exc
     if not resolved.is_file():
         raise AppshotContractError("Appshot receipt is unavailable")
     try:

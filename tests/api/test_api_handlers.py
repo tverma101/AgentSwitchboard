@@ -593,7 +593,31 @@ async def test_messages_handler_optimization_intercepts_before_provider_executio
 
 @pytest.mark.asyncio
 async def test_responses_handler_bypasses_message_only_optimizations() -> None:
-    provider = FakeProvider()
+    provider = FakeProvider(
+        [
+            format_sse_event("message_start", {"type": "message_start"}),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "OK"},
+                },
+            ),
+            format_sse_event(
+                "content_block_stop", {"type": "content_block_stop", "index": 0}
+            ),
+            format_sse_event("message_stop", {"type": "message_stop"}),
+        ]
+    )
     handler = ResponsesHandler(Settings(), provider_resolver=lambda _: provider)
 
     with patch(
