@@ -172,6 +172,18 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _memory_command(args: argparse.Namespace, store: LearningStore) -> None:
+    if args.memory_command == "evict":
+        print(
+            json.dumps(
+                {
+                    "evicted": store.evict_stale_memories(
+                        older_than_days=args.older_than_days, limit=args.limit
+                    )
+                }
+            )
+        )
+        return
+
     project_key = project_identity(args.cwd)
     if args.memory_command == "list":
         _print_rows(
@@ -201,16 +213,6 @@ def _memory_command(args: argparse.Namespace, store: LearningStore) -> None:
         print(json.dumps({"removed": args.memory_id}))
     elif args.memory_command == "history":
         _print_rows(store.memory_history(args.memory_id, project_key=project_key))
-    elif args.memory_command == "evict":
-        print(
-            json.dumps(
-                {
-                    "evicted": store.evict_stale_memories(
-                        older_than_days=args.older_than_days, limit=args.limit
-                    )
-                }
-            )
-        )
 
 
 def _skill_command(args: argparse.Namespace, store: LearningStore) -> None:
