@@ -94,7 +94,9 @@ def run_control_menu(
             _print_logs(server_log_path())
         elif choice in {"r", "restart"}:
             if supervisor is None:
-                print("Server is owned by another process; restart is unavailable here.")
+                print(
+                    "Server is owned by another process; restart is unavailable here."
+                )
             elif supervisor.request_restart():
                 print("FCC server restart requested.")
             else:
@@ -146,7 +148,10 @@ def _run_settings_menu(settings: Settings) -> None:
         print("--------")
         print(f"Managed config  {managed_env_path()}")
         print(f"Model           {_field_value(model, settings.model)}")
-        print(f"Reasoning       {_field_value(reasoning, settings.reasoning_policy.value)}")
+        print(
+            "Reasoning       "
+            f"{_field_value(reasoning, settings.reasoning_policy.value)}"
+        )
         print(f"Profile         {configured_profile()}")
         print(f"Context         {context_cap_tokens(os.environ):,} tokens")
         print()
@@ -160,7 +165,12 @@ def _run_settings_menu(settings: Settings) -> None:
         if choice in {"b", "back", "q", "quit"}:
             return
         if choice in {"m", "model"}:
-            _edit_setting(settings, model, key="MODEL", prompt="Model (provider/model)> ")
+            _edit_setting(
+                settings,
+                model,
+                key="MODEL",
+                prompt="Model (provider/model)> ",
+            )
             continue
         if choice in {"r", "reasoning"}:
             options = _field_options(reasoning)
