@@ -1,5 +1,5 @@
 # Branch protection: require every status check this workflow reports, for example:
-#   Ban suppressions and legacy annotations
+#   Ban suppressions and legacy future annotations
 #   ruff-format, ruff-check, ty, pytest
 # GitHub may prefix with the workflow name (e.g. "CI / ruff-format"); use the names the branch protection UI offers after a run.
 
@@ -54,7 +54,7 @@ jobs:
       matrix:
         include:
           - id: ruff-format
-            run: uv run ruff format --diff
+            run: uv run ruff format --check
           - id: ruff-check
             run: uv run ruff check
           - id: ty
