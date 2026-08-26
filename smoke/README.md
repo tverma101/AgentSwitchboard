@@ -208,6 +208,11 @@ prompt payloads. Validate the contract with
 contract inventory; live vision and computer-use round trips remain explicitly
 separate acceptance gates.
 
+The [media conformance receipt](receipts/media-conformance-2026-08-26.json)
+records the focused current-source contract run: 17 tests passed across the
+local protocol adapters with deterministic in-memory images and no provider
+contact. It does not certify a live vision or screenshot round trip.
+
 ## OpenCode Go transport benchmark
 
 The synthetic benchmark isolates FCC transport overhead with a local keep-alive
