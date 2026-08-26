@@ -11,7 +11,6 @@ Current host behavior was cross-checked against:
 - iFurySt/open-codex-computer-use @ ead48da2, app-server status/tool transport.
 """
 
-import json
 import os
 import queue
 import subprocess
@@ -334,7 +333,7 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
                 raise CodexComputerUseError("Codex app-server returned no thread id")
             self._thread_id = thread_id
             self._wait_until_ready()
-        except BaseException:
+        except Exception:
             self.close()
             raise
 
@@ -464,6 +463,7 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
                 if proc is None or proc.poll() is not None:
                     stderr = "\n".join(self._stderr[-4:])
                     suffix = f": {stderr}" if stderr else ""
+                    self.close()
                     if indeterminate_on_transport_loss:
                         raise CodexComputerUseIndeterminateError(
                             f"native Computer Use transport exited after dispatch: {method}{suffix}"
@@ -512,10 +512,12 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
             response = _validate_elicitation_response(
                 self.elicitation_handler(request_params)
             )
-        except BaseException as error:
+        except Exception as error:
             response = {"action": "cancel", "content": None, "_meta": None}
-            if isinstance(error, CodexComputerUseElicitationError):
-                self._fatal_error = error
+            self._fatal_error = CodexComputerUseElicitationError(
+                "Computer Use elicitation handler failed closed"
+            )
+            self._fatal_error.__cause__ = error
         self._write({"id": request_id, "result": response})
 
 
