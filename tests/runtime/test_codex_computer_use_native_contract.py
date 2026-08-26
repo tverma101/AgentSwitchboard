@@ -1,5 +1,6 @@
 """Tests for native Computer Use schema/guidance drift evidence."""
 
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ def _native_status() -> list[dict[str, object]]:
     for spec in COMPUTER_USE_TOOL_SPECS:
         tools[str(spec["name"])] = {
             "description": spec["description"],
-            "inputSchema": spec["input_schema"],
+            "inputSchema": deepcopy(spec["input_schema"]),
         }
     return [{"name": "computer-use", "tools": tools, "authStatus": "notRequired"}]
 
@@ -65,7 +66,7 @@ def test_native_contract_surfaces_schema_drift_instead_of_silent_mutation() -> N
     contract = native_contract_from_status(rows)
 
     assert contract.compatible is False
-    assert any("click:properties" in item for item in contract.schema_mismatches)
+    assert any("click:schema" in item for item in contract.schema_mismatches)
 
 
 def test_native_skill_is_loaded_from_bundled_plugin_and_hashed(tmp_path: Path) -> None:
