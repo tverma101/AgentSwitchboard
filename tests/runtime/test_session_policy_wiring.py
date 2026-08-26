@@ -19,7 +19,7 @@ from free_claude_code.application.session_policy import (
 )
 from free_claude_code.cli.managed.manager import ManagedClaudeSessionManager
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.provider_policy import (
     ProviderPolicyError,
     ProviderPolicyMode,
@@ -67,6 +67,33 @@ class _ProbeProvider(BaseProvider):
         return empty()
 
 
+class _EgressProbeProvider(_ProbeProvider):
+    """Fake transport that records only calls that pass the session guard."""
+
+    def __init__(self, config: ProviderConfig, network_calls: list[str]) -> None:
+        super().__init__(config)
+        self._network_calls = network_calls
+
+    def stream_response(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> AsyncIterator[str]:
+        self._authorize_egress("https://api.openai.com/v1/responses")
+        self._network_calls.append("openai")
+        return super().stream_response(
+            request,
+            input_tokens,
+            request_id=request_id,
+            response_model=response_model,
+            reasoning=reasoning,
+        )
+
+
 def _registry() -> ApprovedHelperRegistry:
     def execute(
         operation: str,
@@ -101,6 +128,7 @@ def _settings() -> Settings:
             "provider_policy_mode": ProviderPolicyMode.STRICT.value,
             "capability_routing_mode": CapabilityRoutingMode.SMART_LOCAL.value,
             "paid_fallback": False,
+            "anthropic_auth_token": "unrelated-credential",
             "azure_openai_api_key": "unrelated-credential",
             "open_router_api_key": "unrelated-credential",
         }
@@ -117,12 +145,21 @@ def _openai_probe(
 
 @pytest.mark.asyncio
 async def test_strict_local_helper_has_zero_forbidden_provider_egress() -> None:
-    """A local helper works while an unrelated OpenAI credential cannot escape."""
+    """A local helper works while unrelated provider credentials cannot escape."""
 
     registry = _registry()
+    network_calls: list[str] = []
+
+    def openai_factory(
+        config: ProviderConfig,
+        _settings: Settings,
+        _admission: ProviderAdmissionController,
+    ) -> BaseProvider:
+        return _EgressProbeProvider(config, network_calls)
+
     runtime = _build_provider_runtime(
         _settings(),
-        openai_factory=_openai_probe,
+        openai_factory=openai_factory,
         helper_registry=registry,
     )
     policy = runtime.session_policy
@@ -130,8 +167,13 @@ async def test_strict_local_helper_has_zero_forbidden_provider_egress() -> None:
 
     openai = runtime.resolve_provider("openai")
     assert openai._config.egress_guard is policy.egress_guard
+    request = MessagesRequest(
+        model="fallback-model",
+        messages=[Message(role="user", content="probe")],
+    )
     with pytest.raises(ProviderPolicyError, match="blocked before network I/O"):
-        openai._authorize_egress("https://chatgpt.com/backend-api/codex")
+        openai.stream_response(request)
+    assert network_calls == []
 
     route = CapabilityRouter(policy.routing_policy).plan(
         RequiredCapabilitySet(frozenset({Capability.PIXEL_COMPUTER_USE})),
