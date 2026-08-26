@@ -12,6 +12,7 @@ from free_claude_code.application.helpers import (
     ApprovedHelperRegistry,
 )
 from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.provider_policy import (
     ProviderEgressGuard,
     ProviderPolicy,
@@ -119,6 +120,35 @@ def build_session_execution_policy(
     )
 
 
+def parse_allowed_helper_ids(value: str) -> tuple[str, ...]:
+    """Parse the Admin/env helper allowlist without discovering helpers."""
+
+    return tuple(
+        dict.fromkeys(
+            helper_id.strip()
+            for part in value.replace(",", "\n").splitlines()
+            for helper_id in (part,)
+            if helper_id.strip()
+        )
+    )
+
+
+def build_session_execution_policy_for_settings(
+    settings: Settings,
+    registry: ApprovedHelperRegistry,
+) -> SessionExecutionPolicy:
+    """Build the launch policy from one immutable Settings snapshot."""
+
+    return build_session_execution_policy(
+        settings.model,
+        registry,
+        allowed_helper_ids=parse_allowed_helper_ids(settings.allowed_helper_ids),
+        provider_mode=ProviderPolicyMode(settings.provider_policy_mode),
+        routing_mode=CapabilityRoutingMode(settings.capability_routing_mode),
+        paid_fallback=settings.paid_fallback,
+    )
+
+
 def _validate_allowed_helpers(
     registry: ApprovedHelperRegistry,
     allowed_helper_ids: frozenset[str],
@@ -135,4 +165,6 @@ def _validate_allowed_helpers(
 __all__ = [
     "SessionExecutionPolicy",
     "build_session_execution_policy",
+    "build_session_execution_policy_for_settings",
+    "parse_allowed_helper_ids",
 ]

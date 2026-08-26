@@ -227,6 +227,71 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "FCC_PROVIDER_POLICY_MODE",
+        "Provider Policy Mode",
+        "runtime",
+        "select",
+        settings_attr="provider_policy_mode",
+        default="strict",
+        options=(
+            ConfigOptionSpec("strict", "Strict"),
+            ConfigOptionSpec("allow-listed", "Allow listed"),
+            ConfigOptionSpec("diagnostic", "Diagnostic"),
+        ),
+        session_sensitive=True,
+        restart_required=True,
+        description=(
+            "Authorize only the configured controller by default. Allow-listed "
+            "provider helpers require explicit helper IDs."
+        ),
+    ),
+    ConfigFieldSpec(
+        "FCC_CAPABILITY_ROUTING_MODE",
+        "Capability Routing Mode",
+        "runtime",
+        "select",
+        settings_attr="capability_routing_mode",
+        default="strict",
+        options=(
+            ConfigOptionSpec("strict", "Strict"),
+            ConfigOptionSpec("smart_local", "Smart local"),
+            ConfigOptionSpec("smart_go", "Smart OpenCode Go"),
+            ConfigOptionSpec("custom", "Custom"),
+        ),
+        session_sensitive=True,
+        restart_required=True,
+        description=(
+            "Keep the primary controller in charge; helper routing is enabled "
+            "only with an explicit allowlist."
+        ),
+    ),
+    ConfigFieldSpec(
+        "FCC_ALLOWED_HELPERS",
+        "Allowed Helper IDs",
+        "runtime",
+        "textarea",
+        settings_attr="allowed_helper_ids",
+        session_sensitive=True,
+        restart_required=True,
+        description=(
+            "Comma- or newline-separated IDs from the frozen startup registry. "
+            "An installed binary or credential never authorizes a helper."
+        ),
+    ),
+    ConfigFieldSpec(
+        "FCC_PAID_FALLBACK",
+        "Paid Helper Fallback",
+        "runtime",
+        "boolean",
+        settings_attr="paid_fallback",
+        default="false",
+        session_sensitive=True,
+        restart_required=True,
+        description=(
+            "Explicitly permit billable allow-listed helpers; the default is off."
+        ),
+    ),
+    ConfigFieldSpec(
         "NVIDIA_NIM_MODEL_ALLOWLIST",
         "NVIDIA NIM Model Allowlist",
         "models",

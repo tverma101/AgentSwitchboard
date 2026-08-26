@@ -222,7 +222,15 @@ Messages requests. The strict capability policy is controller-preserving and
 has no implicit helper or controller-failover path; smart-local, smart-Go, and
 custom helper plans require an explicit helper allowlist and produce separate
 metadata-only route receipts. Helper execution is not enabled by the terminal
-Muse release path.
+Muse release path. The server captures the provider/helper policy at generation
+and managed-session start. `FCC_PROVIDER_POLICY_MODE` defaults to `strict`,
+`FCC_CAPABILITY_ROUTING_MODE` defaults to `strict`, and
+`FCC_PAID_FALLBACK` defaults to `false`. `FCC_ALLOWED_HELPERS` accepts
+comma- or newline-separated IDs from the explicit startup registry; installed
+helpers and unrelated credentials never authorize a route. Changes to these
+four values require a server restart so existing sessions keep one policy for
+their full lifetime. The terminal control center's `P` command prints the
+live metadata-only policy and egress receipt.
 
 Provider fault-attribution receipts also record `duration_ms` and
 `time_to_first_token_ms` when a provider stream is attempted. The first is the
