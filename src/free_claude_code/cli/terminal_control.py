@@ -7,9 +7,9 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Protocol, TextIO
+from typing import Any, TextIO
 
 from free_claude_code.cli.claude_env import context_cap_tokens
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
@@ -28,12 +28,7 @@ CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
 CODEX_STATUS_TIMEOUT_SECONDS = 5.0
 LOG_PREVIEW_LINES = 30
 _CODEX_API_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
-
-
-class ClaudeLauncher(Protocol):
-    """Composition-root callback for launching the configured Claude client."""
-
-    def __call__(self, *, danger: bool, argv: Sequence[str] = ()) -> None: ...
+ControlClientLauncher = Callable[[bool, Sequence[str]], None]
 
 
 def terminal_control_available(
@@ -50,12 +45,11 @@ def terminal_control_available(
 def run_owned_control_center(
     settings: Settings,
     *,
+    launch_client: ControlClientLauncher,
     initial_argv: Sequence[str] | None = None,
-    claude_launcher: ClaudeLauncher | None = None,
 ) -> None:
     """Own one FCC server worker while the terminal menu stays in foreground."""
 
-    launcher = _launch_claude if claude_launcher is None else claude_launcher
     supervisor = ServerSupervisor(console_logging=False)
     if not supervisor.schedule_run():
         raise RuntimeError("FCC server worker could not be scheduled")
@@ -68,15 +62,12 @@ def run_owned_control_center(
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
         if initial_argv is not None:
-            launcher(danger=False, argv=initial_argv)
-        if claude_launcher is None:
-            run_control_menu(settings, supervisor=supervisor)
-        else:
-            run_control_menu(
-                settings,
-                supervisor=supervisor,
-                claude_launcher=launcher,
-            )
+            launch_client(False, initial_argv)
+        run_control_menu(
+            settings,
+            supervisor=supervisor,
+            launch_client=launch_client,
+        )
     finally:
         supervisor.request_stop()
         server_thread.join()
@@ -85,29 +76,21 @@ def run_owned_control_center(
 def run_attached_control_center(
     settings: Settings,
     *,
-    claude_launcher: ClaudeLauncher | None = None,
+    launch_client: ControlClientLauncher,
 ) -> None:
     """Use the terminal menu with an FCC server owned by another process."""
 
-    if claude_launcher is None:
-        run_control_menu(settings, supervisor=None)
-    else:
-        run_control_menu(
-            settings,
-            supervisor=None,
-            claude_launcher=claude_launcher,
-        )
+    run_control_menu(settings, supervisor=None, launch_client=launch_client)
 
 
 def run_control_menu(
     settings: Settings,
     *,
     supervisor: ServerSupervisor | None,
-    claude_launcher: ClaudeLauncher | None = None,
+    launch_client: ControlClientLauncher,
 ) -> None:
     """Run the intentionally small line-oriented FCC terminal menu."""
 
-    launcher = _launch_claude if claude_launcher is None else claude_launcher
     while True:
         _print_home(settings, supervisor=supervisor)
         try:
@@ -117,9 +100,9 @@ def run_control_menu(
             return
 
         if choice in {"", "c", "claude"}:
-            launcher(danger=False)
+            launch_client(False, ())
         elif choice in {"d", "danger"}:
-            launcher(danger=True)
+            launch_client(True, ())
         elif choice in {"x", "connect", "codex"}:
             _connect_codex()
         elif choice in {"s", "settings"}:
@@ -393,13 +376,6 @@ def _connect_codex() -> None:
         print("Codex connected using ChatGPT subscription auth.")
     else:
         print("Codex login finished, but ChatGPT connection was not confirmed.")
-
-
-def _launch_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
-    """Fallback launch seam used by direct unit tests without a composition root."""
-
-    del danger, argv
-    raise RuntimeError("Claude launcher was not supplied by the CLI composition root")
 
 
 def _wait_for_proxy(

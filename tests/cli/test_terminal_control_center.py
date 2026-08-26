@@ -38,7 +38,7 @@ def test_interactive_fcc_server_owns_control_center_when_proxy_is_down() -> None
 
     run_control.assert_called_once_with(
         settings,
-        claude_launcher=entrypoints._launch_control_claude,
+        launch_client=entrypoints._launch_claude_from_control,
     )
     raw_server.assert_not_called()
 
@@ -83,7 +83,7 @@ def test_interactive_fcc_server_attaches_to_existing_proxy_without_ownership() -
 
     attach.assert_called_once_with(
         settings,
-        claude_launcher=entrypoints._launch_control_claude,
+        launch_client=entrypoints._launch_claude_from_control,
     )
     own.assert_not_called()
     port_probe.assert_not_called()
@@ -93,13 +93,15 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
     from free_claude_code.cli import terminal_control
 
     settings = _settings()
-    with (
-        patch("builtins.input", side_effect=["", "q"]),
-        patch.object(terminal_control, "_launch_claude") as launch,
-    ):
-        terminal_control.run_control_menu(settings, supervisor=None)
+    with patch("builtins.input", side_effect=["", "q"]):
+        launch = MagicMock()
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=None,
+            launch_client=launch,
+        )
 
-    launch.assert_called_once_with(danger=False)
+    launch.assert_called_once_with(False, ())
 
 
 def test_attached_control_menu_refuses_to_claim_restart_ownership(
@@ -109,7 +111,11 @@ def test_attached_control_menu_refuses_to_claim_restart_ownership(
 
     settings = _settings()
     with patch("builtins.input", side_effect=["r", "q"]):
-        terminal_control.run_control_menu(settings, supervisor=None)
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=None,
+            launch_client=MagicMock(),
+        )
 
     assert "owned by another process" in capsys.readouterr().out
 
@@ -123,7 +129,11 @@ def test_owned_control_menu_routes_restart_to_supervisor() -> None:
     supervisor.request_restart.return_value = True
 
     with patch("builtins.input", side_effect=["r", "q"]):
-        terminal_control.run_control_menu(settings, supervisor=supervisor)
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=supervisor,
+            launch_client=MagicMock(),
+        )
 
     supervisor.request_restart.assert_called_once_with()
 
@@ -196,7 +206,7 @@ def test_direct_owner_starts_control_center_with_post_migration_settings() -> No
     owner.assert_called_once_with(
         settings,
         initial_argv=("--model", "muse"),
-        claude_launcher=claude._launch_control_claude,
+        launch_client=claude._launch_control_client,
     )
 
 
@@ -229,22 +239,27 @@ def test_owned_control_center_launches_initial_client_after_health() -> None:
     supervisor = MagicMock()
     supervisor.schedule_run.return_value = True
     server_thread = MagicMock()
+    launch = MagicMock()
 
     with (
         patch.object(terminal_control, "ServerSupervisor", return_value=supervisor),
         patch.object(terminal_control.threading, "Thread", return_value=server_thread),
         patch.object(terminal_control, "_wait_for_proxy", return_value=None),
-        patch.object(terminal_control, "_launch_claude") as launch,
         patch.object(terminal_control, "run_control_menu") as menu,
     ):
         terminal_control.run_owned_control_center(
             settings,
             initial_argv=("--model", "muse"),
+            launch_client=launch,
         )
 
     server_thread.start.assert_called_once_with()
-    launch.assert_called_once_with(danger=False, argv=("--model", "muse"))
-    menu.assert_called_once_with(settings, supervisor=supervisor)
+    launch.assert_called_once_with(False, ("--model", "muse"))
+    menu.assert_called_once_with(
+        settings,
+        supervisor=supervisor,
+        launch_client=launch,
+    )
     supervisor.request_stop.assert_called_once_with()
     server_thread.join.assert_called_once_with()
 

@@ -30,7 +30,10 @@ def serve(argv: Sequence[str] | None = None) -> None:
     if profile is not None:
         os.environ[PROFILE_ENV] = profile
     _parse_server_options(remaining)
-    _run_server_entrypoint(headless="--headless" in remaining)
+    if "--headless" in remaining:
+        _run_server_entrypoint(headless=True)
+    else:
+        _run_server_entrypoint()
 
 
 def _run_server_entrypoint(*, headless: bool = False) -> None:
@@ -53,7 +56,7 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
         if interactive:
             run_attached_control_center(
                 settings,
-                claude_launcher=_launch_control_claude,
+                launch_client=_launch_claude_from_control,
             )
         else:
             print(
@@ -74,24 +77,11 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
     if interactive:
         run_owned_control_center(
             settings,
-            claude_launcher=_launch_control_claude,
+            launch_client=_launch_claude_from_control,
         )
         return
 
     commands.serve()
-
-
-def _launch_control_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
-    """Adapt the installed Claude launcher to the terminal-control callback."""
-
-    from free_claude_code.cli.launchers.claude import launch, launch_danger
-
-    launcher = launch_danger if danger else launch
-    try:
-        launcher(tuple(argv))
-    except SystemExit as exc:
-        if exc.code not in {None, 0}:
-            print(f"Claude exited with status {exc.code}.")
 
 
 def _parse_server_options(args: Sequence[str]) -> bool | None:
@@ -130,3 +120,16 @@ def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
         return False
     print(f"free-claude-code {package_version()}")
     return True
+
+
+def _launch_claude_from_control(danger: bool, argv: Sequence[str]) -> None:
+    """Adapt the terminal client callback to the Claude launcher entry points."""
+
+    from free_claude_code.cli.launchers.claude import launch, launch_danger
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")
