@@ -1,5 +1,8 @@
 import io
 import json
+import os
+import shutil
+import subprocess
 import threading
 from collections.abc import Mapping
 from pathlib import Path
@@ -180,3 +183,78 @@ def test_browser_helper_configuration_is_operator_owned() -> None:
         CodexBrowserHelperAdapter(family="safari")
     with pytest.raises(ValueError, match="absolute"):
         CodexBrowserHelperAdapter(plugin_root=Path("relative/plugin"))
+
+
+def test_browser_bridge_seeds_turn_metadata_before_plugin_initialization(
+    tmp_path: Path,
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the bridge integration contract")
+
+    plugin_root = tmp_path / "codex-browser-plugin"
+    scripts = plugin_root / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "browser-service.mjs").write_text(
+        """export async function handleRpc(request) {
+  if (request.method === "setup") return { apiManifest: { interfaces: {} }, disabledMemberIds: [] };
+  const metadata = request.params?.requestMeta?.["x-codex-turn-metadata"];
+  const present = typeof metadata === "string";
+  if (request.params?.request === "get") return { result: { metadata: present ? "present" : "missing" } };
+  return { result: { tabs: [{ id: present ? "metadata-present" : "metadata-missing" }] } };
+}
+""",
+        encoding="utf-8",
+    )
+    (scripts / "browser-client.mjs").write_text(
+        """export async function setupBrowserRuntime() {
+  await nodeRepl.rpc("browser", { method: "setup", params: "codex-app" });
+  return { browsers: { async get() {
+    const response = await nodeRepl.rpc("browser", { method: "execute", params: { request: "get" } });
+    if (response.result?.metadata !== "present") throw new Error("turn metadata was not seeded");
+    return {
+      async nameSession() {},
+      user: { async openTabs() {
+        const listed = await nodeRepl.rpc("browser", { method: "execute", params: { request: "list" } });
+        return listed.result.tabs;
+      } },
+    };
+  } } };
+}
+""",
+        encoding="utf-8",
+    )
+
+    bridge = (
+        Path(__file__).parents[2]
+        / "src"
+        / "free_claude_code"
+        / "runtime"
+        / "codex_browser_helper.mjs"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "FCC_CODEX_BROWSER_FAMILY": "chrome",
+            "FCC_CODEX_BROWSER_PLUGIN_ROOT": str(plugin_root),
+            "FCC_CODEX_BROWSER_SESSION_ID": "test-session",
+        }
+    )
+    completed = subprocess.run(
+        [node, str(bridge)],
+        input='{"id":1,"operation":"list_tabs","arguments":{}}\n',
+        capture_output=True,
+        check=False,
+        cwd=Path(__file__).parents[2],
+        env=environment,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0
+    response = json.loads(completed.stdout)
+    assert response == {
+        "id": 1,
+        "ok": True,
+        "result": {"family": "chrome", "tabs": [{"id": "metadata-present"}]},
+    }
