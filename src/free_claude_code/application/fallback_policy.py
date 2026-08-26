@@ -215,6 +215,15 @@ def evaluate_controller_fallback(
             target,
             failure,
         )
+    if not state.canonical_request_available:
+        return _decision(
+            RecoveryKind.FAIL,
+            False,
+            "controller fallback requires canonical request rebuild",
+            source,
+            target,
+            failure,
+        )
     if (
         policy.same_subscription_only
         and target.subscription_scope != source.subscription_scope
@@ -227,25 +236,15 @@ def evaluate_controller_fallback(
             target,
             failure,
         )
-    if target.protocol_family != source.protocol_family:
-        if not policy.allow_cross_protocol:
-            return _decision(
-                RecoveryKind.FAIL,
-                False,
-                "cross-protocol controller fallback is disabled",
-                source,
-                target,
-                failure,
-            )
-        if not state.canonical_request_available:
-            return _decision(
-                RecoveryKind.FAIL,
-                False,
-                "cross-protocol fallback requires canonical request retranslation",
-                source,
-                target,
-                failure,
-            )
+    if target.protocol_family != source.protocol_family and not policy.allow_cross_protocol:
+        return _decision(
+            RecoveryKind.FAIL,
+            False,
+            "cross-protocol controller fallback is disabled",
+            source,
+            target,
+            failure,
+        )
 
     missing = required.capabilities - target.capabilities
     if missing:
