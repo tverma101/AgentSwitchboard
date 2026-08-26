@@ -55,15 +55,21 @@ def test_browser_helper_metadata_is_local_bounded_and_controller_preserving() ->
     )
     assert helper.mutating_operations == MUTATING_BROWSER_OPERATIONS
     assert READ_ONLY_BROWSER_OPERATIONS.isdisjoint(MUTATING_BROWSER_OPERATIONS)
-    assert READ_ONLY_BROWSER_OPERATIONS | MUTATING_BROWSER_OPERATIONS == BROWSER_OPERATIONS
+    assert (
+        READ_ONLY_BROWSER_OPERATIONS | MUTATING_BROWSER_OPERATIONS == BROWSER_OPERATIONS
+    )
 
 
 def test_browser_helper_rejects_unknown_operation_before_startup() -> None:
     adapter = CodexBrowserHelperAdapter()
 
-    with patch("free_claude_code.runtime.codex_browser_helper.subprocess.Popen") as popen:
-        with pytest.raises(CodexBrowserHelperError, match="unsupported"):
-            adapter.execute("evaluate_javascript", {}, threading.Event())
+    with (
+        patch(
+            "free_claude_code.runtime.codex_browser_helper.subprocess.Popen"
+        ) as popen,
+        pytest.raises(CodexBrowserHelperError, match="unsupported"),
+    ):
+        adapter.execute("evaluate_javascript", {}, threading.Event())
 
     popen.assert_not_called()
 
@@ -73,9 +79,13 @@ def test_browser_helper_rejects_cancelled_call_before_startup() -> None:
     cancelled = threading.Event()
     cancelled.set()
 
-    with patch("free_claude_code.runtime.codex_browser_helper.subprocess.Popen") as popen:
-        with pytest.raises(CodexBrowserHelperError, match="cancelled before dispatch"):
-            adapter.execute("list_tabs", {}, cancelled)
+    with (
+        patch(
+            "free_claude_code.runtime.codex_browser_helper.subprocess.Popen"
+        ) as popen,
+        pytest.raises(CodexBrowserHelperError, match="cancelled before dispatch"),
+    ):
+        adapter.execute("list_tabs", {}, cancelled)
 
     popen.assert_not_called()
 
@@ -117,7 +127,9 @@ def test_browser_helper_uses_one_warm_json_line_process() -> None:
     command = raw_args[0]
     assert isinstance(command, list)
     assert command[0] == "/usr/bin/node"
-    assert Path(command[1]).name == "codex_browser_helper.mjs"
+    command_path = command[1]
+    assert isinstance(command_path, str)
+    assert Path(command_path).name == "codex_browser_helper.mjs"
 
 
 def test_browser_helper_child_environment_does_not_forward_provider_keys(
@@ -153,12 +165,14 @@ def test_browser_helper_child_environment_does_not_forward_provider_keys(
 def test_browser_helper_requires_node_only_when_first_used() -> None:
     adapter = CodexBrowserHelperAdapter()
 
-    with patch(
-        "free_claude_code.runtime.codex_browser_helper.shutil.which",
-        return_value=None,
+    with (
+        patch(
+            "free_claude_code.runtime.codex_browser_helper.shutil.which",
+            return_value=None,
+        ),
+        pytest.raises(CodexBrowserHelperError, match=r"Node\.js is required"),
     ):
-        with pytest.raises(CodexBrowserHelperError, match="Node.js is required"):
-            adapter.execute("list_tabs", {}, threading.Event())
+        adapter.execute("list_tabs", {}, threading.Event())
 
 
 def test_browser_helper_configuration_is_operator_owned() -> None:

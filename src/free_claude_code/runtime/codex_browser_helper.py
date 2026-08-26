@@ -125,7 +125,9 @@ class CodexBrowserHelperAdapter:
                 f"unsupported Codex browser helper operation: {operation}"
             )
         if cancel_event.is_set():
-            raise CodexBrowserHelperError("Codex browser helper cancelled before dispatch")
+            raise CodexBrowserHelperError(
+                "Codex browser helper cancelled before dispatch"
+            )
 
         with self._request_lock:
             process = self._get_process()
@@ -177,10 +179,14 @@ class CodexBrowserHelperAdapter:
 
             node = shutil.which("node")
             if node is None:
-                raise CodexBrowserHelperError("Node.js is required for Codex browser use")
+                raise CodexBrowserHelperError(
+                    "Node.js is required for Codex browser use"
+                )
             script = Path(__file__).with_name("codex_browser_helper.mjs")
             if not script.is_file():
-                raise CodexBrowserHelperError("packaged Codex browser helper is missing")
+                raise CodexBrowserHelperError(
+                    "packaged Codex browser helper is missing"
+                )
 
             process = subprocess.Popen(
                 [node, str(script)],
@@ -194,7 +200,9 @@ class CodexBrowserHelperAdapter:
             )
             if process.stdin is None or process.stdout is None:
                 process.kill()
-                raise CodexBrowserHelperError("failed to open Codex browser helper pipes")
+                raise CodexBrowserHelperError(
+                    "failed to open Codex browser helper pipes"
+                )
             self._process = process
             return process
 
@@ -216,7 +224,9 @@ class CodexBrowserHelperAdapter:
         try:
             encoded = json.dumps(request, separators=(",", ":"), ensure_ascii=False)
         except (TypeError, ValueError) as error:
-            raise CodexBrowserHelperError("browser arguments must be JSON-compatible") from error
+            raise CodexBrowserHelperError(
+                "browser arguments must be JSON-compatible"
+            ) from error
 
         try:
             process.stdin.write(encoded + "\n")
@@ -224,23 +234,33 @@ class CodexBrowserHelperAdapter:
             line = process.stdout.readline()
         except (BrokenPipeError, OSError) as error:
             self.close()
-            raise CodexBrowserHelperError("Codex browser helper transport failed") from error
+            raise CodexBrowserHelperError(
+                "Codex browser helper transport failed"
+            ) from error
         if not line:
             self.close()
-            raise CodexBrowserHelperError("Codex browser helper exited without a response")
+            raise CodexBrowserHelperError(
+                "Codex browser helper exited without a response"
+            )
         try:
             response = json.loads(line)
         except json.JSONDecodeError as error:
             self.close()
-            raise CodexBrowserHelperError("Codex browser helper returned invalid JSON") from error
+            raise CodexBrowserHelperError(
+                "Codex browser helper returned invalid JSON"
+            ) from error
         if not isinstance(response, Mapping) or response.get("id") != request_id:
             self.close()
-            raise CodexBrowserHelperError("Codex browser helper response correlation failed")
+            raise CodexBrowserHelperError(
+                "Codex browser helper response correlation failed"
+            )
         if response.get("ok") is not True:
             raise CodexBrowserHelperError("Codex browser operation failed")
         result = response.get("result")
         if not isinstance(result, Mapping):
-            raise CodexBrowserHelperError("Codex browser helper returned non-object output")
+            raise CodexBrowserHelperError(
+                "Codex browser helper returned non-object output"
+            )
         return dict(result)
 
     def _child_environment(self) -> dict[str, str]:
