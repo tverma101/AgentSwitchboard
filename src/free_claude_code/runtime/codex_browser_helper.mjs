@@ -117,7 +117,19 @@ const claimedTabs = new Map();
 const configStore = new Map();
 let runtimeShim;
 
-async function initialize() {
+function withRequestMetadata(request) {
+  if (request.method !== "execute" || runtimeShim == null) return request;
+  const params = request.params;
+  if (params == null || typeof params !== "object" || Array.isArray(params)) {
+    return request;
+  }
+  return {
+    ...request,
+    params: { ...params, requestMeta: runtimeShim.requestMeta },
+  };
+}
+
+async function initialize(initialRequest) {
   const root = resolvePluginRoot();
   const service = await import(pathToFileURL(join(root, "scripts/browser-service.mjs")).href);
   const client = await import(pathToFileURL(join(root, "scripts/browser-client.mjs")).href);
@@ -144,10 +156,11 @@ async function initialize() {
     fetch: globalThis.fetch,
     rpc: undefined,
   };
+  updateMetadata(initialRequest);
   globalThis.nodeRepl = runtimeShim;
   runtimeShim.rpc = async (name, request) => {
     if (name !== "browser") throw new Error(`unsupported trusted service: ${name}`);
-    return service.handleRpc(request);
+    return service.handleRpc(withRequestMetadata(request));
   };
   const agent = await client.setupBrowserRuntime();
   browser = await agent.browsers.get(FAMILY);
@@ -155,9 +168,9 @@ async function initialize() {
   return browser;
 }
 
-async function getBrowser() {
+async function getBrowser(initialRequest) {
   if (browser) return browser;
-  initialization ??= initialize();
+  initialization ??= initialize(initialRequest);
   return initialization;
 }
 
@@ -193,7 +206,7 @@ async function execute(request) {
     throw new Error("arguments must be an object");
   }
   const operation = requireNonEmptyString(request.operation, "operation", 64);
-  const activeBrowser = await getBrowser();
+  const activeBrowser = await getBrowser(request);
   updateMetadata(request);
 
   if (operation === "list_tabs") {
