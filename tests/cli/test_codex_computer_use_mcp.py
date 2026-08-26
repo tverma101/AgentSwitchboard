@@ -3,7 +3,7 @@
 import io
 import json
 import threading
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -21,7 +21,9 @@ from free_claude_code.cli.codex_computer_use_mcp import (
 from free_claude_code.runtime.codex_computer_use import COMPUTER_USE_METHODS
 
 
-def _server(monkeypatch: pytest.MonkeyPatch) -> tuple[CodexComputerUseMcpServer, io.StringIO]:
+def _server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[CodexComputerUseMcpServer, io.StringIO]:
     monkeypatch.setenv(
         "FCC_CONTROLLER_MODEL_REF",
         "opencode_go/muse-spark-1.2-contributor",
@@ -52,6 +54,10 @@ def _success_result(operation: str) -> HelperExecutionResult:
     )
 
 
+def _annotations(tool: dict[str, object]) -> dict[str, object]:
+    return cast(dict[str, object], tool["annotations"])
+
+
 def test_tool_list_is_fixed_order_and_has_native_read_action_annotations() -> None:
     assert [tool["name"] for tool in CLAUDE_COMPUTER_USE_TOOLS] == list(
         COMPUTER_USE_METHODS
@@ -63,10 +69,10 @@ def test_tool_list_is_fixed_order_and_has_native_read_action_annotations() -> No
     assert "OPENAI_API_KEY" not in rendered
 
     by_name = {str(tool["name"]): tool for tool in CLAUDE_COMPUTER_USE_TOOLS}
-    assert by_name["list_apps"]["annotations"]["readOnlyHint"] is True
-    assert by_name["get_app_state"]["annotations"]["readOnlyHint"] is True
-    assert by_name["click"]["annotations"]["readOnlyHint"] is False
-    assert by_name["type_text"]["annotations"]["idempotentHint"] is False
+    assert _annotations(by_name["list_apps"])["readOnlyHint"] is True
+    assert _annotations(by_name["get_app_state"])["readOnlyHint"] is True
+    assert _annotations(by_name["click"])["readOnlyHint"] is False
+    assert _annotations(by_name["type_text"])["idempotentHint"] is False
 
 
 def test_initialize_and_tools_list_are_local_and_deterministic(
@@ -103,7 +109,7 @@ def test_native_result_returns_content_and_metadata_only_receipt(
         def execute_planned(self, *args: Any, **kwargs: Any) -> HelperExecutionResult:
             return _success_result(str(kwargs["operation"]))
 
-    server._executor = FakeExecutor()  # type: ignore[assignment]
+    setattr(server, "_executor", FakeExecutor())
     pending = _PendingCall(
         request_id=7,
         operation="list_apps",
@@ -153,7 +159,7 @@ def test_cancelled_mutation_is_reported_indeterminate_not_replayed(
             )
             raise HelperExecutionError("transport closed", receipt)
 
-    server._executor = CancellingExecutor()  # type: ignore[assignment]
+    setattr(server, "_executor", CancellingExecutor())
     try:
         server._execute_call(pending)
     finally:
