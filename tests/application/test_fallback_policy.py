@@ -19,7 +19,6 @@ from free_claude_code.application.fallback_policy import (
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 
-
 _TEXT = frozenset({Capability.TEXT_INPUT, Capability.TEXT_OUTPUT})
 _VISION = _TEXT | {Capability.VISION_INPUT}
 _REQUIRED_TEXT = RequiredCapabilitySet(_TEXT)
@@ -201,7 +200,9 @@ def test_fallback_requires_target_capabilities_and_context_capacity() -> None:
     assert "context window" in too_large.reason
 
 
-def test_context_window_failure_can_use_explicit_larger_same_subscription_target() -> None:
+def test_context_window_failure_can_use_explicit_larger_same_subscription_target() -> (
+    None
+):
     source = _target("opencode_go/muse-128k", context=128_000)
     target = _target("opencode_go/muse-256k", context=256_000)
     failure = _failure(FailureKind.CONTEXT_WINDOW_EXCEEDED, retryable=False)
@@ -253,7 +254,9 @@ def test_any_target_switch_requires_canonical_request_rebuild() -> None:
     assert "canonical request" in decision.reason
 
 
-def test_cross_protocol_fallback_needs_explicit_policy_and_canonical_retranslation() -> None:
+def test_cross_protocol_fallback_needs_explicit_policy_and_canonical_retranslation() -> (
+    None
+):
     source = _target("opencode_go/muse", protocol="openai_responses")
     target = _target("opencode_go/chat", protocol="openai_chat")
 
@@ -282,7 +285,9 @@ def test_cross_protocol_fallback_needs_explicit_policy_and_canonical_retranslati
     assert enabled.allowed is True
 
 
-def test_ordered_allowlist_skips_incompatible_target_and_receipts_final_choice() -> None:
+def test_ordered_allowlist_skips_incompatible_target_and_receipts_final_choice() -> (
+    None
+):
     source = _target("opencode_go/muse", capabilities=_VISION)
     first = _target("opencode_go/text-only", capabilities=_TEXT)
     second = _target("opencode_go/vision-backup", capabilities=_VISION)
@@ -309,7 +314,14 @@ def test_ordered_allowlist_skips_incompatible_target_and_receipts_final_choice()
     receipt = plan.as_receipt()
     assert receipt["selected_provider"] == "opencode_go"
     assert receipt["selected_model"] == second.model_ref
-    assert receipt["decisions"][0]["reason"].startswith("target lacks")
+    decisions = receipt["decisions"]
+    assert isinstance(decisions, list)
+    assert decisions
+    first_decision = decisions[0]
+    assert isinstance(first_decision, dict)
+    reason = first_decision.get("reason")
+    assert isinstance(reason, str)
+    assert reason.startswith("target lacks")
 
 
 def test_policy_rejects_duplicate_or_empty_fallback_refs() -> None:

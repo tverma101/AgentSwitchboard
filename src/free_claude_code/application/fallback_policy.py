@@ -120,7 +120,9 @@ class ControllerFallbackPlan:
             "selected_provider": (
                 self.selected.provider_family if self.selected is not None else None
             ),
-            "selected_model": self.selected.model_ref if self.selected is not None else None,
+            "selected_model": self.selected.model_ref
+            if self.selected is not None
+            else None,
             "decisions": [decision.as_receipt() for decision in self.decisions],
         }
 
@@ -236,7 +238,10 @@ def evaluate_controller_fallback(
             target,
             failure,
         )
-    if target.protocol_family != source.protocol_family and not policy.allow_cross_protocol:
+    if (
+        target.protocol_family != source.protocol_family
+        and not policy.allow_cross_protocol
+    ):
         return _decision(
             RecoveryKind.FAIL,
             False,
