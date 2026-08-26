@@ -1,6 +1,6 @@
 """Conservative adapters for manually pinned upstream capability snapshots."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
@@ -193,7 +193,7 @@ def resolve_capability_evidence(
         )
 
     highest_tier = max(layer.tier for layer in candidates)
-    winners = [layer for layer in candidates if layer.tier is highest_tier]
+    winners = [layer for layer in candidates if layer.tier == highest_tier]
     winner_statuses = {
         layer.evidence.status_for(capability) for layer in winners
     }
@@ -226,7 +226,6 @@ def resolve_capability_evidence(
         )
         if layer.evidence.status_for(capability) is not selected_status
     )
-    first = ordered_winners[0].evidence
     return ResolvedCapabilityEvidence(
         capability=capability,
         status=selected_status,
@@ -277,9 +276,8 @@ def _string_sequence_contains(value: Any, expected: str) -> bool:
     return expected in {item.casefold() for item in _string_sequence(value)}
 
 
-def _shared_value(values: Sequence[str | None] | Any) -> str | None:
-    materialized = tuple(values)
-    unique = {value for value in materialized if value is not None}
+def _shared_value(values: Iterable[str | None]) -> str | None:
+    unique = {value for value in values if value is not None}
     if len(unique) == 1:
         return next(iter(unique))
     return None
