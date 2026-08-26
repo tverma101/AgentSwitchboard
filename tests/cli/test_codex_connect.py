@@ -2,7 +2,7 @@
 
 import os
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -39,11 +39,16 @@ def test_control_menu_connect_is_explicit_and_not_part_of_home_redraw() -> None:
     from free_claude_code.cli import terminal_control
 
     settings = _settings()
+    launch_client = MagicMock()
     with (
         patch("builtins.input", side_effect=["x", "q"]),
         patch.object(terminal_control, "_connect_codex") as connect,
     ):
-        terminal_control.run_control_menu(settings, supervisor=None)
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=None,
+            launch_client=launch_client,
+        )
 
     connect.assert_called_once_with()
 
@@ -58,7 +63,9 @@ def test_connect_codex_does_not_launch_login_when_chatgpt_is_already_connected(
         stdout="Logged in using ChatGPT\n",
     )
     with (
-        patch.object(terminal_control.shutil, "which", return_value="/usr/local/bin/codex"),
+        patch.object(
+            terminal_control.shutil, "which", return_value="/usr/local/bin/codex"
+        ),
         patch.object(terminal_control.subprocess, "run", return_value=status) as run,
     ):
         terminal_control._connect_codex()
@@ -88,7 +95,9 @@ def test_connect_codex_uses_chatgpt_login_and_strips_api_key_auth(
     )
 
     with (
-        patch.object(terminal_control.shutil, "which", return_value="/usr/local/bin/codex"),
+        patch.object(
+            terminal_control.shutil, "which", return_value="/usr/local/bin/codex"
+        ),
         patch.object(
             terminal_control.subprocess,
             "run",

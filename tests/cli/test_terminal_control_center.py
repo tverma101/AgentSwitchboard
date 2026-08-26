@@ -32,11 +32,14 @@ def test_interactive_fcc_server_owns_control_center_when_proxy_is_down() -> None
         patch.object(entrypoints, "_server_port_is_occupied", return_value=False),
         patch.object(terminal_control, "terminal_control_available", return_value=True),
         patch.object(terminal_control, "run_owned_control_center") as run_control,
+        patch(
+            "free_claude_code.cli.launchers.claude._launch_from_control"
+        ) as launch_client,
         patch.object(commands, "serve") as raw_server,
     ):
         entrypoints.serve(())
 
-    run_control.assert_called_once_with(settings)
+    run_control.assert_called_once_with(settings, launch_client=launch_client)
     raw_server.assert_not_called()
 
 
@@ -74,11 +77,14 @@ def test_interactive_fcc_server_attaches_to_existing_proxy_without_ownership() -
         patch.object(terminal_control, "terminal_control_available", return_value=True),
         patch.object(terminal_control, "run_attached_control_center") as attach,
         patch.object(terminal_control, "run_owned_control_center") as own,
+        patch(
+            "free_claude_code.cli.launchers.claude._launch_from_control"
+        ) as launch_client,
         patch.object(entrypoints, "_server_port_is_occupied") as port_probe,
     ):
         entrypoints.serve(())
 
-    attach.assert_called_once_with(settings)
+    attach.assert_called_once_with(settings, launch_client=launch_client)
     own.assert_not_called()
     port_probe.assert_not_called()
 
@@ -87,13 +93,17 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
     from free_claude_code.cli import terminal_control
 
     settings = _settings()
+    launch_client = MagicMock()
     with (
         patch("builtins.input", side_effect=["", "q"]),
-        patch.object(terminal_control, "_launch_claude") as launch,
     ):
-        terminal_control.run_control_menu(settings, supervisor=None)
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=None,
+            launch_client=launch_client,
+        )
 
-    launch.assert_called_once_with(danger=False)
+    launch_client.assert_called_once_with(danger=False)
 
 
 def test_attached_control_menu_refuses_to_claim_restart_ownership(
@@ -102,8 +112,13 @@ def test_attached_control_menu_refuses_to_claim_restart_ownership(
     from free_claude_code.cli import terminal_control
 
     settings = _settings()
+    launch_client = MagicMock()
     with patch("builtins.input", side_effect=["r", "q"]):
-        terminal_control.run_control_menu(settings, supervisor=None)
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=None,
+            launch_client=launch_client,
+        )
 
     assert "owned by another process" in capsys.readouterr().out
 
@@ -115,9 +130,14 @@ def test_owned_control_menu_routes_restart_to_supervisor() -> None:
     supervisor = MagicMock()
     supervisor.status.value = "Running"
     supervisor.request_restart.return_value = True
+    launch_client = MagicMock()
 
     with patch("builtins.input", side_effect=["r", "q"]):
-        terminal_control.run_control_menu(settings, supervisor=supervisor)
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=supervisor,
+            launch_client=launch_client,
+        )
 
     supervisor.request_restart.assert_called_once_with()
 
@@ -187,7 +207,11 @@ def test_direct_owner_starts_control_center_with_post_migration_settings() -> No
     assert started is True
     clear.assert_called_once_with()
     load.assert_called_once_with()
-    owner.assert_called_once_with(settings, initial_argv=("--model", "muse"))
+    owner.assert_called_once_with(
+        settings,
+        initial_argv=("--model", "muse"),
+        launch_client=claude._launch_from_control,
+    )
 
 
 def test_direct_owner_reuses_post_migration_server_if_it_is_already_healthy() -> None:
@@ -219,22 +243,27 @@ def test_owned_control_center_launches_initial_client_after_health() -> None:
     supervisor = MagicMock()
     supervisor.schedule_run.return_value = True
     server_thread = MagicMock()
+    launch_client = MagicMock()
 
     with (
         patch.object(terminal_control, "ServerSupervisor", return_value=supervisor),
         patch.object(terminal_control.threading, "Thread", return_value=server_thread),
         patch.object(terminal_control, "_wait_for_proxy", return_value=None),
-        patch.object(terminal_control, "_launch_claude") as launch,
         patch.object(terminal_control, "run_control_menu") as menu,
     ):
         terminal_control.run_owned_control_center(
             settings,
             initial_argv=("--model", "muse"),
+            launch_client=launch_client,
         )
 
     server_thread.start.assert_called_once_with()
-    launch.assert_called_once_with(danger=False, argv=("--model", "muse"))
-    menu.assert_called_once_with(settings, supervisor=supervisor)
+    launch_client.assert_called_once_with(danger=False, argv=("--model", "muse"))
+    menu.assert_called_once_with(
+        settings,
+        supervisor=supervisor,
+        launch_client=launch_client,
+    )
     supervisor.request_stop.assert_called_once_with()
     server_thread.join.assert_called_once_with()
 
@@ -263,7 +292,9 @@ def test_noninteractive_direct_launch_does_not_create_hidden_server_owner() -> N
     from free_claude_code.cli.launchers import claude
 
     with (
-        patch.object(terminal_control, "terminal_control_available", return_value=False),
+        patch.object(
+            terminal_control, "terminal_control_available", return_value=False
+        ),
         patch.object(commands, "load_server_settings") as load,
         patch.object(server_startup, "server_port_is_occupied") as port_probe,
         patch.object(terminal_control, "run_owned_control_center") as owner,
