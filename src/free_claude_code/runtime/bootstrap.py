@@ -6,6 +6,10 @@ from pathlib import Path
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.helpers import ApprovedHelperRegistry
+from free_claude_code.application.session_policy import (
+    build_session_execution_policy_for_settings,
+)
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import server_log_path, usage_db_path
 from free_claude_code.config.settings import Settings
@@ -19,7 +23,10 @@ from free_claude_code.providers.openai_codex import (
     OpenAICodexProvider,
 )
 from free_claude_code.providers.runtime import ProviderRuntime
-from free_claude_code.providers.runtime.factory import create_provider
+from free_claude_code.providers.runtime.factory import ProviderFactory, create_provider
+from free_claude_code.runtime.codex_computer_use_helper import (
+    CodexComputerUseHelperAdapter,
+)
 from free_claude_code.usage import UsageStore
 
 from .application import ApplicationRuntime, RestartCallback
@@ -41,13 +48,11 @@ def build_asgi_app(
     )
     openai_auth = OpenAIAuthManager(proxy=settings.openai_proxy)
     openai_factory = partial(_create_openai_provider, auth=openai_auth)
-    provider_constructor = partial(
-        create_provider,
-        injected_factories={"openai": openai_factory},
-    )
+    helper_registry, helper_adapter = _build_approved_helper_registry()
     runtime_factory = partial(
-        ProviderRuntime,
-        provider_constructor=provider_constructor,
+        _build_provider_runtime,
+        openai_factory=openai_factory,
+        helper_registry=helper_registry,
     )
     provider_manager = ProviderRuntimeManager(
         settings,
@@ -60,6 +65,8 @@ def build_asgi_app(
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
+        approved_helper_registry=helper_registry,
+        helper_cleanup=helper_adapter.close,
     )
     services = ApiServices(
         requests=provider_manager,
@@ -68,6 +75,39 @@ def build_asgi_app(
         usage=UsageStore(usage_db_path()),
     )
     return RuntimeASGIApp(create_app(services), runtime)
+
+
+def _build_approved_helper_registry() -> tuple[
+    ApprovedHelperRegistry, CodexComputerUseHelperAdapter
+]:
+    """Register reviewed helpers without probing the host or the network."""
+
+    adapter = CodexComputerUseHelperAdapter()
+    registry = ApprovedHelperRegistry()
+    registry.register(adapter.approved_helper())
+    registry.freeze()
+    return registry, adapter
+
+
+def _build_provider_runtime(
+    settings: Settings,
+    *,
+    openai_factory: ProviderFactory,
+    helper_registry: ApprovedHelperRegistry,
+) -> ProviderRuntime:
+    """Build one provider generation with its shared policy guard."""
+
+    policy = build_session_execution_policy_for_settings(settings, helper_registry)
+    provider_constructor = partial(
+        create_provider,
+        injected_factories={"openai": openai_factory},
+        egress_guard=policy.egress_guard,
+    )
+    return ProviderRuntime(
+        settings,
+        provider_constructor=provider_constructor,
+        session_policy=policy,
+    )
 
 
 def _create_openai_provider(
