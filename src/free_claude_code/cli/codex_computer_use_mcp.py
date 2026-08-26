@@ -152,7 +152,9 @@ class CodexComputerUseMcpServer:
                     self._write_error(None, -32700, "invalid JSON-RPC payload")
                     continue
                 if not isinstance(message, dict):
-                    self._write_error(None, -32600, "JSON-RPC message must be an object")
+                    self._write_error(
+                        None, -32600, "JSON-RPC message must be an object"
+                    )
                     continue
                 self._handle_message(message)
         finally:
