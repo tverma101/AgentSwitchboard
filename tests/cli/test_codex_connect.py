@@ -39,7 +39,6 @@ def test_control_menu_connect_is_explicit_and_not_part_of_home_redraw() -> None:
     from free_claude_code.cli import terminal_control
 
     settings = _settings()
-    launch = MagicMock()
     with (
         patch("builtins.input", side_effect=["x", "q"]),
         patch.object(terminal_control, "_connect_codex") as connect,
@@ -47,7 +46,7 @@ def test_control_menu_connect_is_explicit_and_not_part_of_home_redraw() -> None:
         terminal_control.run_control_menu(
             settings,
             supervisor=None,
-            launch_claude=launch,
+            launch_client=MagicMock(),
         )
 
     connect.assert_called_once_with()

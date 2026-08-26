@@ -5,6 +5,8 @@ import uuid
 
 from loguru import logger
 
+from free_claude_code.application.helpers import ApprovedHelperRegistry
+from free_claude_code.application.session_policy import SessionExecutionPolicy
 from free_claude_code.cli.claude_env import CLAUDE_BINARY_NAME
 
 from .session import ManagedClaudeSession
@@ -28,6 +30,8 @@ class ManagedClaudeSessionManager:
         *,
         log_raw_cli_diagnostics: bool = False,
         log_messaging_error_details: bool = False,
+        session_policy: SessionExecutionPolicy | None = None,
+        approved_helper_registry: ApprovedHelperRegistry | None = None,
     ):
         """
         Initialize the session manager.
@@ -44,6 +48,8 @@ class ManagedClaudeSessionManager:
         self.auth_token = auth_token
         self._log_raw_cli_diagnostics = log_raw_cli_diagnostics
         self._log_messaging_error_details = log_messaging_error_details
+        self.session_policy = session_policy
+        self.approved_helper_registry = approved_helper_registry
 
         self._sessions: dict[str, ManagedClaudeSession] = {}
         self._pending_sessions: dict[str, ManagedClaudeSession] = {}
@@ -112,6 +118,8 @@ class ManagedClaudeSessionManager:
                 claude_bin=self.claude_bin,
                 auth_token=self.auth_token,
                 log_raw_cli_diagnostics=self._log_raw_cli_diagnostics,
+                session_policy=self.session_policy,
+                approved_helper_registry=self.approved_helper_registry,
             )
             self._pending_sessions[temp_id] = new_session
 

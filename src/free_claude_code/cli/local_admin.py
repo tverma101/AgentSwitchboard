@@ -23,6 +23,12 @@ def get_admin_config(settings: Settings) -> dict[str, Any]:
     return _request_json(settings, "/admin/api/config")
 
 
+def get_admin_status(settings: Settings) -> dict[str, Any]:
+    """Return the live metadata-only Admin status receipt."""
+
+    return _request_json(settings, "/admin/api/status")
+
+
 def apply_admin_values(
     settings: Settings,
     values: Mapping[str, Any],

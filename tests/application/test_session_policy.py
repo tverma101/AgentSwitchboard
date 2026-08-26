@@ -101,8 +101,8 @@ def test_explicit_local_computer_helper_shares_one_guard_with_executor() -> None
     assert result.output["operation"] == "list_apps"
     receipt = policy.receipt()
     assert receipt["allowed_helpers"] == ["codex-computer-use"]
-    egress = cast(dict[str, object], receipt["egress"])
-    counts = cast(dict[str, int], egress["counts"])
+    egress = cast(Mapping[str, object], receipt["egress"])
+    counts = cast(Mapping[str, int], egress["counts"])
     assert counts == {"local": 1}
     assert "openai" not in counts
 

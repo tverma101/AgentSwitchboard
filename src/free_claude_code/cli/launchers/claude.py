@@ -145,9 +145,20 @@ def _start_interactive_owner(args: Sequence[str]) -> bool:
     run_owned_control_center(
         settings,
         initial_argv=args,
-        launch_claude=launch_controlled,
+        launch_client=_launch_control_client,
     )
     return True
+
+
+def _launch_control_client(danger: bool, argv: Sequence[str]) -> None:
+    """Launch a Claude client selected by the terminal control callback."""
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")
 
 
 def _firewall_environment(settings: object) -> dict[str, str]:
@@ -172,17 +183,6 @@ def launch_danger(argv: Sequence[str] | None = None) -> None:
     if "--dangerously-skip-permissions" not in args:
         args.insert(0, "--dangerously-skip-permissions")
     launch(args)
-
-
-def launch_controlled(danger: bool, argv: Sequence[str] = ()) -> None:
-    """Launch Claude from the terminal control center and return to its menu."""
-
-    launcher = launch_danger if danger else launch
-    try:
-        launcher(tuple(argv))
-    except SystemExit as exc:
-        if exc.code not in {None, 0}:
-            print(f"Claude exited with status {exc.code}.")
 
 
 def claude_binary_name() -> str:

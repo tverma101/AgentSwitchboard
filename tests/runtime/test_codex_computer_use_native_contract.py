@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -57,12 +57,16 @@ def test_native_contract_surfaces_schema_drift_instead_of_silent_mutation() -> N
     server = rows[0]
     tools = server["tools"]
     assert isinstance(tools, dict)
+    tools = cast(dict[str, Any], tools)
     click = tools["click"]
     assert isinstance(click, dict)
+    click = cast(dict[str, Any], click)
     schema = click["inputSchema"]
     assert isinstance(schema, dict)
+    schema = cast(dict[str, Any], schema)
     properties = schema["properties"]
     assert isinstance(properties, dict)
+    properties = cast(dict[str, Any], properties)
     properties["new_native_field"] = {"type": "string"}
 
     contract = native_contract_from_status(rows)

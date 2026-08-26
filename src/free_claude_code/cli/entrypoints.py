@@ -30,7 +30,10 @@ def serve(argv: Sequence[str] | None = None) -> None:
     if profile is not None:
         os.environ[PROFILE_ENV] = profile
     _parse_server_options(remaining)
-    _run_server_entrypoint(headless="--headless" in remaining)
+    if "--headless" in remaining:
+        _run_server_entrypoint(headless=True)
+    else:
+        _run_server_entrypoint()
 
 
 def _run_server_entrypoint(*, headless: bool = False) -> None:
@@ -38,7 +41,6 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
 
     # Keep the server composition root off metadata-only command paths.
     from free_claude_code.cli import commands
-    from free_claude_code.cli.launchers.claude import launch_controlled
     from free_claude_code.cli.launchers.common import preflight_proxy
     from free_claude_code.cli.terminal_control import (
         run_attached_control_center,
@@ -52,7 +54,10 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
     preflight_error = preflight_proxy(local_proxy_root_url(settings))
     if preflight_error is None:
         if interactive:
-            run_attached_control_center(settings, launch_claude=launch_controlled)
+            run_attached_control_center(
+                settings,
+                launch_client=_launch_claude_from_control,
+            )
         else:
             print(
                 "FCC server is already running at "
@@ -70,7 +75,10 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
         raise SystemExit(1)
 
     if interactive:
-        run_owned_control_center(settings, launch_claude=launch_controlled)
+        run_owned_control_center(
+            settings,
+            launch_client=_launch_claude_from_control,
+        )
         return
 
     commands.serve()
@@ -112,3 +120,16 @@ def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
         return False
     print(f"free-claude-code {package_version()}")
     return True
+
+
+def _launch_claude_from_control(danger: bool, argv: Sequence[str]) -> None:
+    """Adapt the terminal client callback to the Claude launcher entry points."""
+
+    from free_claude_code.cli.launchers.claude import launch, launch_danger
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")

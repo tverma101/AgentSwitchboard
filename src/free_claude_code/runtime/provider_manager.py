@@ -13,6 +13,7 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.application.ports import RequestRuntimePort
+from free_claude_code.application.session_policy import SessionExecutionPolicy
 from free_claude_code.config.model_visibility import (
     filter_cached_model_infos,
     is_discovered_model_visible,
@@ -74,6 +75,10 @@ class ProviderGenerationLease:
     @property
     def settings(self) -> Settings:
         return self._generation.settings
+
+    @property
+    def session_policy(self) -> SessionExecutionPolicy | None:
+        return getattr(self._generation.runtime, "session_policy", None)
 
     def is_provider_cached(self, provider_id: str) -> bool:
         return self._generation.runtime.is_cached(provider_id)
@@ -140,6 +145,11 @@ class ProviderRuntimeManager:
 
     def current_settings(self) -> Settings:
         return self._current.settings
+
+    def current_session_policy(self) -> SessionExecutionPolicy | None:
+        """Return the policy captured by the current provider generation."""
+
+        return getattr(self._current.runtime, "session_policy", None)
 
     def cached_model_ids(self) -> dict[str, frozenset[str]]:
         self._synchronize_model_cache_scope()
