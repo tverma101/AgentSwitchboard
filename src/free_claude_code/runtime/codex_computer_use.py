@@ -149,9 +149,7 @@ def _build_tool_specs() -> tuple[dict[str, Any], ...]:
         }
         if required:
             schema["required"] = list(required)
-        specs.append(
-            {"name": name, "description": description, "input_schema": schema}
-        )
+        specs.append({"name": name, "description": description, "input_schema": schema})
     return tuple(specs)
 
 
@@ -223,15 +221,15 @@ def _client_app_candidates(home: Path) -> tuple[Path, ...]:
         / "computer-use"
         / "Codex Computer Use.app",
     ]
-    for codex in CODEX_APP_CANDIDATES:
-        candidates.append(
-            codex.parent
-            / "plugins"
-            / "openai-bundled"
-            / "plugins"
-            / "computer-use"
-            / "Codex Computer Use.app"
-        )
+    candidates.extend(
+        codex.parent
+        / "plugins"
+        / "openai-bundled"
+        / "plugins"
+        / "computer-use"
+        / "Codex Computer Use.app"
+        for codex in CODEX_APP_CANDIDATES
+    )
     return tuple(candidates)
 
 
@@ -445,21 +443,21 @@ class CodexComputerUseBroker:
         if proc is not None and proc.poll() is None:
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
+            except ProcessLookupError, PermissionError:
                 proc.terminate()
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
+                except ProcessLookupError, PermissionError:
                     proc.kill()
                 proc.wait(timeout=2)
         if self._temp is not None:
             self._temp.cleanup()
             self._temp = None
 
-    def __enter__(self) -> "CodexComputerUseBroker":
+    def __enter__(self) -> CodexComputerUseBroker:
         self.start()
         return self
 
@@ -558,9 +556,7 @@ class CodexComputerUseBroker:
                 if message.get("id") is not None and message.get("method"):
                     # Fail closed on host prompts. A separate policy adapter may decide
                     # whether an elicitation can be approved.
-                    self._write(
-                        {"id": message["id"], "result": {"action": "cancel"}}
-                    )
+                    self._write({"id": message["id"], "result": {"action": "cancel"}})
 
 
 def interaction_requires_fresh_state(method: str) -> bool:

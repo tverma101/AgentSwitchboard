@@ -58,7 +58,9 @@ def test_connect_codex_does_not_launch_login_when_chatgpt_is_already_connected(
         stdout="Logged in using ChatGPT\n",
     )
     with (
-        patch.object(terminal_control.shutil, "which", return_value="/usr/local/bin/codex"),
+        patch.object(
+            terminal_control.shutil, "which", return_value="/usr/local/bin/codex"
+        ),
         patch.object(terminal_control.subprocess, "run", return_value=status) as run,
     ):
         terminal_control._connect_codex()
@@ -88,7 +90,9 @@ def test_connect_codex_uses_chatgpt_login_and_strips_api_key_auth(
     )
 
     with (
-        patch.object(terminal_control.shutil, "which", return_value="/usr/local/bin/codex"),
+        patch.object(
+            terminal_control.shutil, "which", return_value="/usr/local/bin/codex"
+        ),
         patch.object(
             terminal_control.subprocess,
             "run",

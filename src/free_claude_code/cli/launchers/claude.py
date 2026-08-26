@@ -142,8 +142,23 @@ def _start_interactive_owner(args: Sequence[str]) -> bool:
         raise SystemExit(1)
 
     print("FCC server is not running; starting the terminal control center.")
-    run_owned_control_center(settings, initial_argv=args)
+    run_owned_control_center(
+        settings,
+        initial_argv=args,
+        claude_launcher=_launch_control_claude,
+    )
     return True
+
+
+def _launch_control_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
+    """Adapt this launcher to the terminal-control callback without a cycle."""
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")
 
 
 def _firewall_environment(settings: object) -> dict[str, str]:

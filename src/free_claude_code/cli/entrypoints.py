@@ -51,7 +51,10 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
     preflight_error = preflight_proxy(local_proxy_root_url(settings))
     if preflight_error is None:
         if interactive:
-            run_attached_control_center(settings)
+            run_attached_control_center(
+                settings,
+                claude_launcher=_launch_control_claude,
+            )
         else:
             print(
                 "FCC server is already running at "
@@ -69,10 +72,26 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
         raise SystemExit(1)
 
     if interactive:
-        run_owned_control_center(settings)
+        run_owned_control_center(
+            settings,
+            claude_launcher=_launch_control_claude,
+        )
         return
 
     commands.serve()
+
+
+def _launch_control_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
+    """Adapt the installed Claude launcher to the terminal-control callback."""
+
+    from free_claude_code.cli.launchers.claude import launch, launch_danger
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")
 
 
 def _parse_server_options(args: Sequence[str]) -> bool | None:
