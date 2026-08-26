@@ -24,7 +24,8 @@ concurrency:
 jobs:
   no-suppressions-or-legacy-annotations:
     name: Ban suppressions and legacy annotations
-    runs-on: ubuntu-latest
+    # Never execute fork-controlled code on the persistent self-hosted runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -45,7 +46,8 @@ jobs:
 
   quality:
     name: ${{ matrix.id }}
-    runs-on: ubuntu-latest
+    # Never execute fork-controlled code on the persistent self-hosted runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
