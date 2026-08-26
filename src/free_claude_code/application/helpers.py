@@ -85,6 +85,7 @@ class ApprovedHelper:
     local: bool = True
     billable: bool = False
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES
+    mutating_operations: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.helper_id.strip():
@@ -97,6 +98,8 @@ class ApprovedHelper:
             raise ValueError("max_output_bytes must be positive")
         if self.local and self.billable:
             raise ValueError("a local helper cannot be marked billable")
+        if any(not operation.strip() for operation in self.mutating_operations):
+            raise ValueError("mutating operation names cannot be empty")
 
     def router_metadata(self) -> CapabilityHelper:
         """Return the existing #30 router metadata for this implementation."""
@@ -110,6 +113,11 @@ class ApprovedHelper:
             billable=self.billable,
         )
 
+    def operation_may_have_side_effects(self, operation: str) -> bool:
+        """Return whether transport loss makes this operation indeterminate."""
+
+        return operation in self.mutating_operations
+
 
 class HelperExecutionError(RuntimeError):
     """Base failure carrying a content-free execution receipt."""
@@ -120,11 +128,11 @@ class HelperExecutionError(RuntimeError):
 
 
 class HelperTimeoutError(HelperExecutionError):
-    """The helper honored cancellation after the controller timeout."""
+    """A read-only helper honored cancellation after the controller timeout."""
 
 
 class HelperIndeterminateError(HelperExecutionError):
-    """The controller returned, but the helper did not prove cancellation."""
+    """A helper may have committed a side effect or did not prove cancellation."""
 
 
 class HelperOutputError(HelperExecutionError):
@@ -182,6 +190,7 @@ class ApprovedHelperRegistry:
                     "local": helper.local,
                     "billable": helper.billable,
                     "max_output_bytes": helper.max_output_bytes,
+                    "mutating_operations": sorted(helper.mutating_operations),
                 }
             )
         return tuple(rows)
@@ -244,7 +253,11 @@ class ApprovedHelperExecutor:
         category = "local_tool" if helper.local else "helper"
         self._guard.authorize(helper.provider_family, category=category)
 
-        timeout = timeout_seconds or self._default_timeout_seconds
+        timeout = (
+            self._default_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
         if timeout <= 0:
             raise ValueError("timeout_seconds must be positive")
 
@@ -255,7 +268,7 @@ class ApprovedHelperExecutor:
         def run() -> None:
             try:
                 output = helper.execute(operation, arguments, cancel_event)
-            except BaseException as error:
+            except Exception as error:
                 finished.put((False, error))
                 return
             finished.put((True, output))
@@ -273,7 +286,13 @@ class ApprovedHelperExecutor:
             cancel_event.set()
             worker.join(timeout=self._cancellation_grace_seconds)
             duration_ms = _duration_ms(started)
-            if worker.is_alive():
+            side_effecting = helper.operation_may_have_side_effects(operation)
+            if side_effecting or worker.is_alive():
+                reason = (
+                    "helper operation may have committed before timeout"
+                    if side_effecting
+                    else "helper did not prove cancellation after timeout"
+                )
                 receipt = _receipt(
                     helper,
                     operation,
@@ -282,7 +301,7 @@ class ApprovedHelperExecutor:
                     failure_owner=helper.helper_id,
                 )
                 raise HelperIndeterminateError(
-                    f"helper did not prove cancellation after timeout: {helper.helper_id}",
+                    f"{reason}: {helper.helper_id}",
                     receipt,
                 )
             receipt = _receipt(
@@ -293,7 +312,7 @@ class ApprovedHelperExecutor:
                 failure_owner=helper.helper_id,
             )
             raise HelperTimeoutError(
-                f"helper timed out and cancelled: {helper.helper_id}",
+                f"read-only helper timed out and cancelled: {helper.helper_id}",
                 receipt,
             )
 
