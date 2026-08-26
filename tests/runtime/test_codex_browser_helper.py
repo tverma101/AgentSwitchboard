@@ -1,6 +1,5 @@
 import io
 import json
-import subprocess
 import threading
 from collections.abc import Mapping
 from pathlib import Path
@@ -113,7 +112,9 @@ def test_browser_helper_uses_one_warm_json_line_process() -> None:
     popen.assert_called_once()
     request = json.loads(fake.stdin.getvalue())
     assert request == {"id": 1, "operation": "list_tabs", "arguments": {}}
-    command = captured["args"][0]
+    raw_args = captured["args"]
+    assert isinstance(raw_args, tuple)
+    command = raw_args[0]
     assert isinstance(command, list)
     assert command[0] == "/usr/bin/node"
     assert Path(command[1]).name == "codex_browser_helper.mjs"
