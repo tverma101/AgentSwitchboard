@@ -194,9 +194,7 @@ def resolve_capability_evidence(
 
     highest_tier = max(layer.tier for layer in candidates)
     winners = [layer for layer in candidates if layer.tier == highest_tier]
-    winner_statuses = {
-        layer.evidence.status_for(capability) for layer in winners
-    }
+    winner_statuses = {layer.evidence.status_for(capability) for layer in winners}
     if len(winner_statuses) != 1:
         details = ", ".join(
             f"{layer.evidence.evidence_source}="

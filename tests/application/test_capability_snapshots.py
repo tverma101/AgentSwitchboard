@@ -152,7 +152,9 @@ def test_precedence_is_override_provider_snapshot_family_unknown() -> None:
     }
 
 
-def test_provider_discovery_overrides_stale_snapshot_but_surfaces_disagreement() -> None:
+def test_provider_discovery_overrides_stale_snapshot_but_surfaces_disagreement() -> (
+    None
+):
     resolved = resolve_capability_evidence(
         "native_tools",
         [
@@ -179,7 +181,9 @@ def test_provider_discovery_overrides_stale_snapshot_but_surfaces_disagreement()
     assert resolved.evidence_sources == ("provider_metadata",)
     assert len(resolved.conflicts) == 1
     assert resolved.conflicts[0].conflicting_source == "trusted_snapshot:litellm"
-    assert resolved.conflicts[0].conflicting_status is CapabilityEvidenceStatus.UNSUPPORTED
+    assert (
+        resolved.conflicts[0].conflicting_status is CapabilityEvidenceStatus.UNSUPPORTED
+    )
 
 
 def test_equal_precedence_conflict_fails_instead_of_picking_permissive_claim() -> None:
