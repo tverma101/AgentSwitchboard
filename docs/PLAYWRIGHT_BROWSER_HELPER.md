@@ -1,6 +1,6 @@
 # Playwright browser helper
 
-**Status: implemented opt-in adapter; live browser evidence is unverified.**
+**Status: implemented opt-in adapter; live local-browser smoke passed.**
 
 Harness wraps the maintained Microsoft `playwright-cli` executable through
 `PlaywrightCliBrowserAdapter`. Harness owns the helper allowlist, explicit
@@ -70,7 +70,11 @@ loop, but Harness does not add a generic MCP process manager or hot-path
 discovery. The existing loopback-only `ChromeCdpBrowserBridge` remains the
 narrow fallback for callers that already provide a `BrowserBridgePort`.
 
-The current evidence is source review, deterministic adapter tests, local type
-checking, and local static checks. A real browser session, authenticated
-attachment, download, and literal Claude/OpenCode tool-call run require a
-separate opt-in machine smoke and are not claimed here.
+The current evidence includes source review, deterministic adapter tests,
+local type checking, local static checks, and a real disposable local-browser
+smoke recorded in
+[`smoke/receipts/playwright-cli-live-local-browser-2026-08-26.json`](../smoke/receipts/playwright-cli-live-local-browser-2026-08-26.json).
+The smoke proves the installed CLI and adapter boundary for navigation,
+accessibility inspection, fill, click, console collection, and close without
+contacting a provider. Authenticated attachment, external-site behavior,
+downloads, and a literal Claude/OpenCode tool-call run remain unverified.

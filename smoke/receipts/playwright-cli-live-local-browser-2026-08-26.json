@@ -1,0 +1,60 @@
+{
+  "schema": "fcc.playwright-browser-adapter.live.v1",
+  "captured_at": "2026-08-26T17:03:30Z",
+  "source": "real_disposable_local_browser",
+  "harness": {
+    "branch": "codex/complete-issue-21-playwright-cli",
+    "commit_sha": "8d688897ce1b3d0a003cb64aefcc53ffdf439473",
+    "working_tree_clean_before_capture": true
+  },
+  "upstream": {
+    "package": "@playwright/cli",
+    "version": "0.1.18",
+    "browser": "Chrome for Testing",
+    "browser_version": "152.0.7977.8",
+    "browser_cache": "task_scoped"
+  },
+  "scenario": {
+    "target": "http://127.0.0.1:8765/",
+    "session": "task_scoped",
+    "authenticated_attachment": false,
+    "provider_contacted": false,
+    "external_network_contacted": false,
+    "operations": [
+      "open",
+      "list_tabs",
+      "snapshot",
+      "fill",
+      "click",
+      "snapshot_after_click",
+      "console",
+      "close"
+    ],
+    "click_count": 1,
+    "duplicate_clicks": 0,
+    "state_transition_verified": true,
+    "expected_page_log_observed": true,
+    "console_errors": 1,
+    "console_error_detail": "disposable fixture favicon returned 404"
+  },
+  "result": {
+    "status": "passed",
+    "adapter_boundary": "passed",
+    "accessibility_snapshot": "passed",
+    "semantic_fill": "passed",
+    "semantic_click": "passed",
+    "session_close": "passed"
+  },
+  "evidence_boundary": {
+    "proves": [
+      "the installed official playwright-cli executable runs on this Mac",
+      "the Harness adapter can drive a disposable local page",
+      "accessibility state changes are observable after one semantic click"
+    ],
+    "unverified": [
+      "authenticated existing-browser attachment",
+      "external-site navigation and downloads",
+      "literal Claude/OpenCode tool-call integration"
+    ]
+  }
+}
