@@ -10,11 +10,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from free_claude_code.application.capabilities import CapabilityRoutingMode
+from free_claude_code.application.capabilities import Capability, CapabilityRoutingMode
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
 )
-from free_claude_code.application.model_metadata import ProviderModelRefreshResult
+from free_claude_code.application.model_metadata import (
+    CapabilityEvidenceStatus,
+    ProviderModelInfo,
+    ProviderModelRefreshResult,
+)
 from free_claude_code.application.route_diagnostics import build_route_diagnostic
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
@@ -306,13 +310,13 @@ def _model_options(
         ref.model_ref
         for ref in configured_chat_model_refs(services.requests.current_settings())
     }
-    discovered = {
-        info.model_id
-        for info in filter_cached_model_infos(
+    discovered_infos = tuple(
+        filter_cached_model_infos(
             services.requests.current_settings(),
             services.requests.cached_prefixed_model_infos(),
         )
-    }
+    )
+    discovered = {info.model_id for info in discovered_infos}
     failed_provider_ids = (
         refresh_result.failed_provider_ids if refresh_result is not None else ()
     )
@@ -320,7 +324,125 @@ def _model_options(
         "models": sorted(configured | discovered, key=str.casefold),
         "model_labels": model_display_names(configured | discovered),
         "failed_providers": list(failed_provider_ids),
+        "model_evidence": _model_evidence(configured, discovered_infos),
     }
+
+
+_MODEL_EVIDENCE_CAPABILITIES = (
+    Capability.TEXT_INPUT,
+    Capability.TEXT_OUTPUT,
+    Capability.NATIVE_TOOLS,
+    Capability.PARALLEL_TOOLS,
+    Capability.NAMED_TOOL_CHOICE,
+    Capability.REASONING_EFFORT,
+    Capability.STRUCTURED_OUTPUT,
+    Capability.VISION_INPUT,
+    Capability.IMAGE_TOOL_RESULTS,
+    Capability.SCREENSHOT_VISION,
+)
+_MODEL_EVIDENCE_STATUS_VALUES = frozenset(
+    status.value for status in CapabilityEvidenceStatus
+)
+
+
+def _model_evidence(
+    configured_model_ids: set[str],
+    discovered_infos: tuple[ProviderModelInfo, ...],
+) -> dict[str, object]:
+    evidence = {
+        info.model_id: _model_evidence_for_info(info) for info in discovered_infos
+    }
+    for model_id in configured_model_ids:
+        evidence.setdefault(model_id, _model_evidence_for_info(None, model_id=model_id))
+    return dict(sorted(evidence.items(), key=lambda item: item[0].casefold()))
+
+
+def _model_evidence_for_info(
+    info: ProviderModelInfo | None,
+    *,
+    model_id: str | None = None,
+) -> dict[str, object]:
+    if info is None:
+        return {
+            "model_id": model_id or "",
+            "evidence_source": "unknown",
+            "observed_at": None,
+            "evidence_version": None,
+            "evidence_protocol": None,
+            "capabilities": {
+                capability.value: {
+                    "state": CapabilityEvidenceStatus.UNKNOWN.value,
+                    "confidence": "unknown",
+                    "source": "unknown",
+                }
+                for capability in _MODEL_EVIDENCE_CAPABILITIES
+            },
+        }
+
+    evidence = info.capability_evidence
+    return {
+        "model_id": info.model_id,
+        "evidence_source": evidence.evidence_source,
+        "observed_at": evidence.observed_at,
+        "evidence_version": evidence.evidence_version,
+        "evidence_protocol": evidence.evidence_protocol,
+        "capabilities": {
+            capability.value: _capability_evidence_for_info(capability, info)
+            for capability in _MODEL_EVIDENCE_CAPABILITIES
+        },
+    }
+
+
+def _capability_evidence_for_info(
+    capability: Capability,
+    info: ProviderModelInfo,
+) -> dict[str, str]:
+    evidence = info.capability_evidence
+    status = evidence.status_for(capability.value)
+    source = evidence.evidence_source
+
+    if status is CapabilityEvidenceStatus.UNKNOWN:
+        if capability in {Capability.TEXT_INPUT, Capability.TEXT_OUTPUT}:
+            status = CapabilityEvidenceStatus.SUPPORTED
+            source = "protocol-baseline"
+        elif capability is Capability.VISION_INPUT and info.supports_vision is not None:
+            status = (
+                CapabilityEvidenceStatus.SUPPORTED
+                if info.supports_vision
+                else CapabilityEvidenceStatus.UNSUPPORTED
+            )
+        elif capability is Capability.REASONING_EFFORT:
+            reasoning_status = info.reasoning.status
+            if reasoning_status.value in _MODEL_EVIDENCE_STATUS_VALUES:
+                status = CapabilityEvidenceStatus(reasoning_status.value)
+                source = info.reasoning.evidence_source
+            elif info.supports_thinking is not None:
+                status = (
+                    CapabilityEvidenceStatus.SUPPORTED
+                    if info.supports_thinking
+                    else CapabilityEvidenceStatus.UNSUPPORTED
+                )
+
+    if status is CapabilityEvidenceStatus.UNKNOWN:
+        source = "unknown"
+    elif source == "unknown":
+        source = "model_metadata"
+    return {
+        "state": status.value,
+        "confidence": _confidence_for_evidence(status),
+        "source": source,
+    }
+
+
+def _confidence_for_evidence(status: CapabilityEvidenceStatus) -> str:
+    if status in {
+        CapabilityEvidenceStatus.SUPPORTED,
+        CapabilityEvidenceStatus.UNSUPPORTED,
+    }:
+        return "confirmed"
+    if status is CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED:
+        return "unverified"
+    return "unknown"
 
 
 def _filtered_values(values: dict[str, Any]) -> dict[str, Any]:

@@ -64,6 +64,11 @@ catalog version, and protocol when available. Missing metadata stays unknown;
 conflicting claims reject the provider model-list response instead of enabling
 a broader route.
 
+The local Admin Model Config view shows the same evidence for the selected
+model, including capability state, confidence, and provenance. A configured
+model without cached discovery remains visibly unknown; the panel does not
+authorize tools, paid fallback, or provider access.
+
 `OPENCODE_GO_BASE_URL` is optional and defaults to OpenCode Go's documented
 endpoint. When set, it is an explicit endpoint override for the configured Go
 provider; it is useful for a private gateway or a zero-cost local synthetic

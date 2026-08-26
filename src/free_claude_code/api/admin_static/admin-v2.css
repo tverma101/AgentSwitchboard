@@ -679,3 +679,106 @@ textarea:focus-visible,
     transition: none !important;
   }
 }
+
+/* Capability evidence ---------------------------------------------------- */
+
+.model-evidence-panel {
+  margin-bottom: 20px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius);
+  background: var(--v2-surface);
+  padding: 14px;
+}
+
+.model-evidence-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.model-evidence-heading h3 {
+  margin: 0;
+  color: var(--v2-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.model-evidence-heading p,
+.model-evidence-summary {
+  margin: 3px 0 0;
+  color: var(--v2-muted);
+  font-size: 11px;
+}
+
+.model-evidence-heading > strong {
+  max-width: 48%;
+  overflow: hidden;
+  color: var(--v2-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  color: #7c8796;
+  font-size: 10px;
+}
+
+.model-evidence-meta strong {
+  color: #aeb8c5;
+  font-weight: 650;
+}
+
+.model-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.model-evidence-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  align-items: center;
+  border: 1px solid var(--v2-border);
+  border-radius: 7px;
+  background: #0d1116;
+  padding: 8px 9px;
+}
+
+.model-evidence-row > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #c9d0da;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-evidence-row > small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: #748090;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .model-evidence-heading {
+    display: grid;
+  }
+
+  .model-evidence-heading > strong {
+    max-width: 100%;
+  }
+}
