@@ -6,6 +6,7 @@ import hashlib
 import io
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from PIL import Image
 
@@ -45,6 +46,38 @@ class VisualAttachmentReceipt:
             f"{self.width}\u00d7{self.height} {self.media_type.removeprefix('image/').upper()} "
             f"· {size} · attached]"
         )
+
+
+def validate_image_url(url: object) -> str:
+    """Validate an image URL without resolving or fetching the target."""
+    if not isinstance(url, str) or not url:
+        raise VisualAttachmentError("Image URL source requires a non-empty URL")
+    if any(
+        character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F
+        for character in url
+    ):
+        raise VisualAttachmentError(
+            "Image URL source must not contain whitespace or control characters"
+        )
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        _port = parsed.port
+    except ValueError as exc:
+        raise VisualAttachmentError(
+            "Image URL source must be a valid absolute HTTP(S) URL"
+        ) from exc
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise VisualAttachmentError(
+            "Image URL source must use the http or https scheme"
+        )
+    if not parsed.netloc or hostname is None:
+        raise VisualAttachmentError(
+            "Image URL source must be a valid absolute HTTP(S) URL"
+        )
+    if parsed.username is not None or parsed.password is not None:
+        raise VisualAttachmentError("Image URL source must not contain credentials")
+    return url
 
 
 def validate_image_bytes(

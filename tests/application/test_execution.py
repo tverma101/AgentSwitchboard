@@ -1,12 +1,13 @@
 """Application-owned provider execution contracts."""
 
 from collections.abc import AsyncIterator
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import ResolvedModel, RoutedMessagesRequest
+from free_claude_code.application.visual_capabilities import VisualInputReceipt
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.async_iterators import AsyncCloseable
@@ -186,3 +187,49 @@ def test_executor_preflight_failure_stays_before_token_count_and_stream() -> Non
 
     token_counter.assert_not_called()
     assert provider.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_executor_propagates_visual_receipt_to_request_lifecycle_traces() -> None:
+    provider = FakeProvider()
+    executor = ProviderExecutor(
+        lambda _provider_id: provider,
+        token_counter=lambda _messages, _system, _tools: 17,
+    )
+    visual_input = VisualInputReceipt(attachments=(), url_image_count=1)
+
+    with (
+        patch("free_claude_code.application.execution.trace_event") as execution_trace,
+        patch("free_claude_code.core.trace.trace_event") as stream_trace,
+    ):
+        stream = executor.stream(
+            _routed_request(),
+            wire_api="messages",
+            raw_log_label="FULL_PAYLOAD",
+            raw_log_payload={},
+            request_id="req_visual_trace",
+            visual_input=visual_input,
+        )
+        assert [chunk async for chunk in stream] == [
+            "event: message_stop\ndata: {}\n\n"
+        ]
+
+    route = next(
+        call.kwargs
+        for call in execution_trace.call_args_list
+        if call.kwargs.get("event") == "free_claude_code.api.route.resolved"
+    )
+    request = next(
+        call.kwargs
+        for call in execution_trace.call_args_list
+        if call.kwargs.get("event") == "free_claude_code.api.request.received"
+    )
+    completed = next(
+        call.kwargs
+        for call in stream_trace.call_args_list
+        if call.kwargs.get("event") == "free_claude_code.api.response.stream_completed"
+    )
+    expected = visual_input.as_dict()
+    assert route["visual_input"] == expected
+    assert request["visual_input"] == expected
+    assert completed["visual_input"] == expected
