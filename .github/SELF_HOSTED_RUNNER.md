@@ -9,6 +9,11 @@ Pull requests from the same repository use the configured runner. Pull
 requests from forks always use `ubuntu-latest`, even when `HARNESS_RUNNER` is
 set, because their code is not trusted to run on the persistent Mac.
 
+The CI workflow disables `setup-uv`'s GitHub cache archive. The persistent
+self-hosted runner retains uv's filesystem cache between jobs, and archiving
+that cache in a post-job hook can block the only runner while it is serialized.
+Hosted fallback remains correct without this optional cache.
+
 GitHub does not treat a self-hosted label and a GitHub-hosted label as an `OR`
 choice. If the local runner is offline while `HARNESS_RUNNER=harness-local`,
 jobs remain queued. To use the hosted fallback, change the repository Actions

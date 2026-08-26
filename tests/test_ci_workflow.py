@@ -20,6 +20,8 @@ def test_ci_workflow_routes_trusted_jobs_to_the_configured_runner() -> None:
         "Never execute fork-controlled code on the persistent self-hosted runner."
         in workflow
     )
+    assert "enable-cache: false" in workflow
+    assert "cache-python: false" in workflow
 
 
 def test_issue_validator_remains_on_hosted_runner() -> None:
