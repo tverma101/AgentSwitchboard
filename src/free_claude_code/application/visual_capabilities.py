@@ -1,6 +1,7 @@
 """Provider-independent validation for model visual-input capabilities."""
 
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 
 from free_claude_code.application.capabilities import (
     Capability,
@@ -10,6 +11,75 @@ from free_claude_code.application.errors import VisualCapabilityError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.visual_attachments import (
+    VisualAttachmentError,
+    VisualAttachmentReceipt,
+    validate_base64_source,
+    validate_image_url,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class VisualInputReceipt:
+    """Metadata-only summary of image input admitted at the API boundary."""
+
+    attachments: tuple[VisualAttachmentReceipt, ...]
+    url_image_count: int
+
+    @property
+    def image_count(self) -> int:
+        """Return the total number of image blocks, regardless of source."""
+        return len(self.attachments) + self.url_image_count
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a trace-safe representation without image payloads or URLs."""
+        return {
+            "image_count": self.image_count,
+            "inline_image_count": len(self.attachments),
+            "inline_image_bytes": sum(
+                attachment.byte_count for attachment in self.attachments
+            ),
+            "url_image_count": self.url_image_count,
+            "attachments": [attachment.as_dict() for attachment in self.attachments],
+        }
+
+
+def validate_visual_input(request: MessagesRequest) -> VisualInputReceipt | None:
+    """Validate every image block before any provider is constructed.
+
+    Inline images are decoded and inspected transiently. URL sources are only
+    syntax-checked; fetching remains the responsibility of the upstream
+    protocol/provider and is never performed by ingress validation.
+    """
+    attachments: list[VisualAttachmentReceipt] = []
+    url_image_count = 0
+    for block in _iter_image_blocks(request.messages):
+        source = get_block_attr(block, "source")
+        if not isinstance(source, Mapping):
+            raise VisualCapabilityError(
+                "Image source must be an object; the request was rejected "
+                "before upstream I/O."
+            )
+        source_type = source.get("type")
+        try:
+            if source_type == "base64":
+                attachments.append(validate_base64_source(dict(source)))
+            elif source_type == "url":
+                validate_image_url(source.get("url"))
+                url_image_count += 1
+            else:
+                raise VisualAttachmentError(
+                    f"Unsupported image source type {source_type!r}"
+                )
+        except VisualAttachmentError as exc:
+            raise VisualCapabilityError(
+                f"Image attachment rejected: {exc}; the request was rejected "
+                "before upstream I/O."
+            ) from exc
+
+    if not attachments and url_image_count == 0:
+        return None
+    return VisualInputReceipt(tuple(attachments), url_image_count)
 
 
 def validate_visual_capability(
@@ -17,16 +87,17 @@ def validate_visual_capability(
     *,
     model_info: ProviderModelInfo | None,
     model_ref: str,
-) -> None:
+) -> VisualInputReceipt | None:
     """Reject known-incompatible image input before provider construction/I/O.
 
     Image input fails closed unless the model catalog explicitly confirms vision
     support. Text and tool-only requests do not require visual metadata.
     """
 
+    visual_input = validate_visual_input(request)
     required = required_capabilities_for_messages(request)
     if not required.requires(Capability.VISION_INPUT):
-        return
+        return visual_input
     image_blocks = tuple(_iter_image_blocks(request.messages))
     if model_info is None:
         raise VisualCapabilityError(
@@ -46,7 +117,7 @@ def validate_visual_capability(
 
     accepted_types = frozenset(model_info.accepted_image_types)
     if not accepted_types:
-        return
+        return visual_input
     unsupported_types = sorted(
         media_type
         for block in image_blocks
@@ -58,6 +129,7 @@ def validate_visual_capability(
         raise VisualCapabilityError(
             f"Model {model_ref!r} does not accept image type(s): {joined}."
         )
+    return visual_input
 
 
 def _iter_image_blocks(value: object) -> Iterator[object]:

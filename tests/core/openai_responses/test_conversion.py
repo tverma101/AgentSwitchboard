@@ -9,6 +9,10 @@ from free_claude_code.core.openai_responses import (
 
 _ADAPTER = OpenAIResponsesAdapter()
 _CONVERSION_ERROR = OpenAIResponsesAdapter.ConversionError
+_PNG_DATA_URL = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _to_anthropic_payload(request: dict[str, Any]) -> dict[str, Any]:
@@ -37,6 +41,73 @@ def test_responses_string_input_converts_to_anthropic_message() -> None:
     assert payload["top_p"] == 0.9
     assert payload["metadata"] == {"trace": "abc"}
     assert payload["prompt_cache_key"] == "native-key"
+
+
+def test_responses_input_images_preserve_order_and_use_safe_sources() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Inspect these."},
+                        {"type": "input_image", "image_url": _PNG_DATA_URL},
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.test/second.png",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Inspect these."},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": _PNG_DATA_URL.removeprefix("data:image/png;base64,"),
+                    },
+                },
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.test/second.png",
+                    },
+                },
+            ],
+        }
+    ]
+
+
+def test_responses_input_image_rejects_unsafe_url() -> None:
+    with pytest.raises(_CONVERSION_ERROR, match="http or https"):
+        _to_anthropic_payload(
+            {
+                "model": "nvidia_nim/test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "image_url": "file:///tmp/image.png",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
 
 @pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh"])

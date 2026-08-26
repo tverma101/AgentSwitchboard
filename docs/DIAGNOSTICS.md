@@ -46,3 +46,10 @@ These fields are metadata only. Prompts, response text, tool arguments, media
 bytes, and provider credentials are not placed in the receipt. Request-shape,
 stable-prefix, tool-schema, and media-type hashes remain one-way identifiers for
 comparing controlled runs without retaining payloads.
+
+The API ingress emits `free_claude_code.api.visual_input.admitted` after image
+validation and capability admission. Its receipt contains only image counts,
+inline byte totals, validated attachment metadata, and the selected provider
+reference; it never includes image URLs or base64 data. Invalid inline bytes,
+unsupported source types, unsafe URL schemes, and missing vision evidence fail
+before provider construction.
