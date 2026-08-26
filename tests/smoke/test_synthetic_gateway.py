@@ -28,7 +28,10 @@ def test_synthetic_gateway_serves_every_fixture_without_external_network(
     assert "message_start" in response.text
     if fixture is SyntheticThinkingFixture.REDACTED_THINKING:
         assert "redacted_thinking" in response.text
-    elif fixture is SyntheticThinkingFixture.TOOL_ROUNDTRIP:
+    elif fixture in {
+        SyntheticThinkingFixture.TOOL_ROUNDTRIP,
+        SyntheticThinkingFixture.CONTEXT_GOVERNOR,
+    }:
         assert "tool_use" in response.text
     else:
         assert "content_block_start" in response.text
@@ -73,6 +76,55 @@ def test_synthetic_gateway_tool_fixture_records_structural_continuation_only() -
     assert len(receipts) == 2
     assert receipts[0]["tool_result_seen"] is False
     assert receipts[1]["tool_result_seen"] is True
+    assert receipts[1]["tool_result_bytes"] == len("secret tool output")
+    assert (
+        isinstance(receipts[1]["request_bytes"], int)
+        and isinstance(receipts[0]["request_bytes"], int)
+        and receipts[1]["request_bytes"] > receipts[0]["request_bytes"]
+    )
+    assert "secret" not in json.dumps(receipts)
+
+
+def test_context_governor_fixture_records_only_numeric_size_evidence() -> None:
+    with SyntheticAnthropicGateway(
+        SyntheticThinkingFixture.CONTEXT_GOVERNOR
+    ) as gateway:
+        first = httpx.post(
+            f"{gateway.base_url}/messages",
+            json={
+                "model": "minimax-m2.7",
+                "messages": [{"role": "user", "content": "secret prompt"}],
+                "tools": [{"name": "Bash"}],
+            },
+            timeout=5,
+        )
+        second = httpx.post(
+            f"{gateway.base_url}/messages",
+            json={
+                "model": "minimax-m2.7",
+                "messages": [
+                    {"role": "user", "content": "secret prompt"},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_synthetic_bash",
+                                "content": "secret tool output",
+                            }
+                        ],
+                    },
+                ],
+            },
+            timeout=5,
+        )
+        receipts = gateway.request_receipts()
+
+    assert first.status_code == second.status_code == 200
+    assert "tool_use" in first.text
+    assert "SYNTHETIC_CONTEXT_GOVERNOR_OK" in second.text
+    assert receipts[1]["tool_result_bytes"] == len("secret tool output")
+    assert receipts[1]["tool_result_lines"] == 1
     assert "secret" not in json.dumps(receipts)
 
 

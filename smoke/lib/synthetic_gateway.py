@@ -20,6 +20,7 @@ class SyntheticThinkingFixture(StrEnum):
     MALFORMED_SIGNATURE = "malformed_signature"
     UNKNOWN_DELTA = "unknown_delta"
     TOOL_ROUNDTRIP = "tool_roundtrip"
+    CONTEXT_GOVERNOR = "context_governor"
 
 
 @dataclass(slots=True)
@@ -129,6 +130,10 @@ class SyntheticAnthropicGateway:
     ) -> tuple[str, ...]:
         """Return one deterministic SSE fixture without inspecting prompt text."""
 
+        if self.fixture is SyntheticThinkingFixture.CONTEXT_GOVERNOR:
+            if request_index == 1 and not _contains_tool_result(request):
+                return _bash_tool_use_events()
+            return _text_events("SYNTHETIC_CONTEXT_GOVERNOR_OK")
         if (
             self.fixture is SyntheticThinkingFixture.TOOL_ROUNDTRIP
             and request_index == 1
@@ -385,6 +390,38 @@ def _tool_use_events() -> tuple[str, ...]:
     )
 
 
+def _bash_tool_use_events() -> tuple[str, ...]:
+    return (
+        _message_start(),
+        _event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_synthetic_bash",
+                    "name": "Bash",
+                    "input": {},
+                },
+            },
+        ),
+        _event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": '{"command":"cat synthetic-fixture.txt"}',
+                },
+            },
+        ),
+        _event("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        *_message_end("tool_use"),
+    )
+
+
 def _contains_tool_result(request: MappingLike) -> bool:
     messages = request.get("messages")
     if not isinstance(messages, list):
@@ -423,6 +460,8 @@ def _request_receipt(request: MappingLike) -> dict[str, object]:
     messages = request.get("messages")
     roles: list[str] = []
     block_types: list[str] = []
+    tool_result_bytes = 0
+    tool_result_lines = 0
     for message in messages if isinstance(messages, list) else ():
         if not isinstance(message, dict):
             continue
@@ -434,6 +473,17 @@ def _request_receipt(request: MappingLike) -> dict[str, object]:
             for block in _content_blocks(message.get("content"))
             if isinstance(block, dict) and isinstance(block.get("type"), str)
         )
+        for block in _content_blocks(message.get("content")):
+            if block.get("type") != "tool_result":
+                continue
+            content = block.get("content")
+            text = _tool_result_text(content)
+            if text is not None:
+                tool_result_bytes += len(text.encode("utf-8"))
+                tool_result_lines += _logical_lines(text)
+            else:
+                tool_result_bytes += _serialized_bytes(content)
+    request_bytes = _serialized_bytes(request)
     return {
         "message_count": len(messages) if isinstance(messages, list) else 0,
         "roles": roles,
@@ -446,7 +496,39 @@ def _request_receipt(request: MappingLike) -> dict[str, object]:
         "model": request.get("model")
         if isinstance(request.get("model"), str)
         else None,
+        "request_bytes": request_bytes,
+        "request_tokens_estimate": max(1, request_bytes // 4),
+        "tool_result_bytes": tool_result_bytes,
+        "tool_result_lines": tool_result_lines,
     }
+
+
+def _tool_result_text(content: object) -> str | None:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            return None
+        text = block.get("text")
+        if not isinstance(text, str):
+            return None
+        parts.append(text)
+    return "".join(parts)
+
+
+def _logical_lines(text: str) -> int:
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
+def _serialized_bytes(value: object) -> int:
+    return len(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
 
 
 __all__ = [
