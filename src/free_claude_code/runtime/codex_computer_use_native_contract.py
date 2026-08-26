@@ -15,7 +15,6 @@ from free_claude_code.runtime.codex_computer_use import (
     CodexComputerUsePaths,
 )
 from free_claude_code.runtime.codex_computer_use_managed import (
-    MAX_STATUS_PAGES,
     SERVER_NAME,
     ManagedCodexComputerUseBroker,
     managed_plugin_root,
@@ -186,7 +185,11 @@ class ContractCheckedManagedCodexComputerUseBroker(ManagedCodexComputerUseBroker
         return skill
 
     def start(self) -> None:
-        if self.started and self._native_contract is not None and self._native_skill is not None:
+        if (
+            self.started
+            and self._native_contract is not None
+            and self._native_skill is not None
+        ):
             return
         super().start()
         if self._thread_id is None:
