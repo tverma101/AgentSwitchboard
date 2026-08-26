@@ -60,6 +60,32 @@ def test_terminal_setting_applies_value_through_admin_api() -> None:
         settings,
         {"MODEL": "opencode_go/minimax-m2.7"},
     )
+    assert settings.model == "opencode_go/minimax-m2.7"
+
+
+def test_terminal_setting_clears_cached_settings_after_successful_apply() -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    field = {"key": "MODEL", "locked": False, "source": "managed_env"}
+    with (
+        patch("builtins.input", return_value="opencode_go/minimax-m2.7"),
+        patch.object(
+            terminal_control,
+            "apply_admin_values",
+            return_value={"applied": True, "valid": True},
+        ),
+        patch.object(terminal_control.get_settings, "cache_clear") as clear_cache,
+    ):
+        terminal_control._edit_setting(
+            settings,
+            field,
+            key="MODEL",
+            prompt="Model> ",
+        )
+
+    clear_cache.assert_called_once_with()
+    assert settings.model == "opencode_go/minimax-m2.7"
 
 
 def test_reasoning_menu_uses_manifest_options_and_admin_apply() -> None:

@@ -22,3 +22,8 @@ scripted local tooling. It is never opened automatically by FCC. Normal agent
 work stays in the terminal through `fcc-claude`, `fccdanger`, `fcc-codex`, or
 `fcc-pi`. `fccdanger` is the personal-fork convenience alias that adds
 `--dangerously-skip-permissions` while retaining FCC routing.
+
+The terminal control-center home redraw uses the already-loaded local settings
+object and does not make an Admin request. Explicit settings edits still use
+the local Admin API; after a successful edit, the terminal invalidates its
+settings cache before the next redraw.

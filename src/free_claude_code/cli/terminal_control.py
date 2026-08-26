@@ -21,7 +21,7 @@ from free_claude_code.cli.local_admin import (
 )
 from free_claude_code.config.paths import managed_env_path, server_log_path
 from free_claude_code.config.server_urls import local_proxy_root_url
-from free_claude_code.config.settings import Settings
+from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.learning.config import configured_profile
 
 CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
@@ -135,7 +135,7 @@ def _print_home(
         if supervisor is not None
         else ServerStatus.RUNNING.value
     )
-    model = _current_admin_value(settings, "MODEL", fallback=settings.model)
+    model = settings.model
     print()
     print("FCC Harness")
     print("-----------")
@@ -230,6 +230,10 @@ def _edit_setting(
     except LocalAdminError as exc:
         print(f"Could not apply {key}: {exc}")
         return
+    if result.get("applied") is True:
+        get_settings.cache_clear()
+        if key == "MODEL":
+            settings.model = value
     _print_apply_result(key, result)
 
 

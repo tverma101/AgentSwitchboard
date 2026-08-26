@@ -104,6 +104,23 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
     launch.assert_called_once_with(False, ())
 
 
+def test_home_redraw_uses_passed_settings_without_admin_io(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    with patch.object(
+        terminal_control,
+        "get_admin_config",
+        side_effect=AssertionError("home redraw must not call Admin"),
+    ):
+        terminal_control._print_home(settings, supervisor=None)
+
+    output = capsys.readouterr().out
+    assert f"Model     {settings.model}" in output
+
+
 def test_attached_control_menu_refuses_to_claim_restart_ownership(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
