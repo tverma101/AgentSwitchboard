@@ -86,14 +86,6 @@ canary runs the client-safe summary, empty, unsupported, usage-only, redacted,
 and tool-roundtrip cases; expected client rendering/rejection is recorded in
 `.smoke-results/` rather than treated as Muse/provider evidence.
 
-The provider-independent reasoning capability/observability corpus is
-[`reasoning-observability-matrix-v1.json`](fixtures/reasoning-observability-matrix-v1.json).
-It is synthetic-only: accepted, unsupported, unknown, and skipped capability
-rows are not provider-generation receipts, and opaque/empty/tool-order rows do
-not claim current Muse behavior. See
-[reasoning observability](../docs/REASONING_OBSERVABILITY.md) for the receipt
-fields and evidence boundary.
-
 Heavy/side-effectful targets are opt-in:
 
 | Target | Product scenarios | Required environment |
