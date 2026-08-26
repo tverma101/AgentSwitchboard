@@ -155,17 +155,19 @@ def _create_opencode_go(
 ) -> BaseProvider:
     from free_claude_code.providers.opencode_go import OpenCodeGoProvider
 
-    configured_model = "configured"
-    if parse_provider_type(settings.model) == "opencode_go":
-        configured_model = parse_model_name(settings.model)
-    policy = ProviderPolicy(
-        primary_provider="opencode_go",
-        primary_model=configured_model,
-    )
-    guarded_config = replace(
-        config,
-        egress_guard=ProviderEgressGuard(policy),
-    )
+    guarded_config = config
+    if config.egress_guard is None:
+        configured_model = "configured"
+        if parse_provider_type(settings.model) == "opencode_go":
+            configured_model = parse_model_name(settings.model)
+        policy = ProviderPolicy(
+            primary_provider="opencode_go",
+            primary_model=configured_model,
+        )
+        guarded_config = replace(
+            config,
+            egress_guard=ProviderEgressGuard(policy),
+        )
     return OpenCodeGoProvider(guarded_config, admission=admission)
 
 
@@ -211,6 +213,7 @@ def create_provider(
     settings: Settings,
     *,
     injected_factories: Mapping[str, ProviderFactory] | None = None,
+    egress_guard: ProviderEgressGuard | None = None,
 ) -> BaseProvider:
     """Create a provider instance for a supported provider id."""
     descriptor = PROVIDER_CATALOG.get(provider_id)
@@ -218,6 +221,8 @@ def create_provider(
         raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
 
     config = build_provider_config(descriptor, settings)
+    if egress_guard is not None:
+        config = replace(config, egress_guard=egress_guard)
     admission = ProviderAdmissionController(
         provider_name=provider_id,
         rate_limit=config.rate_limit or 40,
