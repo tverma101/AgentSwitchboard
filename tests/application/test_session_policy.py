@@ -1,12 +1,15 @@
 """Contract tests for one shared launch/session execution policy."""
 
 import threading
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 
 from free_claude_code.application.capabilities import (
     Capability,
     CapabilityRouter,
+    CapabilityRoutingError,
     CapabilityRoutingMode,
     RequiredCapabilitySet,
 )
@@ -24,10 +27,14 @@ def _helper(
 ) -> ApprovedHelper:
     def execute(
         operation: str,
-        arguments: object,
+        arguments: Mapping[str, Any],
         cancel_event: threading.Event,
     ) -> dict[str, object]:
-        return {"operation": operation, "cancelled": cancel_event.is_set()}
+        return {
+            "operation": operation,
+            "argument_count": len(arguments),
+            "cancelled": cancel_event.is_set(),
+        }
 
     return ApprovedHelper(
         helper_id=helper_id,
@@ -91,8 +98,10 @@ def test_explicit_local_computer_helper_shares_one_guard_with_executor() -> None
     assert result.output["operation"] == "list_apps"
     receipt = policy.receipt()
     assert receipt["allowed_helpers"] == ["codex-computer-use"]
-    assert receipt["egress"]["counts"] == {"local": 1}
-    assert "openai" not in receipt["egress"]["counts"]
+    egress = receipt["egress"]
+    assert isinstance(egress, dict)
+    assert egress["counts"] == {"local": 1}
+    assert "openai" not in egress["counts"]
 
 
 def test_helper_binary_or_credentials_do_not_authorize_unlisted_helper() -> None:
@@ -103,7 +112,7 @@ def test_helper_binary_or_credentials_do_not_authorize_unlisted_helper() -> None
     )
 
     route_router = CapabilityRouter(policy.routing_policy)
-    with pytest.raises(Exception, match="unavailable"):
+    with pytest.raises(CapabilityRoutingError, match="unavailable"):
         route_router.plan(
             RequiredCapabilitySet(frozenset({Capability.PIXEL_COMPUTER_USE})),
             controller_provider="opencode_go",
