@@ -19,7 +19,9 @@ _UPDATE_INSTRUCTIONS = (
 )
 
 
-def _skill_result(*, action: str, instructions: str, **extra: object) -> dict[str, object]:
+def _skill_result(
+    *, action: str, instructions: str, **extra: object
+) -> dict[str, object]:
     return {
         "memory_actions": [],
         "skill": {
@@ -37,7 +39,7 @@ def _skill_result(*, action: str, instructions: str, **extra: object) -> dict[st
 
 def _baseline(tmp_path: Path, monkeypatch) -> tuple[LearningStore, Path, str]:
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
-    store = LearningStore(tmp_path / "learning.db")
+    store = LearningStore(tmp_path / "learning.db", profile="default")
     assert apply_learning_result(
         result=_skill_result(action="create", instructions=_BASE_INSTRUCTIONS),
         cwd=str(tmp_path),

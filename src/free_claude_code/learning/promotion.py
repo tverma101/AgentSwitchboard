@@ -60,7 +60,9 @@ def register_trusted_skill_promotion_check(
         or "\n" in normalized_id
         or "\r" in normalized_id
     ):
-        raise ValueError("skill promotion check requires a bounded single-line check id")
+        raise ValueError(
+            "skill promotion check requires a bounded single-line check id"
+        )
     if (
         not normalized_version
         or len(normalized_version) > 64
@@ -71,7 +73,9 @@ def register_trusted_skill_promotion_check(
     if not callable(evaluator):
         raise ValueError("skill promotion evaluator must be callable")
     if normalized_key in _TRUSTED_CHECKS:
-        raise ValueError(f"skill promotion check already registered for {normalized_key!r}")
+        raise ValueError(
+            f"skill promotion check already registered for {normalized_key!r}"
+        )
     _TRUSTED_CHECKS[normalized_key] = TrustedSkillPromotionCheck(
         check_id=normalized_id,
         version=normalized_version,
@@ -149,9 +153,9 @@ def _digest(content: str) -> str:
 
 def _append_receipt(root: Path, receipt: dict[str, str | int]) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    payload = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode(
-        "utf-8"
-    )
+    payload = (
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
     descriptor = os.open(
         root / _RECEIPT_NAME,
         os.O_WRONLY | os.O_CREAT | os.O_APPEND,
