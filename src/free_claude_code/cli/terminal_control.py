@@ -7,7 +7,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -28,6 +28,7 @@ CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
 CODEX_STATUS_TIMEOUT_SECONDS = 5.0
 LOG_PREVIEW_LINES = 30
 _CODEX_API_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
+ClaudeLauncher = Callable[[bool, Sequence[str]], None]
 
 
 def terminal_control_available(
@@ -45,6 +46,7 @@ def run_owned_control_center(
     settings: Settings,
     *,
     initial_argv: Sequence[str] | None = None,
+    launch_claude: ClaudeLauncher,
 ) -> None:
     """Own one FCC server worker while the terminal menu stays in foreground."""
 
@@ -60,23 +62,32 @@ def run_owned_control_center(
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
         if initial_argv is not None:
-            _launch_claude(danger=False, argv=initial_argv)
-        run_control_menu(settings, supervisor=supervisor)
+            launch_claude(False, initial_argv)
+        run_control_menu(
+            settings,
+            supervisor=supervisor,
+            launch_claude=launch_claude,
+        )
     finally:
         supervisor.request_stop()
         server_thread.join()
 
 
-def run_attached_control_center(settings: Settings) -> None:
+def run_attached_control_center(
+    settings: Settings,
+    *,
+    launch_claude: ClaudeLauncher,
+) -> None:
     """Use the terminal menu with an FCC server owned by another process."""
 
-    run_control_menu(settings, supervisor=None)
+    run_control_menu(settings, supervisor=None, launch_claude=launch_claude)
 
 
 def run_control_menu(
     settings: Settings,
     *,
     supervisor: ServerSupervisor | None,
+    launch_claude: ClaudeLauncher,
 ) -> None:
     """Run the intentionally small line-oriented FCC terminal menu."""
 
@@ -84,14 +95,14 @@ def run_control_menu(
         _print_home(settings, supervisor=supervisor)
         try:
             choice = input("FCC> ").strip().casefold()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return
 
         if choice in {"", "c", "claude"}:
-            _launch_claude(danger=False)
+            launch_claude(False, ())
         elif choice in {"d", "danger"}:
-            _launch_claude(danger=True)
+            launch_claude(True, ())
         elif choice in {"x", "connect", "codex"}:
             _connect_codex()
         elif choice in {"s", "settings"}:
@@ -164,7 +175,7 @@ def _run_settings_menu(settings: Settings) -> None:
         print("[M] Model   [R] Reasoning   [B] Back")
         try:
             choice = input("Settings> ").strip().casefold()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return
 
@@ -208,7 +219,7 @@ def _edit_setting(
         return
     try:
         value = input(prompt).strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError, KeyboardInterrupt:
         print()
         return
     if not value:
@@ -331,7 +342,7 @@ def _codex_chatgpt_connected(executable: str) -> bool:
             check=False,
             timeout=CODEX_STATUS_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError, subprocess.TimeoutExpired:
         return False
     output = f"{result.stdout}\n{result.stderr}".casefold()
     return result.returncode == 0 and "logged in using chatgpt" in output
@@ -365,17 +376,6 @@ def _connect_codex() -> None:
         print("Codex connected using ChatGPT subscription auth.")
     else:
         print("Codex login finished, but ChatGPT connection was not confirmed.")
-
-
-def _launch_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
-    from free_claude_code.cli.launchers.claude import launch, launch_danger
-
-    launcher = launch_danger if danger else launch
-    try:
-        launcher(tuple(argv))
-    except SystemExit as exc:
-        if exc.code not in {None, 0}:
-            print(f"Claude exited with status {exc.code}.")
 
 
 def _wait_for_proxy(
