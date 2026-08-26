@@ -22,7 +22,18 @@ Start the server in a terminal:
 fcc-server
 ```
 
-Run the terminal client from another terminal:
+The command opens the terminal control center. Press Enter/C for `fcc-claude` or
+D for `fccdanger`; P opens provider/account actions, M shows models, U shows
+local usage, N runs route diagnostics, X connects Codex, S edits the supported Model and
+Reasoning Policy fields, L previews/filters the structured server log, F shows
+the active profile, R restarts only a server owned by this terminal, and Q
+exits. If FCC is already healthy, the control center attaches without claiming
+its lifecycle. Use `fcc-server --headless` for a blocking server-only process.
+
+The home redraw is local-only. Admin, provider, model, usage, and diagnostic
+requests happen only after selecting their explicit action.
+
+You can also run the terminal client from another terminal:
 
 ```bash
 fccdanger

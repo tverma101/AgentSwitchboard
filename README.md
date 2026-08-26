@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The local release head is version
-`4.30.26`; examples below describe this checkout, not every feature proposed in
+`4.31.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. Live smoke receipts retain the package version that
 was installed when each receipt was captured; read the receipt's own metadata
 before treating it as evidence for a later release head.
@@ -112,8 +112,13 @@ INFO:     FCC control endpoint: http://127.0.0.1:8082/admin (terminal-only; brow
 
 Use the port shown in your terminal if it differs from `8082`.
 
-In a second terminal, verify the existing local server before launching the
-client:
+The control center provides the normal client handoff plus explicit local
+provider/account, model, usage, route-diagnosis, profile, settings, logs, and
+restart actions. Home redraws use the local snapshot; Admin/provider requests
+only happen after selecting one of those actions. API keys are entered through
+hidden prompts and are never echoed back.
+You can still verify the local server explicitly before using a separate client
+terminal:
 
 ```bash
 curl -fsS http://127.0.0.1:8082/health

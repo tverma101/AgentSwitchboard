@@ -121,6 +121,120 @@ def test_home_redraw_uses_passed_settings_without_admin_io(
     assert f"Model     {settings.model}" in output
 
 
+def test_home_redraw_uses_local_snapshot_without_admin_io(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    with patch.object(
+        terminal_control,
+        "get_admin_config",
+        side_effect=AssertionError("home redraw must not call Admin"),
+    ):
+        terminal_control._print_home(
+            _settings(),
+            supervisor=None,
+            model="cached/model",
+        )
+
+    output = capsys.readouterr().out
+    assert "cached/model" in output
+    assert "[P] Providers" in output
+    assert "[M] Models" in output
+
+
+def test_provider_secret_edit_does_not_echo_value() -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    field = {
+        "label": "Provider API Key",
+        "secret": True,
+        "configured": True,
+        "locked": False,
+    }
+    secret = "super-secret-provider-key"
+    with (
+        patch("builtins.input", return_value="1"),
+        patch.object(terminal_control.getpass, "getpass", return_value=secret),
+        patch.object(
+            terminal_control,
+            "apply_admin_values",
+            return_value={"applied": True, "valid": True},
+        ) as apply,
+        patch("builtins.print") as printed,
+    ):
+        terminal_control._edit_provider_fields(
+            settings,
+            (("PROVIDER_API_KEY", field),),
+        )
+
+    apply.assert_called_once_with(settings, {"PROVIDER_API_KEY": secret})
+    printed.assert_any_call("Applied PROVIDER_API_KEY.")
+    assert all(secret not in str(call_args) for call_args in printed.call_args_list)
+
+
+def test_provider_field_mapping_uses_catalog_owned_settings_attributes() -> None:
+    from free_claude_code.cli import terminal_control
+
+    config = {
+        "fields": [
+            {
+                "key": "NVIDIA_NIM_API_KEY",
+                "label": "NVIDIA NIM API Key",
+                "secret": True,
+                "configured": False,
+            },
+            {
+                "key": "OPENAI_PROXY",
+                "label": "OpenAI Proxy",
+                "secret": True,
+                "configured": False,
+            },
+        ]
+    }
+
+    nim_fields = terminal_control._provider_fields(config, "nvidia_nim")
+    openai_fields = terminal_control._provider_fields(config, "openai")
+
+    assert [key for key, _field in nim_fields] == ["NVIDIA_NIM_API_KEY"]
+    assert [key for key, _field in openai_fields] == ["OPENAI_PROXY"]
+
+
+def test_connected_account_detail_uses_explicit_browser_login_action() -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    provider = {
+        "provider_id": "openai",
+        "display_name": "OpenAI / ChatGPT",
+        "label": "Not connected",
+    }
+    with (
+        patch.object(
+            terminal_control,
+            "connected_account_status",
+            return_value={"state": "disconnected"},
+        ),
+        patch.object(
+            terminal_control,
+            "start_connected_account_login",
+            return_value={
+                "state": "connecting",
+                "authorization_url": "https://example.test/device",
+            },
+        ) as start,
+        patch("builtins.input", side_effect=["l", "b"]),
+    ):
+        terminal_control._run_provider_detail(settings, provider, {"fields": []})
+
+    start.assert_called_once_with(
+        settings,
+        "openai",
+        terminal_control.ConnectedAccountLoginMode.BROWSER,
+    )
+
+
 def test_attached_control_menu_refuses_to_claim_restart_ownership(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
