@@ -59,6 +59,18 @@ That means a project-specific learned procedure is visible as a normal working-t
 
 Every accepted skill revision is stored in the local `skill_revisions` table with a SHA-256 digest. Before an update, the previous bytes are retained. The current skill is provided to the distiller so an update must be a complete procedure; local validation requires frontmatter, bounded fields, no secrets or project-path leakage, and an explicit validation/check/test step. An update is rejected if it drops a normalized validation clause from the current skill. A prior revision can be restored byte-for-byte with `fcc-learning skill rollback <skill-key> <revision>`.
 
+Skill replacements may also use an opt-in trusted promotion check registered by
+repository/user-authored code for the computed skill key. The evaluator is
+selected independently of generated `SKILL.md` text and runs after structural
+validation but before any file or revision mutation. Only literal `True`
+permits the replacement; a false result or evaluator error fails closed and
+preserves the current skill. Each configured check appends a metadata-only
+`skill-promotion-receipts.jsonl` record beside the learning database containing
+the skill key, current/candidate SHA-256 digests, check id/version, decision,
+and runtime. Prompt, skill, secret, and executable candidate fields are never
+written to the receipt. If receipt persistence fails, a configured check also
+fails closed; an unregistered skill retains the existing structural behavior.
+
 Profile selection is explicit and fixed for the launched session:
 
 ```bash
