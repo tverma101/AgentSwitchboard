@@ -141,6 +141,19 @@ def _parser() -> argparse.ArgumentParser:
     bundle_export.add_argument("path")
     _cwd(bundle_export)
     bundle_export.add_argument("--limit", type=int, default=1000)
+    bundle_export.add_argument(
+        "--memory-id",
+        dest="memory_ids",
+        type=int,
+        action="append",
+        help="export only this visible memory id; repeat for multiple memories",
+    )
+    bundle_export.add_argument(
+        "--skill-key",
+        dest="skill_keys",
+        action="append",
+        help="export only this visible skill key; repeat for multiple skills",
+    )
     bundle_inspect = bundle_commands.add_parser(
         "inspect", help="validate a bundle and print its manifest summary"
     )
@@ -152,6 +165,18 @@ def _parser() -> argparse.ArgumentParser:
     _cwd(bundle_import)
     bundle_import.add_argument(
         "--conflict", choices=("skip", "replace", "fail"), default="skip"
+    )
+    bundle_import.add_argument(
+        "--memory-key",
+        dest="memory_keys",
+        action="append",
+        help="import only this portable memory key; repeat for multiple memories",
+    )
+    bundle_import.add_argument(
+        "--skill-key",
+        dest="skill_keys",
+        action="append",
+        help="import only this skill key; repeat for multiple skills",
     )
     bundle_import.add_argument("--dry-run", action="store_true")
 
@@ -347,6 +372,8 @@ def main() -> None:
                     project_key=project_identity(args.cwd),
                     profile=store.profile,
                     limit=args.limit,
+                    memory_ids=args.memory_ids,
+                    skill_keys=args.skill_keys,
                 )
             else:
                 result = import_bundle(
@@ -356,6 +383,8 @@ def main() -> None:
                     claude_config_dir=claude_config_dir(),
                     conflict=args.conflict,
                     dry_run=args.dry_run,
+                    memory_keys=args.memory_keys,
+                    skill_keys=args.skill_keys,
                 )
         except BundleError as exc:
             raise SystemExit(str(exc)) from exc
