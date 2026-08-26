@@ -36,7 +36,10 @@ def test_interactive_fcc_server_owns_control_center_when_proxy_is_down() -> None
     ):
         entrypoints.serve(())
 
-    run_control.assert_called_once_with(settings)
+    run_control.assert_called_once_with(
+        settings,
+        claude_launcher=entrypoints._launch_control_claude,
+    )
     raw_server.assert_not_called()
 
 
@@ -78,7 +81,10 @@ def test_interactive_fcc_server_attaches_to_existing_proxy_without_ownership() -
     ):
         entrypoints.serve(())
 
-    attach.assert_called_once_with(settings)
+    attach.assert_called_once_with(
+        settings,
+        claude_launcher=entrypoints._launch_control_claude,
+    )
     own.assert_not_called()
     port_probe.assert_not_called()
 
@@ -187,7 +193,11 @@ def test_direct_owner_starts_control_center_with_post_migration_settings() -> No
     assert started is True
     clear.assert_called_once_with()
     load.assert_called_once_with()
-    owner.assert_called_once_with(settings, initial_argv=("--model", "muse"))
+    owner.assert_called_once_with(
+        settings,
+        initial_argv=("--model", "muse"),
+        claude_launcher=claude._launch_control_claude,
+    )
 
 
 def test_direct_owner_reuses_post_migration_server_if_it_is_already_healthy() -> None:
@@ -263,7 +273,9 @@ def test_noninteractive_direct_launch_does_not_create_hidden_server_owner() -> N
     from free_claude_code.cli.launchers import claude
 
     with (
-        patch.object(terminal_control, "terminal_control_available", return_value=False),
+        patch.object(
+            terminal_control, "terminal_control_available", return_value=False
+        ),
         patch.object(commands, "load_server_settings") as load,
         patch.object(server_startup, "server_port_is_occupied") as port_probe,
         patch.object(terminal_control, "run_owned_control_center") as owner,

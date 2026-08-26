@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Protocol, TextIO
 
 from free_claude_code.cli.claude_env import context_cap_tokens
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
@@ -30,6 +30,12 @@ LOG_PREVIEW_LINES = 30
 _CODEX_API_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
 
 
+class ClaudeLauncher(Protocol):
+    """Composition-root callback for launching the configured Claude client."""
+
+    def __call__(self, *, danger: bool, argv: Sequence[str] = ()) -> None: ...
+
+
 def terminal_control_available(
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
@@ -45,9 +51,11 @@ def run_owned_control_center(
     settings: Settings,
     *,
     initial_argv: Sequence[str] | None = None,
+    claude_launcher: ClaudeLauncher | None = None,
 ) -> None:
     """Own one FCC server worker while the terminal menu stays in foreground."""
 
+    launcher = _launch_claude if claude_launcher is None else claude_launcher
     supervisor = ServerSupervisor(console_logging=False)
     if not supervisor.schedule_run():
         raise RuntimeError("FCC server worker could not be scheduled")
@@ -60,38 +68,58 @@ def run_owned_control_center(
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
         if initial_argv is not None:
-            _launch_claude(danger=False, argv=initial_argv)
-        run_control_menu(settings, supervisor=supervisor)
+            launcher(danger=False, argv=initial_argv)
+        if claude_launcher is None:
+            run_control_menu(settings, supervisor=supervisor)
+        else:
+            run_control_menu(
+                settings,
+                supervisor=supervisor,
+                claude_launcher=launcher,
+            )
     finally:
         supervisor.request_stop()
         server_thread.join()
 
 
-def run_attached_control_center(settings: Settings) -> None:
+def run_attached_control_center(
+    settings: Settings,
+    *,
+    claude_launcher: ClaudeLauncher | None = None,
+) -> None:
     """Use the terminal menu with an FCC server owned by another process."""
 
-    run_control_menu(settings, supervisor=None)
+    if claude_launcher is None:
+        run_control_menu(settings, supervisor=None)
+    else:
+        run_control_menu(
+            settings,
+            supervisor=None,
+            claude_launcher=claude_launcher,
+        )
 
 
 def run_control_menu(
     settings: Settings,
     *,
     supervisor: ServerSupervisor | None,
+    claude_launcher: ClaudeLauncher | None = None,
 ) -> None:
     """Run the intentionally small line-oriented FCC terminal menu."""
 
+    launcher = _launch_claude if claude_launcher is None else claude_launcher
     while True:
         _print_home(settings, supervisor=supervisor)
         try:
             choice = input("FCC> ").strip().casefold()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return
 
         if choice in {"", "c", "claude"}:
-            _launch_claude(danger=False)
+            launcher(danger=False)
         elif choice in {"d", "danger"}:
-            _launch_claude(danger=True)
+            launcher(danger=True)
         elif choice in {"x", "connect", "codex"}:
             _connect_codex()
         elif choice in {"s", "settings"}:
@@ -164,7 +192,7 @@ def _run_settings_menu(settings: Settings) -> None:
         print("[M] Model   [R] Reasoning   [B] Back")
         try:
             choice = input("Settings> ").strip().casefold()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return
 
@@ -208,7 +236,7 @@ def _edit_setting(
         return
     try:
         value = input(prompt).strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError, KeyboardInterrupt:
         print()
         return
     if not value:
@@ -331,7 +359,7 @@ def _codex_chatgpt_connected(executable: str) -> bool:
             check=False,
             timeout=CODEX_STATUS_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError, subprocess.TimeoutExpired:
         return False
     output = f"{result.stdout}\n{result.stderr}".casefold()
     return result.returncode == 0 and "logged in using chatgpt" in output
@@ -368,14 +396,10 @@ def _connect_codex() -> None:
 
 
 def _launch_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
-    from free_claude_code.cli.launchers.claude import launch, launch_danger
+    """Fallback launch seam used by direct unit tests without a composition root."""
 
-    launcher = launch_danger if danger else launch
-    try:
-        launcher(tuple(argv))
-    except SystemExit as exc:
-        if exc.code not in {None, 0}:
-            print(f"Claude exited with status {exc.code}.")
+    del danger, argv
+    raise RuntimeError("Claude launcher was not supplied by the CLI composition root")
 
 
 def _wait_for_proxy(
