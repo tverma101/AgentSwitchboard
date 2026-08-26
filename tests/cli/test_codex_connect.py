@@ -2,7 +2,7 @@
 
 import os
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -43,7 +43,11 @@ def test_control_menu_connect_is_explicit_and_not_part_of_home_redraw() -> None:
         patch("builtins.input", side_effect=["x", "q"]),
         patch.object(terminal_control, "_connect_codex") as connect,
     ):
-        terminal_control.run_control_menu(settings, supervisor=None)
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=None,
+            launch_client=MagicMock(),
+        )
 
     connect.assert_called_once_with()
 
