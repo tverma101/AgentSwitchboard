@@ -20,6 +20,10 @@ from free_claude_code.runtime.codex_computer_use_managed import (
 CODEX_COMPUTER_USE_HELPER_ID = "codex-computer-use"
 CODEX_COMPUTER_USE_PROVIDER_FAMILY = "computer"
 DEFAULT_COMPUTER_USE_OUTPUT_BYTES = 2 * 1024 * 1024
+READ_ONLY_COMPUTER_USE_METHODS = frozenset({"list_apps", "get_app_state"})
+MUTATING_COMPUTER_USE_METHODS = frozenset(COMPUTER_USE_METHODS) - (
+    READ_ONLY_COMPUTER_USE_METHODS
+)
 
 
 class CodexComputerUseHelperAdapter:
@@ -102,6 +106,7 @@ class CodexComputerUseHelperAdapter:
             local=True,
             billable=False,
             max_output_bytes=max_output_bytes,
+            mutating_operations=MUTATING_COMPUTER_USE_METHODS,
         )
 
     def _get_broker(self) -> ManagedCodexComputerUseBroker:
@@ -122,5 +127,7 @@ class CodexComputerUseHelperAdapter:
 __all__ = [
     "CODEX_COMPUTER_USE_HELPER_ID",
     "CODEX_COMPUTER_USE_PROVIDER_FAMILY",
+    "MUTATING_COMPUTER_USE_METHODS",
+    "READ_ONLY_COMPUTER_USE_METHODS",
     "CodexComputerUseHelperAdapter",
 ]
