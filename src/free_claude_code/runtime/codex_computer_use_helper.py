@@ -12,9 +12,9 @@ from free_claude_code.runtime.codex_computer_use import (
     CodexComputerUsePaths,
     resolve_official_computer_use,
 )
-from free_claude_code.runtime.codex_computer_use_managed import (
-    ElicitationHandler,
-    ManagedCodexComputerUseBroker,
+from free_claude_code.runtime.codex_computer_use_managed import ElicitationHandler
+from free_claude_code.runtime.codex_computer_use_native_contract import (
+    ContractCheckedManagedCodexComputerUseBroker,
 )
 
 CODEX_COMPUTER_USE_HELPER_ID = "codex-computer-use"
@@ -27,7 +27,7 @@ MUTATING_COMPUTER_USE_METHODS = frozenset(COMPUTER_USE_METHODS) - (
 
 
 class CodexComputerUseHelperAdapter:
-    """Own one warm managed broker and expose the generic #104 helper callable."""
+    """Own one warm native-contract-checked broker for the generic helper seam."""
 
     def __init__(
         self,
@@ -37,7 +37,7 @@ class CodexComputerUseHelperAdapter:
     ) -> None:
         self._paths = paths
         self._elicitation_handler = elicitation_handler
-        self._broker: ManagedCodexComputerUseBroker | None = None
+        self._broker: ContractCheckedManagedCodexComputerUseBroker | None = None
         self._lock = threading.Lock()
 
     def close(self) -> None:
@@ -85,6 +85,16 @@ class CodexComputerUseHelperAdapter:
 
         return result
 
+    def controller_guidance(self) -> str:
+        """Return the installed official Computer Use skill for session-start injection."""
+
+        return self._get_broker().native_skill.text
+
+    def parity_receipt(self) -> dict[str, object]:
+        """Return content-free native schema/skill evidence for certification."""
+
+        return self._get_broker().parity_receipt()
+
     def approved_helper(
         self,
         *,
@@ -109,13 +119,13 @@ class CodexComputerUseHelperAdapter:
             mutating_operations=MUTATING_COMPUTER_USE_METHODS,
         )
 
-    def _get_broker(self) -> ManagedCodexComputerUseBroker:
+    def _get_broker(self) -> ContractCheckedManagedCodexComputerUseBroker:
         with self._lock:
             broker = self._broker
             if broker is not None and broker.started:
                 return broker
             paths = self._paths or resolve_official_computer_use()
-            broker = ManagedCodexComputerUseBroker(
+            broker = ContractCheckedManagedCodexComputerUseBroker(
                 paths,
                 elicitation_handler=self._elicitation_handler,
             )
