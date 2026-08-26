@@ -109,7 +109,7 @@ def test_native_result_returns_content_and_metadata_only_receipt(
         def execute_planned(self, *args: Any, **kwargs: Any) -> HelperExecutionResult:
             return _success_result(str(kwargs["operation"]))
 
-    setattr(server, "_executor", FakeExecutor())
+    server._executor = cast(Any, FakeExecutor())
     pending = _PendingCall(
         request_id=7,
         operation="list_apps",
@@ -159,7 +159,7 @@ def test_cancelled_mutation_is_reported_indeterminate_not_replayed(
             )
             raise HelperExecutionError("transport closed", receipt)
 
-    setattr(server, "_executor", CancellingExecutor())
+    server._executor = cast(Any, CancellingExecutor())
     try:
         server._execute_call(pending)
     finally:

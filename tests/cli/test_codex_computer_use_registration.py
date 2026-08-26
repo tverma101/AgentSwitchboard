@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -39,7 +40,9 @@ def test_ensure_adds_missing_local_registration_then_verifies(tmp_path: Path) ->
     python.write_text("", encoding="utf-8")
     responses = [
         _completed(1, stderr="No MCP server found with name: fcc-codex-computer-use"),
-        _completed(stdout="Added stdio MCP server fcc-codex-computer-use to local config"),
+        _completed(
+            stdout="Added stdio MCP server fcc-codex-computer-use to local config"
+        ),
         _completed(stdout=_details(python)),
     ]
 
@@ -112,7 +115,9 @@ def test_remove_only_deletes_exact_owned_local_entry(tmp_path: Path) -> None:
     python.write_text("", encoding="utf-8")
     responses = [
         _completed(stdout=_details(python)),
-        _completed(stdout="Removed MCP server fcc-codex-computer-use from local config"),
+        _completed(
+            stdout="Removed MCP server fcc-codex-computer-use from local config"
+        ),
     ]
 
     with patch.object(registration, "_run_claude_mcp", side_effect=responses) as run:
@@ -166,6 +171,7 @@ def test_cli_subcommands_are_noninteractive_and_terminal_dumb(tmp_path: Path) ->
     assert result.returncode == 1
     env = captured["env"]
     assert isinstance(env, dict)
+    env = cast(dict[str, str], env)
     assert env["TERM"] == "dumb"
     assert env["NO_COLOR"] == "1"
     assert captured["stdin"] is subprocess.DEVNULL
