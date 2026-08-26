@@ -91,10 +91,40 @@ def read_native_computer_use_skill(
     )
 
 
+def _property_signature(value: object) -> tuple[object, tuple[object, ...]]:
+    if not isinstance(value, Mapping):
+        return None, ()
+    enum = value.get("enum")
+    enum_values = tuple(enum) if isinstance(enum, list) else ()
+    return value.get("type"), enum_values
+
+
+def _schema_signature(schema: Mapping[str, Any]) -> dict[str, object]:
+    properties = schema.get("properties")
+    property_signatures = (
+        {
+            str(name): _property_signature(value)
+            for name, value in sorted(properties.items(), key=lambda item: str(item[0]))
+        }
+        if isinstance(properties, Mapping)
+        else {}
+    )
+    required = schema.get("required")
+    required_names = (
+        tuple(sorted(str(name) for name in required))
+        if isinstance(required, list)
+        else ()
+    )
+    return {
+        "properties": property_signatures,
+        "required": required_names,
+    }
+
+
 def native_contract_from_status(
     rows: list[Mapping[str, Any]],
 ) -> NativeComputerUseContract:
-    """Fingerprint native app-server schemas and compare fixed Luna field names."""
+    """Fingerprint native app-server schemas and compare the fixed Luna contract."""
 
     server = next((row for row in rows if row.get("name") == SERVER_NAME), None)
     if server is None:
@@ -124,25 +154,13 @@ def native_contract_from_status(
             "input_schema": native_schema,
         }
 
-        native_properties = native_schema.get("properties")
-        native_property_names = (
-            frozenset(str(name) for name in native_properties)
-            if isinstance(native_properties, Mapping)
-            else frozenset()
-        )
         luna_schema = luna_specs[method].get("input_schema")
-        luna_properties = (
-            luna_schema.get("properties") if isinstance(luna_schema, Mapping) else None
-        )
-        luna_property_names = (
-            frozenset(str(name) for name in luna_properties)
-            if isinstance(luna_properties, Mapping)
-            else frozenset()
-        )
-        if native_property_names != luna_property_names:
+        luna_schema_mapping = luna_schema if isinstance(luna_schema, Mapping) else {}
+        native_signature = _schema_signature(native_schema)
+        luna_signature = _schema_signature(luna_schema_mapping)
+        if native_signature != luna_signature:
             mismatches.append(
-                f"{method}:properties native={sorted(native_property_names)!r} "
-                f"luna={sorted(luna_property_names)!r}"
+                f"{method}:schema native={native_signature!r} luna={luna_signature!r}"
             )
 
     extra_tools = sorted(str(name) for name in tools if name not in COMPUTER_USE_METHODS)
