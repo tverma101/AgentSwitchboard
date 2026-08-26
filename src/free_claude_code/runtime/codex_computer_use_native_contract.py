@@ -77,7 +77,9 @@ def read_native_computer_use_skill(
     if not raw:
         raise CodexComputerUseError("bundled Computer Use SKILL.md is empty")
     if len(raw) > MAX_NATIVE_GUIDANCE_BYTES:
-        raise CodexComputerUseError("bundled Computer Use SKILL.md exceeds safety bound")
+        raise CodexComputerUseError(
+            "bundled Computer Use SKILL.md exceeds safety bound"
+        )
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -163,7 +165,9 @@ def native_contract_from_status(
                 f"{method}:schema native={native_signature!r} luna={luna_signature!r}"
             )
 
-    extra_tools = sorted(str(name) for name in tools if name not in COMPUTER_USE_METHODS)
+    extra_tools = sorted(
+        str(name) for name in tools if name not in COMPUTER_USE_METHODS
+    )
     if extra_tools:
         mismatches.append(f"unexpected-native-tools:{extra_tools!r}")
 
@@ -245,11 +249,11 @@ class ContractCheckedManagedCodexComputerUseBroker(ManagedCodexComputerUseBroker
 
 
 __all__ = [
-    "ContractCheckedManagedCodexComputerUseBroker",
     "MAX_NATIVE_GUIDANCE_BYTES",
+    "SKILL_RELATIVE_PATH",
+    "ContractCheckedManagedCodexComputerUseBroker",
     "NativeComputerUseContract",
     "NativeComputerUseSkill",
-    "SKILL_RELATIVE_PATH",
     "native_contract_from_status",
     "read_native_computer_use_skill",
 ]
