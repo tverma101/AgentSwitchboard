@@ -459,6 +459,15 @@ installed `fcc-browser` command exposes the same bounded operations:
 Every invocation requires `--allow-existing-session`; without it, no browser
 network call is attempted.
 
+For the approved-helper route, `PlaywrightCliBrowserAdapter` wraps the
+maintained Microsoft `playwright-cli` executable for an explicit, semantic
+browser surface. It is not enabled by default and never installs or discovers
+the executable. The helper supports session/tab inspection, navigation,
+snapshot/find, click/fill/type/keypress, scroll, console, screenshots, and
+bounded response-body downloads; it does not expose arbitrary JavaScript,
+cookies, storage, or arbitrary output paths. See
+[the Playwright browser helper contract](docs/PLAYWRIGHT_BROWSER_HELPER.md).
+
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
 

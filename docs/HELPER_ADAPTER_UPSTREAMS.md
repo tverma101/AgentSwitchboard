@@ -64,13 +64,44 @@ Retry, helper routing, and controller failover remain separate concepts. `attemp
 
 No Electron dependency, daemon, generic MCP process manager, browser runtime, computer runtime, or alternate provider router is added.
 
+### ADAPT — Microsoft Playwright CLI for #21
+
+The official `microsoft/playwright-cli` surface is wrapped by the opt-in
+`PlaywrightCliBrowserAdapter`. It is a command allowlist over the installed
+CLI, not a second CDP/Playwright implementation. The adapter uses the CLI's
+structured `--json` mode, named sessions, explicit attachment flags, and
+official semantic commands for snapshots, locators, navigation, input,
+console output, screenshots, and response-body downloads.
+
+The reviewed source pin is
+`60cb176373cf4400405122703e6de26cd58c7a1c` (`@playwright/cli` `0.1.18`,
+Apache-2.0). No source was copied. Microsoft `playwright-mcp` was also
+reviewed at `16cf228d7b02c07f800ec3423f471ec2a42d22a` (Apache-2.0); it remains
+reference/alternative integration evidence rather than a generic Harness MCP
+runtime. CLI was selected for this coding-agent adapter because the upstream
+skill documents its lower-context session workflow.
+
+The adapter never runs `npm`/`npx`, never enables persistent profiles by
+itself, and requires explicit opt-in for existing-browser attachment. Session
+and tab inventory remove profile paths and URL credentials/query/fragment data.
+Screenshots and downloads are marked as side-effecting for timeout receipts,
+so the generic helper executor will not replay them after transport loss.
+`run-code`, `eval`, cookies/storage, arbitrary network requests, and arbitrary
+output paths stay outside the allowlist. The existing `ChromeCdpBrowserBridge`
+remains a narrow fallback, not a second browser product.
+
 ## First concrete adapters
 
 The Codex Computer Use work in #102/#103 is the first target for this seam:
 
 `Luna -> #30 capability plan -> ApprovedHelperExecutor -> signed Codex Computer Use broker`
 
-The existing browser/Appshot/Fusion Vision adapters can use the same typed seam later without changing the router or execution contract.
+The #21 browser path now uses the same typed seam:
+
+`Luna -> #30 capability plan -> ApprovedHelperExecutor -> Playwright CLI -> browser`
+
+The existing `ChromeCdpBrowserBridge`, Appshot, and Fusion Vision adapters can
+remain bounded alternatives without changing the router or execution contract.
 
 ## Acceptance mapping for #45
 

@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from free_claude_code.application.capabilities import Capability
 from free_claude_code.application.helpers import ApprovedHelper
@@ -27,6 +27,7 @@ DEFAULT_PLAYWRIGHT_OUTPUT_BYTES = 2 * 1024 * 1024
 MAX_STDOUT_BYTES = 4 * 1024 * 1024
 MAX_STDERR_BYTES = 64 * 1024
 MAX_TEXT_ARGUMENT = 10_000
+MAX_REQUEST_INDEX = 100_000
 _SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _ATTACH_CHANNELS = frozenset({"chrome", "msedge"})
 
@@ -39,6 +40,7 @@ class PlaywrightCliOperation(StrEnum):
     """Fixed browser surface exposed through the approved-helper seam."""
 
     STATUS = "status"
+    LIST_TABS = "list_tabs"
     OPEN = "open"
     GOTO = "goto"
     SNAPSHOT = "snapshot"
@@ -50,20 +52,23 @@ class PlaywrightCliOperation(StrEnum):
     SCROLL = "scroll"
     CONSOLE = "console"
     SCREENSHOT = "screenshot"
+    DOWNLOAD = "download"
     CLOSE = "close"
 
 
 READ_ONLY_PLAYWRIGHT_OPERATIONS = frozenset(
     {
         PlaywrightCliOperation.STATUS.value,
+        PlaywrightCliOperation.LIST_TABS.value,
         PlaywrightCliOperation.SNAPSHOT.value,
         PlaywrightCliOperation.FIND.value,
         PlaywrightCliOperation.CONSOLE.value,
     }
 )
-MUTATING_PLAYWRIGHT_OPERATIONS = frozenset(
-    operation.value for operation in PlaywrightCliOperation
-) - READ_ONLY_PLAYWRIGHT_OPERATIONS
+MUTATING_PLAYWRIGHT_OPERATIONS = (
+    frozenset(operation.value for operation in PlaywrightCliOperation)
+    - READ_ONLY_PLAYWRIGHT_OPERATIONS
+)
 
 
 class PlaywrightAttachMode(StrEnum):
@@ -141,6 +146,16 @@ def _validate_url(value: object) -> str:
         raise PlaywrightCliBrowserError(
             "browser navigation only permits absolute http/https URLs"
         )
+    if parsed.username is not None or parsed.password is not None:
+        raise PlaywrightCliBrowserError(
+            "browser navigation URL must not contain credentials"
+        )
+    try:
+        _ = parsed.port
+    except ValueError as error:
+        raise PlaywrightCliBrowserError(
+            "browser navigation URL has an invalid port"
+        ) from error
     return url
 
 
@@ -177,6 +192,23 @@ def _optional_int(
     return value
 
 
+def _required_int(
+    arguments: Mapping[str, Any],
+    key: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = arguments.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PlaywrightCliBrowserError(f"browser argument {key!r} must be an integer")
+    if value < minimum or value > maximum:
+        raise PlaywrightCliBrowserError(
+            f"browser argument {key!r} must be between {minimum} and {maximum}"
+        )
+    return value
+
+
 def _bounded_number(arguments: Mapping[str, Any], key: str) -> float:
     value = arguments.get(key, 0)
     if isinstance(value, bool) or not isinstance(value, int | float):
@@ -200,6 +232,14 @@ def _validate_cdp_target(value: str) -> str:
         raise ValueError(
             "existing-browser CDP attachment must use chrome/msedge or a loopback endpoint"
         )
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("existing-browser CDP attachment must not contain credentials")
+    try:
+        _ = parsed.port
+    except ValueError as error:
+        raise ValueError(
+            "existing-browser CDP attachment has an invalid port"
+        ) from error
     return target
 
 
@@ -230,7 +270,47 @@ def _sanitize_list_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {"browsers": safe_browsers}
 
 
-def _sanitize_payload(operation: PlaywrightCliOperation, payload: Any) -> dict[str, Any]:
+def _sanitize_tab_list_text(value: object) -> object:
+    """Hide query strings, fragments, and URL credentials in tab inventory."""
+
+    if not isinstance(value, str):
+        return value
+    sanitized: list[str] = []
+    cursor = 0
+    while cursor < len(value):
+        start = value.find("http://", cursor)
+        https_start = value.find("https://", cursor)
+        starts = [position for position in (start, https_start) if position >= 0]
+        if not starts:
+            sanitized.append(value[cursor:])
+            break
+        start = min(starts)
+        sanitized.append(value[cursor:start])
+        end = start
+        while end < len(value) and value[end] not in " )]}>\n\r\t":
+            end += 1
+        raw_url = value[start:end]
+        try:
+            parsed = urlsplit(raw_url)
+            if not parsed.hostname:
+                raise ValueError
+            host = parsed.hostname
+            try:
+                port = parsed.port
+            except ValueError:
+                port = None
+            netloc = host if port is None else f"{host}:{port}"
+            safe_url = urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+        except ValueError:
+            safe_url = "[redacted-url]"
+        sanitized.append(safe_url)
+        cursor = end
+    return "".join(sanitized)
+
+
+def _sanitize_payload(
+    operation: PlaywrightCliOperation, payload: Any
+) -> dict[str, Any]:
     if operation is PlaywrightCliOperation.STATUS and isinstance(payload, Mapping):
         return _sanitize_list_payload(payload)
     if isinstance(payload, Mapping):
@@ -238,7 +318,11 @@ def _sanitize_payload(operation: PlaywrightCliOperation, payload: Any) -> dict[s
         # Process ids and attach endpoints are control-plane metadata, not page content.
         result.pop("pid", None)
         result.pop("endpoint", None)
+        if operation is PlaywrightCliOperation.LIST_TABS and "result" in result:
+            result["result"] = _sanitize_tab_list_text(result["result"])
         return result
+    if operation is PlaywrightCliOperation.LIST_TABS:
+        return {"result": _sanitize_tab_list_text(payload)}
     return {"result": payload}
 
 
@@ -272,7 +356,10 @@ class PlaywrightCliBrowserAdapter:
             raise ValueError("existing browser attachment requires explicit opt-in")
         if self.attach_mode is PlaywrightAttachMode.CDP and attach_target is not None:
             self.attach_target = _validate_cdp_target(attach_target)
-        if self.attach_mode is PlaywrightAttachMode.EXTENSION and attach_target not in _ATTACH_CHANNELS:
+        if (
+            self.attach_mode is PlaywrightAttachMode.EXTENSION
+            and attach_target not in _ATTACH_CHANNELS
+        ):
             raise ValueError("extension attachment supports only chrome or msedge")
 
     def approved_helper(
@@ -329,7 +416,9 @@ class PlaywrightCliBrowserAdapter:
         if self.attach_mode is None or self.attach_target is None:
             return
         if not self.allow_existing_session:
-            raise PlaywrightCliBrowserError("existing browser attachment is not authorized")
+            raise PlaywrightCliBrowserError(
+                "existing browser attachment is not authorized"
+            )
         if self.attach_mode is PlaywrightAttachMode.CDP:
             args = ["attach", f"--cdp={self.attach_target}"]
         else:
@@ -344,6 +433,8 @@ class PlaywrightCliBrowserAdapter:
     ) -> list[str]:
         if operation is PlaywrightCliOperation.STATUS:
             return ["list"]
+        if operation is PlaywrightCliOperation.LIST_TABS:
+            return ["tab-list"]
         if operation is PlaywrightCliOperation.OPEN:
             if self.attach_mode is not None:
                 raise PlaywrightCliBrowserError(
@@ -414,6 +505,14 @@ class PlaywrightCliBrowserAdapter:
             if arguments.get("hires") is True:
                 args.append("--hires")
             return args
+        if operation is PlaywrightCliOperation.DOWNLOAD:
+            request_index = _required_int(
+                arguments,
+                "request_index",
+                minimum=1,
+                maximum=MAX_REQUEST_INDEX,
+            )
+            return ["response-body", str(request_index)]
         if operation is PlaywrightCliOperation.CLOSE:
             return ["detach"] if self.attach_mode is not None else ["close"]
         raise AssertionError(f"unhandled browser operation: {operation}")
@@ -453,10 +552,12 @@ class PlaywrightCliBrowserAdapter:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     stdout, stderr = proc.communicate(timeout=0.5)
-                raise PlaywrightCliBrowserError("browser helper cancelled")
+                raise PlaywrightCliBrowserError("browser helper cancelled") from None
 
         if len(stdout.encode("utf-8", errors="replace")) > MAX_STDOUT_BYTES:
-            raise PlaywrightCliBrowserError("playwright-cli stdout exceeded the safety bound")
+            raise PlaywrightCliBrowserError(
+                "playwright-cli stdout exceeded the safety bound"
+            )
         if len(stderr.encode("utf-8", errors="replace")) > MAX_STDERR_BYTES:
             stderr = stderr[-MAX_STDERR_BYTES:]
         try:
@@ -471,9 +572,7 @@ class PlaywrightCliBrowserAdapter:
                 detail = f": {payload['error']}"
             elif stderr.strip():
                 detail = ": playwright-cli reported an error"
-            raise PlaywrightCliBrowserError(
-                f"playwright-cli command failed{detail}"
-            )
+            raise PlaywrightCliBrowserError(f"playwright-cli command failed{detail}")
         if isinstance(payload, Mapping) and payload.get("isError") is True:
             detail = payload.get("error")
             raise PlaywrightCliBrowserError(
