@@ -66,6 +66,11 @@ fcc-claude --profile coding
 FCC_LEARNING_PROFILE=school fcc-claude
 fcc-learning status --profile coding
 fcc-learning memory list --cwd /path/to/project --profile coding
+fcc-learning profile list
+fcc-learning profile create research
+fcc-learning profile rename research school
+fcc-learning profile archive school
+fcc-learning profile restore school
 ```
 
 `fcc-claude --profile` is consumed by the FCC launcher and is not forwarded to
@@ -74,6 +79,14 @@ UserPromptSubmit, and Stop hooks. A SessionStart hook announces the active
 profile in its context, and `fcc-learning status` reports the profile schema,
 version, and database path. Switching profiles under a live Claude process is
 not supported; start a new session instead.
+
+Named profile directories can be discovered and managed without opening the
+learning database. `profile rename` moves the directory atomically, while
+`profile archive` moves it to `~/.fcc/learning/profiles/.archive/` for local
+recovery; the default profile and the profile selected by the current
+`FCC_LEARNING_PROFILE` are protected from rename/archive. Profile list output
+marks the active profile and shows its database path. Use `status --profile`
+for memory, skill, and queue counts.
 
 ## Learning-model route
 

@@ -15,7 +15,14 @@ from free_claude_code.cli.launchers import claude
 from free_claude_code.learning import cli as learning_cli
 from free_claude_code.learning.config import (
     LearningProfileError,
+    archive_profile,
+    create_profile,
     extract_profile_argument,
+    list_profiles,
+    profile_database,
+    profile_home,
+    rename_profile,
+    restore_profile,
 )
 from free_claude_code.learning.engine import apply_learning_result
 from free_claude_code.learning.hooks import handle_session_start, run_hook
@@ -229,3 +236,70 @@ def test_profile_arguments_reject_invalid_and_duplicate_values() -> None:
         extract_profile_argument(["--profile", "../unsafe"])
     with pytest.raises(LearningProfileError, match="only once"):
         extract_profile_argument(["--profile", "coding", "--profile", "coding"])
+
+
+def test_profile_lifecycle_preserves_state_and_uses_recovery_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
+    monkeypatch.delenv("FCC_LEARNING_PROFILE", raising=False)
+
+    assert list_profiles() == ("default",)
+    assert create_profile(" Coding ") == "coding"
+    assert list_profiles() == ("coding", "default")
+    coding = LearningStore(profile="coding")
+    coding.remember(
+        scope="global",
+        project_key=str(tmp_path),
+        text="Keep coding state isolated.",
+        confidence=0.98,
+        source="user_explicit",
+    )
+
+    with pytest.raises(LearningProfileError, match="already exists"):
+        create_profile("coding")
+    with pytest.raises(LearningProfileError, match="default"):
+        rename_profile("default", "school")
+    with pytest.raises(LearningProfileError, match="differ"):
+        rename_profile("coding", "coding")
+
+    assert rename_profile("coding", "school") == "school"
+    assert not profile_home("coding").exists()
+    assert profile_database("school").exists()
+    assert LearningStore(profile="school").counts() == {"memories": 1, "skills": 0}
+
+    monkeypatch.setenv("FCC_LEARNING_PROFILE", "school")
+    with pytest.raises(LearningProfileError, match="active"):
+        archive_profile("school")
+    monkeypatch.delenv("FCC_LEARNING_PROFILE")
+
+    assert archive_profile("school") == "school"
+    assert not profile_home("school").exists()
+    assert list_profiles() == ("default",)
+    assert restore_profile("school") == "school"
+    assert list_profiles() == ("default", "school")
+    assert LearningStore(profile="school").counts() == {"memories": 1, "skills": 0}
+
+
+def test_profile_lifecycle_cli_surfaces_active_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
+    monkeypatch.delenv("FCC_LEARNING_PROFILE", raising=False)
+
+    def run(*args: str) -> dict[str, Any]:
+        monkeypatch.setattr(sys, "argv", ["fcc-learning", *args])
+        learning_cli.main()
+        return json.loads(capsys.readouterr().out)
+
+    assert run("profile", "create", "research") == {"created": "research"}
+    listed = run("profile", "list")
+    assert listed["active_profile"] == "default"
+    assert [row["profile"] for row in listed["profiles"]] == [
+        "default",
+        "research",
+    ]
+    assert listed["profiles"][0]["active"] is True
+    assert listed["profiles"][1]["active"] is False

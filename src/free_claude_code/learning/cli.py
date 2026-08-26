@@ -21,7 +21,17 @@ from free_claude_code.core.claude_compatibility import (
 )
 
 from .bundle import BundleError, export_from_store, import_bundle, inspect_bundle
-from .config import LearningProfileError
+from .config import (
+    LearningProfileError,
+    archive_profile,
+    configured_profile,
+    create_profile,
+    list_profiles,
+    profile_database,
+    profile_home,
+    rename_profile,
+    restore_profile,
+)
 from .context_policy import (
     context_policy_status,
     install_context_policy,
@@ -64,6 +74,25 @@ def _parser() -> argparse.ArgumentParser:
     subcommands.add_parser("uninstall", help="remove only FCC Learning hooks")
     status = subcommands.add_parser("status", help="show local learning state")
     _profile(status)
+
+    profile = subcommands.add_parser(
+        "profile", help="list or change isolated learning profiles"
+    )
+    profile_commands = profile.add_subparsers(dest="profile_command", required=True)
+    profile_commands.add_parser("list", help="list discovered profiles")
+    profile_create = profile_commands.add_parser("create", help="create a profile")
+    profile_create.add_argument("name")
+    profile_rename = profile_commands.add_parser("rename", help="rename a profile")
+    profile_rename.add_argument("name")
+    profile_rename.add_argument("new_name")
+    profile_archive = profile_commands.add_parser(
+        "archive", help="move a profile into the local recovery archive"
+    )
+    profile_archive.add_argument("name")
+    profile_restore = profile_commands.add_parser(
+        "restore", help="restore a profile from the local recovery archive"
+    )
+    profile_restore.add_argument("name")
 
     compatibility = subcommands.add_parser(
         "claude-compat",
@@ -235,6 +264,37 @@ def _skill_command(args: argparse.Namespace, store: LearningStore) -> None:
         )
 
 
+def _profile_command(args: argparse.Namespace) -> dict[str, object]:
+    if args.profile_command == "list":
+        active = configured_profile()
+        return {
+            "active_profile": active,
+            "profiles": [
+                {
+                    "profile": name,
+                    "active": name == active,
+                    "database": str(profile_database(name)),
+                    "exists": profile_home(name).exists(),
+                }
+                for name in list_profiles()
+            ],
+        }
+    if args.profile_command == "create":
+        return {"created": create_profile(args.name)}
+    if args.profile_command == "rename":
+        return {
+            "renamed": {
+                "from": args.name,
+                "to": rename_profile(args.name, args.new_name),
+            }
+        }
+    if args.profile_command == "archive":
+        return {"archived": archive_profile(args.name)}
+    if args.profile_command == "restore":
+        return {"restored": restore_profile(args.name)}
+    raise LearningProfileError("unknown profile command")
+
+
 def _context_artifact_root() -> str:
     configured = os.environ.get("FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR", "").strip()
     if not configured:
@@ -310,6 +370,14 @@ def main() -> None:
         try:
             result = inspect_bundle(Path(args.path))
         except BundleError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+
+    if args.command == "profile":
+        try:
+            result = _profile_command(args)
+        except LearningProfileError as exc:
             raise SystemExit(str(exc)) from exc
         print(json.dumps(result, indent=2, sort_keys=True))
         return
