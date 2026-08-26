@@ -145,13 +145,13 @@ def _start_interactive_owner(args: Sequence[str]) -> bool:
     run_owned_control_center(
         settings,
         initial_argv=args,
-        launch_claude=_run_control_claude,
+        launch_client=_launch_control_client,
     )
     return True
 
 
-def _run_control_claude(danger: bool, argv: Sequence[str] = ()) -> None:
-    """Launch Claude from the terminal control center without a module cycle."""
+def _launch_control_client(danger: bool, argv: Sequence[str]) -> None:
+    """Launch a Claude client selected by the terminal control callback."""
 
     launcher = launch_danger if danger else launch
     try:

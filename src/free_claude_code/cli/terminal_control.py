@@ -29,7 +29,7 @@ CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
 CODEX_STATUS_TIMEOUT_SECONDS = 5.0
 LOG_PREVIEW_LINES = 30
 _CODEX_API_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
-ClaudeLauncher = Callable[[bool, Sequence[str]], None]
+ControlClientLauncher = Callable[[bool, Sequence[str]], None]
 
 
 def terminal_control_available(
@@ -46,8 +46,8 @@ def terminal_control_available(
 def run_owned_control_center(
     settings: Settings,
     *,
+    launch_client: ControlClientLauncher,
     initial_argv: Sequence[str] | None = None,
-    launch_claude: ClaudeLauncher,
 ) -> None:
     """Own one FCC server worker while the terminal menu stays in foreground."""
 
@@ -63,11 +63,11 @@ def run_owned_control_center(
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
         if initial_argv is not None:
-            launch_claude(False, initial_argv)
+            launch_client(False, initial_argv)
         run_control_menu(
             settings,
             supervisor=supervisor,
-            launch_claude=launch_claude,
+            launch_client=launch_client,
         )
     finally:
         supervisor.request_stop()
@@ -77,18 +77,18 @@ def run_owned_control_center(
 def run_attached_control_center(
     settings: Settings,
     *,
-    launch_claude: ClaudeLauncher,
+    launch_client: ControlClientLauncher,
 ) -> None:
     """Use the terminal menu with an FCC server owned by another process."""
 
-    run_control_menu(settings, supervisor=None, launch_claude=launch_claude)
+    run_control_menu(settings, supervisor=None, launch_client=launch_client)
 
 
 def run_control_menu(
     settings: Settings,
     *,
     supervisor: ServerSupervisor | None,
-    launch_claude: ClaudeLauncher,
+    launch_client: ControlClientLauncher,
 ) -> None:
     """Run the intentionally small line-oriented FCC terminal menu."""
 
@@ -101,9 +101,9 @@ def run_control_menu(
             return
 
         if choice in {"", "c", "claude"}:
-            launch_claude(False, ())
+            launch_client(False, ())
         elif choice in {"d", "danger"}:
-            launch_claude(True, ())
+            launch_client(True, ())
         elif choice in {"x", "connect", "codex"}:
             _connect_codex()
         elif choice in {"p", "policy", "status"}:
