@@ -106,6 +106,52 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
     launch.assert_called_once_with(False, ())
 
 
+def test_control_menu_policy_command_prints_live_status() -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    with (
+        patch("builtins.input", side_effect=["p", "q"]),
+        patch.object(terminal_control, "_print_policy_status") as print_status,
+    ):
+        terminal_control.run_control_menu(
+            settings,
+            supervisor=None,
+            launch_claude=MagicMock(),
+        )
+
+    print_status.assert_called_once_with(settings)
+
+
+def test_policy_status_print_is_metadata_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    with patch.object(
+        terminal_control,
+        "get_admin_status",
+        return_value={
+            "session_policy": {
+                "controller_provider": "opencode_go",
+                "controller_model": "muse-spark-1.2-contributor",
+                "provider_policy_mode": "strict",
+                "capability_routing_mode": "smart_local",
+                "allowed_helpers": ["codex-computer-use"],
+                "paid_fallback": False,
+                "egress": {"counts": {}, "blocked_counts": {}},
+            }
+        },
+    ):
+        terminal_control._print_policy_status(settings)
+
+    output = capsys.readouterr().out
+    assert "opencode_go/muse-spark-1.2-contributor" in output
+    assert "codex-computer-use" in output
+    assert "strict" in output
+
+
 def test_attached_control_menu_refuses_to_claim_restart_ownership(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

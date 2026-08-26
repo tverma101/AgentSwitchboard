@@ -18,6 +18,9 @@ from .nim import NimSettings
 from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
 from .reasoning import ReasoningPreference
 
+_PROVIDER_POLICY_MODES = frozenset({"strict", "allow-listed", "diagnostic"})
+_CAPABILITY_ROUTING_MODES = frozenset({"strict", "smart_local", "smart_go", "custom"})
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -176,6 +179,26 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+
+    # ==================== Session provider/helper policy ====================
+    # These settings are captured into one immutable policy when a provider
+    # generation and its managed Claude sessions are started.
+    provider_policy_mode: str = Field(
+        default="strict",
+        validation_alias="FCC_PROVIDER_POLICY_MODE",
+    )
+    capability_routing_mode: str = Field(
+        default="strict",
+        validation_alias="FCC_CAPABILITY_ROUTING_MODE",
+    )
+    allowed_helper_ids: str = Field(
+        default="",
+        validation_alias="FCC_ALLOWED_HELPERS",
+    )
+    paid_fallback: bool = Field(
+        default=False,
+        validation_alias="FCC_PAID_FALLBACK",
+    )
 
     # ==================== Context-pressure governor ====================
     context_governor_enabled: bool = Field(
@@ -402,6 +425,26 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"LOG_LEVEL must be one of {sorted(valid)}, got {v!r}")
         return upper
+
+    @field_validator("provider_policy_mode")
+    @classmethod
+    def validate_provider_policy_mode(cls, value: str) -> str:
+        if value not in _PROVIDER_POLICY_MODES:
+            raise ValueError(
+                "FCC_PROVIDER_POLICY_MODE must be one of "
+                f"{sorted(_PROVIDER_POLICY_MODES)}, got {value!r}"
+            )
+        return value
+
+    @field_validator("capability_routing_mode")
+    @classmethod
+    def validate_capability_routing_mode(cls, value: str) -> str:
+        if value not in _CAPABILITY_ROUTING_MODES:
+            raise ValueError(
+                "FCC_CAPABILITY_ROUTING_MODE must be one of "
+                f"{sorted(_CAPABILITY_ROUTING_MODES)}, got {value!r}"
+            )
+        return value
 
     @field_validator("model_catalog_mode", mode="before")
     @classmethod

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -18,6 +18,7 @@ from free_claude_code.cli.local_admin import (
     LocalAdminError,
     apply_admin_values,
     get_admin_config,
+    get_admin_status,
 )
 from free_claude_code.config.paths import managed_env_path, server_log_path
 from free_claude_code.config.server_urls import local_proxy_root_url
@@ -105,6 +106,8 @@ def run_control_menu(
             launch_claude(True, ())
         elif choice in {"x", "connect", "codex"}:
             _connect_codex()
+        elif choice in {"p", "policy", "status"}:
+            _print_policy_status(settings)
         elif choice in {"s", "settings"}:
             _run_settings_menu(settings)
         elif choice in {"l", "logs"}:
@@ -121,7 +124,7 @@ def run_control_menu(
         elif choice in {"q", "quit", "exit"}:
             return
         else:
-            print("Unknown command. Use Enter/C, D, X, S, L, R, or Q.")
+            print("Unknown command. Use Enter/C, D, X, P, S, L, R, or Q.")
 
 
 def _print_home(
@@ -145,7 +148,44 @@ def _print_home(
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
     print()
     print("[Enter/C] Claude   [D] Danger   [X] Connect Codex")
-    print("[S] Settings       [L] Logs     [R] Restart   [Q] Quit")
+    print("[P] Policy status  [S] Settings  [L] Logs     [R] Restart   [Q] Quit")
+
+
+def _print_policy_status(settings: Settings) -> None:
+    """Print the live policy receipt only after an explicit terminal request."""
+
+    try:
+        status = get_admin_status(settings)
+    except LocalAdminError as exc:
+        print(f"Policy status unavailable: {exc}")
+        return
+    policy = status.get("session_policy")
+    if not isinstance(policy, Mapping):
+        print("Policy status unavailable: server did not publish a session policy.")
+        return
+    print()
+    print("Session policy")
+    print("--------------")
+    print(
+        "Controller    "
+        f"{policy.get('controller_provider')}/{policy.get('controller_model')}"
+    )
+    print(f"Provider mode {policy.get('provider_policy_mode')}")
+    print(f"Route mode    {policy.get('capability_routing_mode')}")
+    print(
+        "Helpers       "
+        f"{', '.join(_string_values(policy.get('allowed_helpers'))) or 'none'}"
+    )
+    print(f"Paid fallback {policy.get('paid_fallback')}")
+    egress = policy.get("egress")
+    if isinstance(egress, Mapping):
+        print(f"Egress        {json.dumps(egress, sort_keys=True)}")
+
+
+def _string_values(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in value)
 
 
 def _run_settings_menu(settings: Settings) -> None:
