@@ -6,17 +6,24 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TypedDict
 
 MCP_SERVER_NAME = "fcc-codex-computer-use"
 MCP_SERVER_MODULE = "free_claude_code.cli.codex_computer_use_mcp"
 MCP_COMMAND_TIMEOUT_SECONDS = 20.0
 
 
+class _LocalMcpSpec(TypedDict):
+    type: str
+    command: str
+    args: list[str]
+
+
 class ClaudeMcpRegistrationError(RuntimeError):
     """Raised when FCC cannot safely own its namespaced Claude MCP entry."""
 
 
-def local_mcp_spec(*, python_executable: str | Path = sys.executable) -> dict[str, object]:
+def local_mcp_spec(*, python_executable: str | Path = sys.executable) -> _LocalMcpSpec:
     """Return the deterministic stdio server config persisted by Claude itself."""
 
     executable = str(Path(python_executable).expanduser().resolve())
@@ -161,9 +168,9 @@ def _get_registration(
 
 def _require_owned_registration(
     actual: Mapping[str, str],
-    expected: Mapping[str, object],
+    expected: _LocalMcpSpec,
 ) -> None:
-    expected_args = " ".join(str(value) for value in expected["args"])
+    expected_args = " ".join(expected["args"])
     scope = actual.get("scope", "")
     matches = (
         scope.casefold().startswith("local")
