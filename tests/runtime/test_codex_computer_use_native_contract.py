@@ -1,7 +1,9 @@
 """Tests for native Computer Use schema/guidance drift evidence."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -31,8 +33,8 @@ def _paths(tmp_path: Path) -> CodexComputerUsePaths:
     return CodexComputerUsePaths(codex=codex, app=app, client=client)
 
 
-def _native_status() -> list[dict[str, object]]:
-    tools: dict[str, object] = {}
+def _native_status() -> list[Mapping[str, Any]]:
+    tools: dict[str, Any] = {}
     for spec in COMPUTER_USE_TOOL_SPECS:
         tools[str(spec["name"])] = {
             "description": spec["description"],
@@ -87,7 +89,7 @@ def test_native_skill_missing_or_oversized_fails_closed(tmp_path: Path) -> None:
     plugin_root = paths.codex.parent / PLUGIN_RELATIVE_PATH
     plugin_root.mkdir(parents=True)
 
-    with pytest.raises(CodexComputerUseError, match="SKILL.md was not found"):
+    with pytest.raises(CodexComputerUseError, match=r"SKILL\.md was not found"):
         read_native_computer_use_skill(paths)
 
     skill = plugin_root / SKILL_RELATIVE_PATH

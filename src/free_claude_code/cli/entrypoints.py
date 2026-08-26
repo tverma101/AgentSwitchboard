@@ -38,6 +38,7 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
 
     # Keep the server composition root off metadata-only command paths.
     from free_claude_code.cli import commands
+    from free_claude_code.cli.launchers.claude import launch_controlled
     from free_claude_code.cli.launchers.common import preflight_proxy
     from free_claude_code.cli.terminal_control import (
         run_attached_control_center,
@@ -51,7 +52,7 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
     preflight_error = preflight_proxy(local_proxy_root_url(settings))
     if preflight_error is None:
         if interactive:
-            run_attached_control_center(settings)
+            run_attached_control_center(settings, launch_claude=launch_controlled)
         else:
             print(
                 "FCC server is already running at "
@@ -69,7 +70,7 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
         raise SystemExit(1)
 
     if interactive:
-        run_owned_control_center(settings)
+        run_owned_control_center(settings, launch_claude=launch_controlled)
         return
 
     commands.serve()

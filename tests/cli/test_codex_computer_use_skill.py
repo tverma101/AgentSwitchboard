@@ -4,11 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from free_claude_code.cli.codex_computer_use_skill import (
-    CLAUDE_SKILL_NAME,
-    install_native_computer_use_skill,
-    remove_native_computer_use_skill,
-)
 from free_claude_code.runtime.codex_computer_use import (
     CodexComputerUseError,
     CodexComputerUsePaths,
@@ -16,6 +11,11 @@ from free_claude_code.runtime.codex_computer_use import (
 from free_claude_code.runtime.codex_computer_use_managed import PLUGIN_RELATIVE_PATH
 from free_claude_code.runtime.codex_computer_use_native_contract import (
     SKILL_RELATIVE_PATH,
+)
+from free_claude_code.runtime.codex_computer_use_skill import (
+    CLAUDE_SKILL_NAME,
+    install_native_computer_use_skill,
+    remove_native_computer_use_skill,
 )
 
 

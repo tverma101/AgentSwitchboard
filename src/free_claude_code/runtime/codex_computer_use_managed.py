@@ -278,7 +278,9 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
         self._native_tool_names = frozenset()
         self._native_auth_status = None
         self._elicitation_count = 0
-        self._temp = tempfile.TemporaryDirectory(prefix="fcc-codex-computer-use-managed.")
+        self._temp = tempfile.TemporaryDirectory(
+            prefix="fcc-codex-computer-use-managed."
+        )
         temp_root = Path(self._temp.name)
         work_dir = temp_root / "work"
         work_dir.mkdir(mode=0o700)
@@ -426,7 +428,9 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
             if isinstance(data, list):
                 rows.extend(item for item in data if isinstance(item, Mapping))
             next_cursor = result.get("nextCursor")
-            cursor = next_cursor if isinstance(next_cursor, str) and next_cursor else None
+            cursor = (
+                next_cursor if isinstance(next_cursor, str) and next_cursor else None
+            )
             if cursor is None:
                 break
         return rows
