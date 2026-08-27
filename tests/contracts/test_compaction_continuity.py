@@ -25,13 +25,35 @@ def _state() -> CompactionState:
         parent_session_id_hash="parent-session-hash",
         tool_call_ids=("call-1", "call-2"),
         tool_result_ids=("result-1", "result-2"),
+        tool_call_batches=(("call-1",), ("call-2",)),
+        tool_result_bindings=(
+            ("call-1", "result-1"),
+            ("call-2", "result-2"),
+        ),
         reasoning_state_type="opaque",
         reasoning_state_hash="reasoning-hash",
         media_count=1,
         media_type_hash="image/png",
+        media_disposition="preserved",
         learning_memory_ids=("memory-1",),
         skill_ids=("skill-1",),
         committed_tool_ids=("call-1",),
+        resume_state_hash="resume-state-hash",
+    )
+
+
+def _state_with_batches(
+    batches: tuple[tuple[str, ...], ...],
+) -> CompactionState:
+    call_ids = tuple(call_id for batch in batches for call_id in batch)
+    result_ids = tuple(f"result-{index}" for index in range(1, len(call_ids) + 1))
+    return replace(
+        _state(),
+        tool_call_ids=call_ids,
+        tool_result_ids=result_ids,
+        tool_call_batches=batches,
+        tool_result_bindings=tuple(zip(call_ids, result_ids, strict=True)),
+        committed_tool_ids=(call_ids[0],),
     )
 
 
@@ -45,6 +67,102 @@ def test_compaction_receipt_passes_when_structural_state_is_preserved() -> None:
     assert "prompt" not in serialized
     assert "content" not in serialized
     assert "reasoning-hash" in serialized
+
+
+@pytest.mark.parametrize(
+    "batches",
+    [
+        (("call-1",), ("call-2",)),
+        (("call-1", "call-2"),),
+    ],
+    ids=["sequential", "parallel"],
+)
+def test_tool_identity_and_batch_shape_survive_compact_and_resume(
+    batches: tuple[tuple[str, ...], ...],
+) -> None:
+    before = _state_with_batches(batches)
+    compacted = replace(before)
+    resumed = replace(compacted)
+
+    for left, right in ((before, compacted), (compacted, resumed)):
+        receipt = assert_compaction_continuity(left, right)
+        assert receipt["invariants"]["tool_call_batches_preserved"] is True
+        assert receipt["invariants"]["tool_result_bindings_preserved"] is True
+        assert receipt["invariants"]["tool_identity_shape_valid"] is True
+        assert receipt["invariants"]["resume_state_preserved"] is True
+
+
+def test_compaction_rejects_swapped_tool_result_identity() -> None:
+    after = replace(
+        _state(),
+        tool_result_bindings=(
+            ("call-1", "result-2"),
+            ("call-2", "result-1"),
+        ),
+    )
+
+    receipt = validate_compaction_continuity(_state(), after)
+
+    assert receipt["passed"] is False
+    assert receipt["invariants"]["tool_result_bindings_preserved"] is False
+    with pytest.raises(CompactionContinuityError, match="tool_result_bindings"):
+        assert_compaction_continuity(_state(), after)
+
+
+def test_compaction_rejects_sequential_parallel_shape_change() -> None:
+    before = _state_with_batches((("call-1", "call-2"),))
+    after = replace(before, tool_call_batches=(("call-1",), ("call-2",)))
+
+    receipt = validate_compaction_continuity(before, after)
+
+    assert receipt["passed"] is False
+    assert receipt["invariants"]["tool_call_batches_preserved"] is False
+    with pytest.raises(CompactionContinuityError, match="tool_call_batches"):
+        assert_compaction_continuity(before, after)
+
+
+def test_compaction_rejects_replayed_committed_side_effect() -> None:
+    after = replace(
+        _state(),
+        tool_call_ids=("call-1", "call-2", "call-1"),
+        tool_result_ids=("result-1", "result-2", "result-1-replay"),
+        tool_call_batches=(("call-1",), ("call-2",), ("call-1",)),
+        tool_result_bindings=(
+            ("call-1", "result-1"),
+            ("call-2", "result-2"),
+            ("call-1", "result-1-replay"),
+        ),
+    )
+
+    receipt = validate_compaction_continuity(_state(), after)
+
+    assert receipt["passed"] is False
+    assert receipt["invariants"]["committed_tools_not_replayed"] is False
+    assert receipt["invariants"]["tool_identity_shape_valid"] is False
+    with pytest.raises(CompactionContinuityError, match="committed_tools"):
+        assert_compaction_continuity(_state(), after)
+
+
+def test_resume_rejects_changed_opaque_continuation_state() -> None:
+    after = replace(_state(), resume_state_hash="different-resume-state")
+
+    receipt = validate_compaction_continuity(_state(), after)
+
+    assert receipt["passed"] is False
+    assert receipt["invariants"]["resume_state_preserved"] is False
+    with pytest.raises(CompactionContinuityError, match="resume_state"):
+        assert_compaction_continuity(_state(), after)
+
+
+def test_compaction_rejects_reasoning_state_type_changes() -> None:
+    after = replace(_state(), reasoning_state_type="visible_summary")
+
+    receipt = validate_compaction_continuity(_state(), after)
+
+    assert receipt["passed"] is False
+    assert receipt["invariants"]["reasoning_state_preserved"] is False
+    with pytest.raises(CompactionContinuityError, match="reasoning_state"):
+        assert_compaction_continuity(_state(), after)
 
 
 @pytest.mark.parametrize(
@@ -88,16 +206,28 @@ def test_compaction_receipt_rejects_semantic_regressions(
         assert_compaction_continuity(_state(), change)
 
 
-def test_compaction_state_parser_rejects_content_bearing_receipts() -> None:
+@pytest.mark.parametrize(
+    "field",
+    ["prompt", "reasoning", "reasoning_content", "encrypted_content", "data"],
+)
+def test_compaction_state_parser_rejects_content_bearing_receipts(field: str) -> None:
     with pytest.raises(ValueError, match="metadata-only"):
+        CompactionState.from_mapping({**_state().as_receipt(), field: "forbidden"})
+
+
+def test_compaction_state_parser_rejects_unknown_state_instead_of_dropping_it() -> None:
+    with pytest.raises(ValueError, match="unsupported compaction state fields"):
+        CompactionState.from_mapping(
+            {**_state().as_receipt(), "unsupported_state": "opaque-provider-blob"}
+        )
+
+
+def test_compaction_state_parser_rejects_unsupported_media_disposition() -> None:
+    with pytest.raises(ValueError, match="unsupported media disposition"):
         CompactionState.from_mapping(
             {
-                "provider": "opencode_go",
-                "model": "muse-spark-1.2-contributor",
-                "protocol": "responses",
-                "system_tool_schema_hash": "schema",
-                "message_shape_hash": "shape",
-                "prompt": "must not be persisted",
+                **_state().as_receipt(),
+                "media_disposition": "rejected",
             }
         )
 
@@ -118,8 +248,11 @@ def test_checked_in_synthetic_compaction_receipt_matches_the_gate() -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     before = CompactionState.from_mapping(payload["before"])
     after = CompactionState.from_mapping(payload["after"])
+    receipt = validate_compaction_continuity(before, after)
 
-    assert validate_compaction_continuity(before, after)["passed"] is True
+    assert payload["passed"] is True
+    assert receipt["passed"] is True
+    assert payload["invariants"] == receipt["invariants"]
 
 
 def test_checked_in_muse_auto_compact_receipt_is_current_and_metadata_only() -> None:
