@@ -66,6 +66,18 @@ def test_list_accounts_imports_live_auth_without_exposing_tokens(
         assert saved.stat().st_mode & 0o777 == 0o600
 
 
+def test_active_account_summary_reads_live_store_without_creating_profiles(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / ".codex"
+    _write_auth(home, _auth_payload("acct-1", "me@example.com"))
+
+    assert codex_accounts.active_account_summary(home=home) == (
+        "me@example.com (profile active)"
+    )
+    assert not codex_accounts.profiles_dir(home).exists()
+
+
 def test_select_account_snapshots_outgoing_auth_then_restores_target(
     tmp_path: Path,
 ) -> None:

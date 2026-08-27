@@ -291,6 +291,7 @@ async def test_normal_sequential_starts_remain_allowed_before_stop() -> None:
     processes = [_completed_process(104), _completed_process(105)]
 
     with (
+        patch("free_claude_code.cli.managed.session.enforce_claude_compatibility"),
         patch(
             "free_claude_code.cli.managed.session.asyncio.create_subprocess_exec",
             new=AsyncMock(side_effect=processes),

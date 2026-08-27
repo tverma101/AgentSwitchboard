@@ -56,20 +56,6 @@
               </div>
             </div>
 
-            <section
-              id="connectedAccountsSection"
-              class="provider-strip connected-accounts-strip"
-              aria-label="Connected accounts"
-              hidden
-            >
-              <div class="strip-header">
-                <div>
-                  <h3>Connected accounts</h3>
-                  <p>Use an existing subscription without storing credentials in .env.</p>
-                </div>
-              </div>
-              <div id="connectedAccountGrid" class="provider-grid"></div>
-            </section>
             <section class="provider-strip provider-status-strip" aria-label="Provider status">
               <div class="strip-header provider-list-heading">
                 <h3>Providers</h3>
@@ -138,6 +124,52 @@
               class="form-sections"
               aria-label="Provider configuration"
             ></div>
+          </section>
+
+          <section id="view-accounts" class="admin-view" data-view="accounts" hidden>
+            <section
+              id="fccProviderAccountSection"
+              class="provider-strip account-surface connected-accounts-strip"
+              aria-label="FCC Provider Account"
+            >
+              <div class="strip-header">
+                <div>
+                  <h3>FCC Provider Account</h3>
+                  <p>
+                    Used only by FCC's OpenAI/Codex provider. Stored in
+                    <code>~/.fcc/auth/openai.json</code>; it never changes Codex tool accounts.
+                  </p>
+                </div>
+              </div>
+              <div id="connectedAccountGrid" class="provider-grid"></div>
+            </section>
+
+            <section
+              id="codexToolAccountsSection"
+              class="provider-strip account-surface codex-tool-accounts-strip"
+              aria-label="Codex Tool Accounts"
+            >
+              <div class="strip-header">
+                <div>
+                  <h3>Codex Tool Accounts</h3>
+                  <p>
+                    Used only by installed Codex, Computer Use, and Browser helpers.
+                    Active auth is <code>~/.codex/auth.json</code>; saved profiles live under
+                    <code>~/.codex/accounts/profiles</code>.
+                  </p>
+                </div>
+                <div class="provider-actions">
+                  <button id="codexToolAccountAddButton" class="primary-button" type="button">Add</button>
+                  <button id="codexToolAccountUsageButton" class="secondary-button" type="button">Refresh usage</button>
+                </div>
+              </div>
+              <p id="codexToolAccountNotice" class="account-notice" aria-live="polite"></p>
+              <div id="codexToolAccountGrid" class="provider-grid"></div>
+              <p id="codexToolAccountEmptyState" class="provider-empty-state" hidden>
+                No Codex tool accounts are saved. Add one from a terminal with
+                <code>fcc accounts add &lt;profile&gt;</code>.
+              </p>
+            </section>
           </section>
 
           <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
