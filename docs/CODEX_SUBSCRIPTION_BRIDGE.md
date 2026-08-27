@@ -18,7 +18,7 @@ Keep Claude Code + Luna as the primary controller while allowing explicit, bound
 ## Authentication
 
 - Prefer Codex's own ChatGPT subscription sign-in and stored credentials.
-- Harness must not ask for, copy, store, or synthesize an OpenAI API key for this path.
+- AgentSwitchboard must not ask for, copy, store, or synthesize an OpenAI API key for this path.
 - When launching Codex subscription commands, remove `OPENAI_API_KEY` and `CODEX_API_KEY` from the child environment so unrelated API credentials cannot accidentally override the stored ChatGPT auth mode.
 - Connection is explicit user intent and must integrate with the shared provider/subscription isolation policy.
 
@@ -26,7 +26,7 @@ Keep Claude Code + Luna as the primary controller while allowing explicit, bound
 
 Do not copy or reimplement the Codex Computer Use runtime.
 
-The target is the installed OpenAI-managed Computer Use plugin/service used by the Codex desktop app. The signed helper has launch-context constraints on macOS, so Harness must not claim native parity by directly executing `SkyComputerUseClient` from an arbitrary parent process.
+The target is the installed OpenAI-managed Computer Use plugin/service used by the Codex desktop app. The signed helper has launch-context constraints on macOS, so AgentSwitchboard must not claim native parity by directly executing `SkyComputerUseClient` from an arbitrary parent process.
 
 Preferred order:
 
@@ -34,9 +34,9 @@ Preferred order:
 2. attach through the Codex-managed app/app-server/plugin host when that host exposes a stable local surface;
 3. reuse the exact managed Computer Use tool schemas/implementation;
 4. fail closed with a typed diagnostic when the managed host is unavailable or incompatible;
-5. keep Harness Appshot as screenshot-only fallback, not a fake replacement for full Computer Use.
+5. keep AgentSwitchboard Appshot as screenshot-only fallback, not a fake replacement for full Computer Use.
 
-Native-parity acceptance must compare the same installed Codex build/plugin through native Codex Desktop and through the Harness adapter for tool discovery, screenshots/AX state, click/type/scroll/key actions, permission behavior, cancellation, and error semantics.
+Native-parity acceptance must compare the same installed Codex build/plugin through native Codex Desktop and through the AgentSwitchboard adapter for tool discovery, screenshots/AX state, click/type/scroll/key actions, permission behavior, cancellation, and error semantics.
 
 ## Release boundary
 

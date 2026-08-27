@@ -11,6 +11,8 @@ DOCUMENTS = (
     ROOT / "README.md",
     ROOT / "ARCHITECTURE.md",
     ROOT / "CONTRIBUTING.md",
+    ROOT / "UPSTREAM.md",
+    ROOT / "THIRD_PARTY_NOTICES.md",
     *sorted((ROOT / "docs").glob("*.md")),
     ROOT / "smoke" / "README.md",
 )

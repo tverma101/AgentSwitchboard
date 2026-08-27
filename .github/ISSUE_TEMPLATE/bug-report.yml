@@ -1,5 +1,5 @@
 name: Bug report
-description: Report something that is not working in Free Claude Code.
+description: Report something that is not working in AgentSwitchboard.
 labels:
   - bug
 body:

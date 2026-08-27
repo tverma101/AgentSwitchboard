@@ -1,17 +1,17 @@
 # Upstream regression watch
 
 This is a small, manually refreshed registry of upstream router failures that
-map to a Harness protocol or client boundary. It is documentation and test
-provenance only: Harness never polls these trackers on the request hot path.
+map to an AgentSwitchboard protocol or client boundary. It is documentation and test
+provenance only: AgentSwitchboard never polls these trackers on the request hot path.
 
 The current entries were re-verified against the upstream issue bodies on
 2026-08-26. External reports are treated as failure-class references, not as
-fixtures to copy. Harness fixtures contain synthetic values only and store no
+fixtures to copy. AgentSwitchboard fixtures contain synthetic values only and store no
 prompts, tool arguments, responses, images, credentials, or provider bodies.
 
 ## Promoted regressions
 
-| Source | Upstream failure class | Harness invariant / deterministic owner | Status |
+| Source | Upstream failure class | AgentSwitchboard invariant / deterministic owner | Status |
 | --- | --- | --- | --- |
 | [CCR #1678](https://github.com/musistudio/claude-code-router/issues/1678), 2026-08-16 | Anthropic image blocks are silently dropped during Anthropic -> OpenAI conversion | `tests/core/openai_responses/test_provider_input.py::test_build_responses_provider_request_preserves_multiturn_protocol` proves a synthetic base64 image becomes `input_image`; the adjacent tool-result-media test fails loudly when that representation is unsupported rather than dropping it | Covered on `main` |
 | [CCR #1643](https://github.com/musistudio/claude-code-router/issues/1643), 2026-08-08 | Anthropic `tool_result.tool_use_id` loses association with the prior Responses call | `tests/core/openai_responses/test_provider_input.py::test_build_responses_provider_request_preserves_multiturn_protocol` proves `tool_use` -> `function_call.call_id` and matching `tool_result` -> `function_call_output.call_id` survive together | Covered on `main` |
@@ -36,7 +36,7 @@ of treating issue numbers as permanent shorthand for an assumed bug class.
 ## Refresh rule
 
 On a manual refresh, add an entry only when the report maps to a supported
-Harness boundary. Record the source URL/date, invariant, and the smallest
+AgentSwitchboard boundary. Record the source URL/date, invariant, and the smallest
 deterministic test or focused issue. Do not add an external issue merely
 because it is interesting, and do not turn a skipped live probe into a passing
 receipt.

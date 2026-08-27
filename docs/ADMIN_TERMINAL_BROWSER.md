@@ -1,6 +1,6 @@
 # Terminal-only FCC startup
 
-This personal fork does not launch a desktop browser, `terminal-browser`, or
+AgentSwitchboard does not launch a desktop browser, `terminal-browser`, or
 any other browser presentation for the local Admin surface. `fcc-server` is a
 terminal process and reports readiness in the terminal.
 

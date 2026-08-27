@@ -1,6 +1,6 @@
 # Approved helper adapter upstream decisions
 
-Issue #45 asks Harness to harvest only the useful Fusion MCP/ToolHub composition ideas without importing a second router, browser runtime, computer runtime, Electron shell, or generic autonomous orchestration layer.
+Issue #45 asks AgentSwitchboard to harvest only the useful Fusion MCP/ToolHub composition ideas without importing a second router, browser runtime, computer runtime, Electron shell, or generic autonomous orchestration layer.
 
 ## Primary upstream reviewed
 
@@ -22,13 +22,13 @@ The upstream MIT license is recorded in its root `LICENSE` at the source pin.
 
 ### ADAPT — one explicit helper registry
 
-Harness now has `ApprovedHelperRegistry`. Implementations are registered by repo/user-owned startup code and the registry can be frozen before a session. Registration is deterministic and exposes the existing `CapabilityHelper` metadata used by #30.
+AgentSwitchboard now has `ApprovedHelperRegistry`. Implementations are registered by repo/user-owned startup code and the registry can be frozen before a session. Registration is deterministic and exposes the existing `CapabilityHelper` metadata used by #30.
 
 This keeps the useful ToolHub idea — one place to describe available helpers — without allowing filesystem/network discovery to become authorization.
 
 ### REJECT — generic hot-path MCP discovery
 
-The upstream supports stdio, streamable HTTP and legacy SSE tool discovery. Harness does not need a generic remote-MCP crawler in the controller request path.
+The upstream supports stdio, streamable HTTP and legacy SSE tool discovery. AgentSwitchboard does not need a generic remote-MCP crawler in the controller request path.
 
 Transport discovery remains adapter-owned and outside Luna's hot/cacheable request path. An approved helper can internally use stdio or another reviewed transport, but mere discovery never registers or authorizes it.
 

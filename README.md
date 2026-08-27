@@ -2,8 +2,8 @@
 
 <h1>
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="assets/free-claude-code-wordmark-light.svg">
-    <img src="assets/free-claude-code-wordmark-dark.svg" alt="Free Claude Code" width="610">
+    <source media="(prefers-color-scheme: light)" srcset="assets/agent-switchboard-wordmark-light.svg">
+    <img src="assets/agent-switchboard-wordmark-dark.svg" alt="AgentSwitchboard" width="610">
   </picture>
 </h1>
 
@@ -19,31 +19,41 @@
 
 </div>
 
-## What Harness is
+## What AgentSwitchboard is
 
-Harness keeps the Claude Code client and terminal experience while routing its
-requests through a local FCC gateway:
+AgentSwitchboard is a provider-independent runtime, compatibility gateway, and
+local tool plane for coding agents. It keeps the Claude Code client and terminal
+experience while routing requests through a local FCC compatibility gateway:
 
 ```text
 Claude Code / fccdanger -> FCC -> selected provider protocol -> model
 ```
 
-The current personal release path is terminal-only. `fcc-server` opens the
+The current release path is terminal-first. `fcc-server` opens the
 Textual control center in an interactive terminal and reports local health and
 control endpoints; it never opens a desktop browser or launches a
 terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
-This repository is a personal Harness fork. The local release head is version
+This repository is the AgentSwitchboard project, substantially evolved from the
+upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
 `4.58.0`; examples below describe this checkout, not every feature proposed in
-the open design backlog. Live smoke receipts retain the package version that
-was installed when each receipt was captured; read the receipt's own metadata
-before treating it as evidence for a later release head.
+the open design backlog. The installed distribution and `fcc*`
+commands remain the legacy compatibility surface for now. Live smoke receipts
+retain the package version that was installed when each receipt was captured;
+read the receipt's own metadata before treating it as evidence for a later
+release head.
+
+AgentSwitchboard is an independent open-source project. It is not affiliated
+with or endorsed by Anthropic, OpenAI, or the Free Claude Code upstream project.
+Claude and Claude Code are trademarks of Anthropic. Codex and OpenAI are
+trademarks of OpenAI. See [upstream attribution](UPSTREAM.md) and
+[third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## What You Get
 
-- **Use Claude Code in the terminal.** Run `fcc-claude` or the personal
-  `fccdanger` launcher through the local FCC gateway.
+- **Use Claude Code in the terminal.** Run the legacy-compatible `fcc-claude`
+  or `fccdanger` launcher through the local FCC gateway.
 - **Choose a configured model.** Set an exact `provider/model` reference or a
   stable alias in FCC's managed environment file.
 - **Preserve coding-agent behavior.** The release path covers streaming text,
@@ -63,11 +73,11 @@ before treating it as evidence for a later release head.
 | **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
 | **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
-| **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
+| **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/AgentSwitchboard/issues/66). |
 
 <div align="center">
-  <img src="assets/pic.png" alt="Claude Code running with Free Claude Code" width="700">
-  <p><em>Claude Code running with FCC.</em></p>
+  <img src="assets/pic.png" alt="Claude Code running with AgentSwitchboard" width="700">
+  <p><em>Claude Code running with AgentSwitchboard's FCC compatibility gateway.</em></p>
 </div>
 
 ## Quick Start
@@ -96,19 +106,23 @@ Run:
 fcc-server
 ```
 
-Keep this terminal open. In this personal fork, use the terminal command as the
-canonical server lifecycle on macOS, Linux, and Windows. Desktop/tray support
+Keep this terminal open. In the current AgentSwitchboard release, use the
+terminal command as the canonical server lifecycle on macOS, Linux, and
+Windows. Desktop/tray support
 may exist in the package, but it is not the documented release path and does
 not change the terminal-only browser policy.
 
-To print the installed Free Claude Code version without starting the server,
-run `fcc-server --version`.
+To print the installed AgentSwitchboard compatibility version without starting
+the server, run `fcc-server --version`. The output still uses the legacy
+distribution name until the package migration is complete.
 
 Long-lived FCC commands publish descriptive process titles on macOS. Activity
-Monitor can therefore identify `Harness Server`, `Harness Desktop`, and the
-client launcher that owns a local session instead of showing only the embedded
-Python interpreter name. The title is observability metadata; child clients
-and parallel test workers remain separately measurable processes.
+Monitor can therefore identify the AgentSwitchboard server, desktop, and client
+launcher that owns a local session instead of showing only the embedded Python
+interpreter name. The title is observability metadata; existing compatibility
+installations may still expose legacy FCC labels until the runtime/packaging
+migration is completed. Child clients and parallel test workers remain
+separately measurable processes.
 
 Startup never launches a desktop browser or a terminal-browser child. The server
 reports its local control endpoint for explicit local clients:
@@ -193,7 +207,7 @@ Claude Code:
 fcc-claude
 ```
 
-For this personal fork's terminal-only, skip-permissions workflow:
+For AgentSwitchboard's terminal-only, skip-permissions workflow:
 
 ```bash
 fccdanger
@@ -286,7 +300,7 @@ completes a Bash marker through FCC/OpenCode Go/Muse. The earlier
 is retained as historical failed-probe evidence. The complete
 PASS/UNVERIFIED/SKIPPED map is in the
 [Claude compatibility matrix](smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
-### Emergency Harness CI on Codespaces
+### Emergency AgentSwitchboard CI on Codespaces
 
 Protected push, pull-request, and merge-group CI uses GitHub-hosted
 `ubuntu-latest` runners. It does not depend on a Mac runner or the
@@ -562,7 +576,7 @@ model_provider = "fcc"
 model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 
 [model_providers.fcc]
-name = "Free Claude Code"
+name = "AgentSwitchboard"
 base_url = "http://127.0.0.1:8082/v1"
 http_headers = { Authorization = "Bearer freecc" }
 wire_api = "responses"
@@ -583,7 +597,7 @@ model_provider = "fcc"
 model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 
 [model_providers.fcc]
-name = "Free Claude Code"
+name = "AgentSwitchboard"
 base_url = "http://127.0.0.1:8082/v1"
 http_headers = { Authorization = "Bearer freecc" }
 wire_api = "responses"
@@ -733,7 +747,7 @@ Stop every running FCC command before uninstalling.
 
 **Removes**
 
-- Free Claude Code's installed commands and managed state
+- AgentSwitchboard's installed legacy FCC commands and managed state
 - `~/.fcc/`
 
 **Keeps**
@@ -752,7 +766,7 @@ On Windows, run `scripts/uninstall.ps1` in PowerShell.
 
 ## Project Links
 
-- [Report bugs or request features](https://github.com/tverma101/Harness/issues)
+- [Report bugs or request features](https://github.com/tverma101/AgentSwitchboard/issues)
 - [Documentation index and release evidence](docs/README.md)
 - [Architecture and extension guide](ARCHITECTURE.md)
 - [Configuration reference](docs/CONFIGURATION.md)

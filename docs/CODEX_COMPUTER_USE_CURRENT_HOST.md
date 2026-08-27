@@ -37,16 +37,16 @@ Useful patterns adapted conceptually:
 - a lightweight live `list_apps` probe is the safest positive health check;
 - reload/retry can be reasonable for read-only health, but mutation replay needs a stronger side-effect boundary.
 
-Harness does not import OpenClaw runtime ownership or plugin mutation logic.
+AgentSwitchboard does not import OpenClaw runtime ownership or plugin mutation logic.
 
 ### iFurySt/open-codex-computer-use
 
 - source pin reviewed: `ead48da2032c69b892c89fd39d38fa587b4d6fbf`
 - reviewed `scripts/computer-use-cli/app_server.go` and sender-auth/version-history notes.
 
-Important compatibility warning: older observed Computer Use builds could list MCP tools through app-server while actual calls were rejected by service-side sender authorization. Binary existence and `tools/list` are therefore not sufficient native-parity evidence. Current Harness must require a positive managed-host probe on the installed build.
+Important compatibility warning: older observed Computer Use builds could list MCP tools through app-server while actual calls were rejected by service-side sender authorization. Binary existence and `tools/list` are therefore not sufficient native-parity evidence. Current AgentSwitchboard must require a positive managed-host probe on the installed build.
 
-## Harness implementation split
+## AgentSwitchboard implementation split
 
 `CodexComputerUseBroker` remains the isolated direct-client diagnostic path derived from the earlier MIT upstreams.
 

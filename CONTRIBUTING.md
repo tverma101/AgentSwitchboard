@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Free Claude Code. Keep changes focused, test the behavior you change, and preserve the public Claude Code and Codex workflows.
+Thanks for helping improve AgentSwitchboard. Keep changes focused, test the behavior you change, and preserve the public Claude Code and Codex workflows. The repository originated from Free Claude Code; retain that upstream attribution when touching derived code.
 
 ## Before Opening A Pull Request
 
@@ -15,8 +15,8 @@ Thanks for helping improve Free Claude Code. Keep changes focused, test the beha
 Install [uv](https://docs.astral.sh/uv/) and Python 3.14, then run directly from the checkout:
 
 ```bash
-git clone https://github.com/tverma101/Harness.git
-cd Harness
+git clone https://github.com/tverma101/AgentSwitchboard.git
+cd AgentSwitchboard
 uv python install 3.14.0
 uv run fcc-server
 ```

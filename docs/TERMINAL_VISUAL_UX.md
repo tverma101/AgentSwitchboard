@@ -3,7 +3,7 @@
 Status: current-source verified for local image presentation; this document
 does not claim Claude Code TUI or provider transport ownership.
 
-Harness keeps visual presentation outside Claude Code's upstream TUI. The local
+AgentSwitchboard keeps visual presentation outside Claude Code's upstream TUI. The local
 `fcc-attachment` companion validates one PNG, JPEG, or WebP source, prints a
 compact attachment card, and renders a thumbnail only when the current output
 terminal is explicitly recognized. The preview is terminal-local and does not
@@ -36,7 +36,7 @@ end-to-end transport contract.
 The preview probe fails closed when stdout is not a TTY, the session is SSH, or
 output is inside tmux or screen. Direct iTerm2 and Kitty sessions are
 recognized from their standard environment markers. Sixel markers are recorded
-as detected, but remain a metadata-card fallback because Harness does not
+as detected, but remain a metadata-card fallback because AgentSwitchboard does not
 implement a Sixel encoder.
 
 Supported-terminal thumbnails are capped at 512 KiB, downscaled before

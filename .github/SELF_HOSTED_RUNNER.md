@@ -1,7 +1,7 @@
-# Harness CI runner policy
+# AgentSwitchboard CI runner policy
 
 The protected `CI` workflow runs push, pull-request, and merge-group checks on
-GitHub-hosted `ubuntu-latest` runners. The workflow does not read the
+GitHub-hosted `ubuntu-latest` runners. The workflow does not read the legacy
 `HARNESS_RUNNER` repository variable, and the persistent Mac runner is not part
 of the normal execution path.
 
@@ -31,8 +31,9 @@ launch. The token is never stored in either repository.
 ## Local development observability
 
 Local Python entrypoints set descriptive operating-system process titles via
-`setproctitle`. Activity Monitor can therefore show names such as `Harness
-Server`, `Harness Desktop`, and `Harness CI pytest [gw0]` instead of treating
-every FCC or xdist process as an anonymous Python 3.14 process. xdist workers
-remain separate processes, so their CPU and memory still need to be summed when
-measuring a local test job.
+`setproctitle`. Activity Monitor should identify the AgentSwitchboard server,
+desktop, and CI worker instead of treating every FCC or xdist process as an
+anonymous Python 3.14 process. Existing compatibility installations may still
+expose legacy labels until the runtime/packaging migration is completed. xdist
+workers remain separate processes, so their CPU and memory still need to be
+summed when measuring a local test job.

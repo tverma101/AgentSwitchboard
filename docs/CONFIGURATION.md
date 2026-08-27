@@ -1,10 +1,15 @@
-# Harness configuration
+# AgentSwitchboard configuration
 
-This is the configuration reference for the terminal-only personal Harness
-fork. The server reads the repository `.env` first, then the managed user file
+This is the configuration reference for the terminal-only AgentSwitchboard
+release. The server reads the repository `.env` first, then the managed user file
 `~/.fcc/.env`, and finally an explicitly selected `FCC_ENV_FILE` when set.
 Later files override earlier files. Keep credentials in the managed file or an
 explicit private file; do not commit them.
+
+The `fcc*` commands, `FCC_*` environment variables, and `~/.fcc` paths are the
+current legacy compatibility surface. They remain documented so existing
+installations continue to work while AgentSwitchboard's public namespace is
+migrated separately.
 
 ## Minimal OpenCode Go / Muse setup
 

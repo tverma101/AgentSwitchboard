@@ -1,6 +1,8 @@
 # Claude Code gateway context policy
 
-FCC deliberately presents a bounded context window to Claude Code even when an upstream gateway model advertises a much larger native window.
+AgentSwitchboard's FCC compatibility layer deliberately presents a bounded
+context window to Claude Code even when an upstream gateway model advertises a
+much larger native window.
 
 ## Default
 

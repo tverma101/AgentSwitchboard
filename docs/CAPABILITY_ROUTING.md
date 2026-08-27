@@ -7,6 +7,9 @@
 > controller/helper orchestration described below remain planned work tracked
 > by #30 and the linked capability issues.
 
+This is the AgentSwitchboard capability-routing contract; the current `fcc*`
+surface remains the compatibility entrypoint while this design evolves.
+
 Tracks #30. This document defines the runtime contract for capability-aware
 routing. It intentionally does not change production routing by itself.
 
