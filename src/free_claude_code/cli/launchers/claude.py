@@ -51,6 +51,8 @@ def launch(argv: Sequence[str] | None = None) -> None:
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
     if error := preflight_proxy(proxy_root_url):
+        if _start_interactive_owner(args):
+            return
         print(
             f"Free Claude Code proxy is not reachable at {proxy_root_url}: {error}",
             file=sys.stderr,
@@ -107,6 +109,56 @@ def launch(argv: Sequence[str] | None = None) -> None:
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
     )
+
+
+def _start_interactive_owner(args: Sequence[str]) -> bool:
+    """Start an explicit in-process server owner for an interactive direct launch."""
+
+    from free_claude_code.cli import commands
+    from free_claude_code.cli.server_startup import server_port_is_occupied
+    from free_claude_code.cli.terminal_control import (
+        run_owned_control_center,
+        terminal_control_available,
+    )
+
+    if not terminal_control_available():
+        return False
+
+    # The client may have loaded Settings before a legacy env migration. Refresh
+    # through the same startup path as fcc-server so the owner and child agree.
+    get_settings.cache_clear()
+    settings = commands.load_server_settings()
+    proxy_root_url = local_proxy_root_url(settings)
+    if preflight_proxy(proxy_root_url) is None:
+        launch(args)
+        return True
+
+    if server_port_is_occupied(settings.host, settings.port):
+        print(
+            f"FCC cannot start: port {settings.port} is already in use, "
+            "but the service on it is not an FCC health endpoint.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    print("FCC server is not running; starting the terminal control center.")
+    run_owned_control_center(
+        settings,
+        initial_argv=args,
+        launch_client=_launch_control_client,
+    )
+    return True
+
+
+def _launch_control_client(danger: bool, argv: Sequence[str]) -> None:
+    """Launch a Claude client selected by the terminal control callback."""
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")
 
 
 def _firewall_environment(settings: object) -> dict[str, str]:
