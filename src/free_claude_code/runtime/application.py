@@ -29,12 +29,20 @@ from free_claude_code.config.admin.persistence import (
 )
 from free_claude_code.config.admin.status import provider_config_status
 from free_claude_code.config.admin.values import load_value_state
+from free_claude_code.config.custom_providers import (
+    CUSTOM_PROVIDERS_ENV,
+    parse_custom_provider_json,
+    remove_custom_provider_json,
+    sanitize_provider_id,
+    update_custom_provider_json,
+)
 from free_claude_code.config.env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
     process_env_key_is_effective,
 )
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
@@ -257,6 +265,66 @@ class ApplicationRuntime:
             "ok": True,
             "models": sorted(info.model_id for info in infos),
         }
+
+    def custom_provider_status(self) -> list[dict[str, Any]]:
+        """Return configured custom providers without exposing secrets."""
+        statuses = provider_config_status(load_value_state())
+        return [
+            status
+            for status in statuses
+            if status["provider_id"] not in PROVIDER_CATALOG
+        ]
+
+    async def apply_custom_provider(
+        self,
+        values: Mapping[str, Any],
+        *,
+        existing_provider_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate and persist one custom provider through the normal Admin path."""
+        raw = str(load_value_state().get(CUSTOM_PROVIDERS_ENV, {}).get("value", ""))
+        try:
+            updated = update_custom_provider_json(
+                raw,
+                values,
+                existing_provider_id=existing_provider_id,
+            )
+        except ValueError as exc:
+            return {
+                "applied": False,
+                "valid": False,
+                "errors": [str(exc)],
+                "pending_fields": [],
+            }
+        result = await self.apply_admin_config({CUSTOM_PROVIDERS_ENV: updated})
+        if result.get("applied"):
+            requested_id = existing_provider_id or values.get("id")
+            descriptor = next(
+                (
+                    item
+                    for item in parse_custom_provider_json(updated)
+                    if requested_id is not None
+                    and item.provider_id == sanitize_provider_id(requested_id)
+                ),
+                None,
+            )
+            if descriptor is not None:
+                result["provider"] = descriptor.public_dict()
+        return result
+
+    async def remove_custom_provider(self, provider_id: str) -> dict[str, Any]:
+        """Remove one custom provider through the normal restart-aware Admin path."""
+        raw = str(load_value_state().get(CUSTOM_PROVIDERS_ENV, {}).get("value", ""))
+        try:
+            updated = remove_custom_provider_json(raw, provider_id)
+        except ValueError as exc:
+            return {
+                "applied": False,
+                "valid": False,
+                "errors": [str(exc)],
+                "pending_fields": [],
+            }
+        return await self.apply_admin_config({CUSTOM_PROVIDERS_ENV: updated})
 
     async def refresh_models(self) -> ProviderModelRefreshResult:
         return await self.provider_manager.refresh_model_list_cache()

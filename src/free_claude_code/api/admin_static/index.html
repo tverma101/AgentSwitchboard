@@ -80,6 +80,59 @@
                 No providers match this filter.
               </p>
             </section>
+            <section class="provider-strip custom-provider-strip" aria-label="Custom providers">
+              <div class="strip-header provider-list-heading">
+                <div>
+                  <h3>Custom OpenAI-compatible providers</h3>
+                  <p>Add a bounded endpoint without changing Python code. Changes take effect after restart.</p>
+                </div>
+                <button id="customProviderAddButton" class="primary-button" type="button">Add custom provider</button>
+              </div>
+              <div id="customProviderGrid" class="provider-grid"></div>
+              <p id="customProviderEmptyState" class="provider-empty-state">No custom providers configured.</p>
+              <form id="customProviderForm" class="custom-provider-form" hidden>
+                <div class="section-heading">
+                  <div>
+                    <h3 id="customProviderFormTitle">Add custom provider</h3>
+                    <p>Remote endpoints require a key. Loopback endpoints may omit it.</p>
+                  </div>
+                </div>
+                <div class="field-grid">
+                  <label class="field">
+                    <span>Provider ID</span>
+                    <input id="customProviderId" name="id" type="text" required autocomplete="off" />
+                  </label>
+                  <label class="field">
+                    <span>Display name</span>
+                    <input id="customProviderName" name="display_name" type="text" required autocomplete="off" />
+                  </label>
+                  <label class="field">
+                    <span>Base URL</span>
+                    <input id="customProviderBaseUrl" name="base_url" type="url" required placeholder="https://example.test/v1" autocomplete="url" />
+                  </label>
+                  <label class="field">
+                    <span>API key</span>
+                    <input id="customProviderApiKey" name="api_key" type="password" placeholder="Leave blank to keep the existing key" autocomplete="new-password" />
+                  </label>
+                  <label class="field">
+                    <span>Proxy (optional)</span>
+                    <input id="customProviderProxy" name="proxy" type="url" placeholder="http://proxy.example.test:3128" autocomplete="off" />
+                  </label>
+                  <label class="field">
+                    <span>Explicit model IDs (comma-separated)</span>
+                    <input id="customProviderModels" name="models" type="text" placeholder="model-a, model-b" autocomplete="off" />
+                  </label>
+                </div>
+                <label class="custom-provider-local-toggle">
+                  <input id="customProviderLocal" name="local" type="checkbox" />
+                  <span>Classify this endpoint as local/custom-local</span>
+                </label>
+                <div class="provider-actions">
+                  <button class="primary-button" type="submit">Save provider</button>
+                  <button id="customProviderCancelButton" class="secondary-button" type="button">Cancel</button>
+                </div>
+              </form>
+            </section>
             <div
               id="providersSections"
               class="form-sections"
