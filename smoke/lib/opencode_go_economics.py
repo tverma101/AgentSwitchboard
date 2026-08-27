@@ -33,13 +33,24 @@ COMPACTION_ECONOMICS_PHASE_SEQUENCE = (
 )
 _RAW_RECEIPT_FIELDS = frozenset(
     {
-        "prompt",
-        "messages",
         "content",
-        "text",
+        "data",
         "input",
-        "response",
+        "messages",
         "output",
+        "prompt",
+        "response",
+        "tool_arguments",
+        "prompt_cache_key",
+        "session_id",
+        "cwd",
+        "working_directory",
+        "timestamp",
+        "request_id",
+        "turn_id",
+        "run_id",
+        "trace_id",
+        "text",
         "tool_result",
         "arguments",
         "image",
@@ -189,11 +200,7 @@ class GoUsage:
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> GoUsage:
-        leaked = sorted(_RAW_RECEIPT_FIELDS.intersection(value))
-        if leaked:
-            raise ValueError(
-                f"receipt must be metadata-only; forbidden fields: {leaked}"
-            )
+        _reject_raw_receipt_fields(value)
         required = (
             "model",
             "cache_read_tokens",
@@ -501,7 +508,7 @@ def stable_prefix_hash(request: dict[str, Any]) -> str:
 
 
 def _reject_raw_receipt_fields(value: dict[str, Any]) -> None:
-    raw_keys = sorted(_RAW_RECEIPT_KEYS.intersection(value))
+    raw_keys = sorted(_RAW_RECEIPT_FIELDS.intersection(value))
     if raw_keys:
         raise ValueError(
             "receipt rows must not contain raw content or unstable identity fields: "
