@@ -86,6 +86,7 @@ class ProviderModelCache:
                     accepted_image_types=info.accepted_image_types,
                     reasoning=info.reasoning,
                     capability_evidence=info.capability_evidence,
+                    capability_verification=info.capability_verification,
                 )
                 for info in sorted(
                     provider_infos.values(), key=lambda item: item.model_id

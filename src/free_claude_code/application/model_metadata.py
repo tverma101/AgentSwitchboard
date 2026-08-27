@@ -23,6 +23,62 @@ class CapabilityEvidenceStatus(StrEnum):
     ACCEPTED_BUT_UNVERIFIED = "accepted-but-unverified"
 
 
+class CapabilityVerificationStatus(StrEnum):
+    """Outcome of an explicit capability verification run."""
+
+    PASS = "pass"
+    FAIL = "fail"
+    SKIPPED = "skipped"
+    UNVERIFIED = "unverified"
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityVerification:
+    """Metadata-only explicit verification results, separate from capability truth.
+
+    A skipped or unverified live test is never positive evidence that a capability
+    works. Keeping verification results separate also prevents test execution
+    state from silently changing model routing policy.
+    """
+
+    statuses: tuple[tuple[str, CapabilityVerificationStatus], ...] = ()
+    evidence_source: str = "unknown"
+    observed_at: str | None = None
+    evidence_version: str | None = None
+    evidence_protocol: str | None = None
+
+    def status_for(self, capability: str) -> CapabilityVerificationStatus:
+        """Return the recorded verification result, or unverified if absent."""
+
+        for name, status in self.statuses:
+            if name == capability:
+                return status
+        return CapabilityVerificationStatus.UNVERIFIED
+
+    def is_positive_evidence(self, capability: str) -> bool:
+        """Return whether the capability has an explicit passing verification."""
+
+        return self.status_for(capability) is CapabilityVerificationStatus.PASS
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-safe diagnostic representation."""
+
+        return {
+            "statuses": {
+                capability: status.value for capability, status in self.statuses
+            },
+            "positive_evidence": sorted(
+                capability
+                for capability, status in self.statuses
+                if status is CapabilityVerificationStatus.PASS
+            ),
+            "evidence_source": self.evidence_source,
+            "observed_at": self.observed_at,
+            "evidence_version": self.evidence_version,
+            "evidence_protocol": self.evidence_protocol,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class CapabilityEvidence:
     """Metadata-only capability claims and their provenance."""
@@ -123,6 +179,9 @@ class ProviderModelInfo:
         default_factory=ReasoningCapabilityEvidence
     )
     capability_evidence: CapabilityEvidence = field(default_factory=CapabilityEvidence)
+    capability_verification: CapabilityVerification = field(
+        default_factory=CapabilityVerification
+    )
 
     def with_observed_at(self, observed_at: str) -> ProviderModelInfo:
         """Stamp the catalog observation time on general capability evidence."""
