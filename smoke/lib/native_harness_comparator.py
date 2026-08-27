@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from free_claude_code.core.fault_attribution import FaultConfidence, FaultDomain
 
@@ -73,9 +73,10 @@ class PathObservation:
 
         _reject_content_bearing_fields(value)
         scenario_id = _required_string(value, "scenario_id")
-        path = _required_string(value, "path")
-        if path not in {"native", "harness"}:
+        raw_path = _required_string(value, "path")
+        if raw_path not in {"native", "harness"}:
             raise ValueError("path must be 'native' or 'harness'")
+        path = cast(Literal["native", "harness"], raw_path)
         success = value.get("success")
         if not isinstance(success, bool):
             raise ValueError("success must be a boolean")
@@ -115,7 +116,7 @@ class PathObservation:
 
         return cls(
             scenario_id=scenario_id,
-            path=path,  # type: ignore[arg-type]
+            path=path,
             success=success,
             protocol=protocol,
             upstream_attempts=upstream_attempts,
