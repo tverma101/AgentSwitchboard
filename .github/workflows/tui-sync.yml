@@ -1,0 +1,34 @@
+name: TUI branch sync
+
+on:
+  push:
+    branches: [codex/textual-control-center]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Lock and format transplanted TUI
+        run: |
+          uv lock
+          uv sync --locked --dev
+          uv run ruff format src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
+          uv run ruff check --fix src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
+          uv run ty check src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
+      - name: Commit normalized branch
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add uv.lock src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
+          git commit -m "chore: normalize transplanted Textual control center"
+          git push
