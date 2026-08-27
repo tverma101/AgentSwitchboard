@@ -28,6 +28,7 @@ class FaultConfidence(StrEnum):
 
 
 _MAX_EVENT_TYPES = 4_096
+_REQUEST_METADATA_KEYS = frozenset({"metadata", "prompt_cache_key"})
 
 
 def canonical_hash(value: Any) -> str:
@@ -43,6 +44,21 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def request_shape_hash(body: dict[str, Any]) -> str:
+    """Hash logical request shape without cache/session metadata.
+
+    ``prompt_cache_key`` partitions provider cache state but is not part of the
+    prompt or request shape.  Arbitrary ``metadata`` is likewise excluded so
+    request correlation, timestamps, and other client bookkeeping cannot make
+    comparable native/Harness receipts look like different envelopes.
+    """
+
+    shape = {
+        key: value for key, value in body.items() if key not in _REQUEST_METADATA_KEYS
+    }
+    return canonical_hash(shape)
+
+
 def stable_prefix_hash(body: dict[str, Any]) -> str:
     """Hash the cacheable request prefix while excluding the conversation suffix."""
 
@@ -54,7 +70,6 @@ def stable_prefix_hash(body: dict[str, Any]) -> str:
             "system",
             "tools",
             "tool_choice",
-            "metadata",
         )
         if key in body
     }

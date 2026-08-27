@@ -45,4 +45,16 @@ fields, each stream receipt includes media and timing metadata:
 These fields are metadata only. Prompts, response text, tool arguments, media
 bytes, and provider credentials are not placed in the receipt. Request-shape,
 stable-prefix, tool-schema, and media-type hashes remain one-way identifiers for
-comparing controlled runs without retaining payloads.
+comparing controlled runs without retaining payloads. Request-shape and
+stable-prefix hashes deliberately exclude `metadata` and the Responses
+`prompt_cache_key`: those values partition cache state or carry client
+bookkeeping, but are not logical prompt shape. This keeps session affinity from
+making an otherwise identical native/Harness envelope appear different.
+
+Responses cache affinity is conservative and metadata-only. A normalized
+opaque caller key or persistent client session header may be forwarded when it
+passes the identifier guard; prompt text, paths, timestamps, secrets, and
+request-shaped identifiers are rejected. This is a source-level invariant,
+not a native-vs-Harness economic result: no cache-key promotion or parity claim
+is made without comparable live receipts containing cache read/write, uncached
+input, cost, TTFT, and retry evidence.
