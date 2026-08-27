@@ -227,7 +227,10 @@ new places to add unrelated behavior:
   Its usage normalizer maps provider cache reads, uncached input, and explicit
   cache-write counters into disjoint Anthropic usage buckets; a cache miss is
   never treated as a cache write. The Responses adapter applies the same
-  normalization and preserves an explicit upstream cache-write counter.
+  normalization and preserves an explicit upstream cache-write counter. Invalid
+  or incomplete cache breakdowns are omitted rather than combined with a total
+  prompt count, while the usage receipt keeps the routed provider and gateway
+  model attribution.
 - [providers/opencode_go/](src/free_claude_code/providers/opencode_go/) owns the
   documented OpenCode Go protocol manifest and native transports. Responses
   models use the protocol-neutral conversion and stream adapter; Messages
