@@ -84,6 +84,19 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
     commands.serve()
 
 
+def _launch_control_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
+    """Adapt the installed Claude launcher to the terminal-control callback."""
+
+    from free_claude_code.cli.launchers.claude import launch, launch_danger
+
+    launcher = launch_danger if danger else launch
+    try:
+        launcher(tuple(argv))
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude exited with status {exc.code}.")
+
+
 def _parse_server_options(args: Sequence[str]) -> bool | None:
     """Parse the small, side-effect-free option surface of ``fcc-server``."""
 
