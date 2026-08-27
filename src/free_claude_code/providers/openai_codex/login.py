@@ -109,8 +109,8 @@ class BrowserAuthorization:
                         )
                     )
                 return _callback_page(
-                    "Connected",
-                    "OpenAI is connected to Free Claude Code. You can close this tab.",
+                    "Authorization received",
+                    "CodeSwitchyard is finishing sign-in. Return to the terminal for final connection status.",
                     close_window=True,
                 )
 

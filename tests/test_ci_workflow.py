@@ -5,37 +5,29 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def test_ci_workflow_routes_only_trusted_pull_requests_to_self_hosted_runner() -> None:
+def test_ci_workflow_uses_hosted_runner_for_normal_ci() -> None:
     workflow = (_repo_root() / ".github" / "workflows" / "tests.yml").read_text(
         encoding="utf-8"
     )
+
     expected_runs_on = (
         "runs-on: ${{ github.event_name == 'workflow_dispatch' "
-        "&& inputs.runner_label || github.event_name == 'pull_request' "
-        "&& github.event.pull_request.head.repo.full_name != github.repository "
-        "&& 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}"
+        "&& inputs.runner_label || 'ubuntu-latest' }}"
     )
-
     assert workflow.count(expected_runs_on) == 2
     assert "workflow_dispatch:" in workflow
     assert "default: ubuntu-latest" in workflow
     assert "- harness-burst" in workflow
-    assert workflow.count("vars.HARNESS_RUNNER") == 2
-    assert (
-        "Never execute fork-controlled code on the persistent self-hosted runner."
-        in workflow
-    )
+    assert "vars.HARNESS_RUNNER" not in workflow
+    assert "harness-local" not in workflow
+    assert "self-hosted" not in workflow
     assert "enable-cache: false" in workflow
     assert "cache-python: false" in workflow
     assert workflow.count("uv run --no-sync") == 4
     assert workflow.count("uv sync --locked") == 1
-    assert (
-        'environment_path="$environment_root/${RUNNER_OS}-${RUNNER_ARCH}-py314"'
-        in workflow
-    )
-    assert 'UV_PROJECT_ENVIRONMENT="$environment_path"' in workflow
-    assert "PYTEST_XDIST_AUTO_NUM_WORKERS=6" in workflow
-    assert "hw.perflevel0.physicalcpu" in workflow
+    assert "Prepare project environment" in workflow
+    assert "Reuse warm Harness environment" not in workflow
+    assert "PYTEST_XDIST_AUTO_NUM_WORKERS=6" not in workflow
 
 
 def test_ci_processes_are_labeled_for_local_observability() -> None:

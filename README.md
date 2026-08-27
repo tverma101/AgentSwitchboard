@@ -29,14 +29,15 @@ experience while routing requests through a local FCC compatibility gateway:
 Claude Code / fccdanger -> FCC -> selected provider protocol -> model
 ```
 
-The current release path is terminal-only. `fcc-server` reports local health and
-control endpoints but never opens a desktop browser or launches a
+The current release path is terminal-first. `fcc-server` opens the
+Textual control center in an interactive terminal and reports local health and
+control endpoints; it never opens a desktop browser or launches a
 terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.57.0`; examples below describe this checkout, not every feature proposed in
+`4.58.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -68,7 +69,7 @@ trademarks of OpenAI. See [upstream attribution](UPSTREAM.md) and
 
 | Status | Current scope |
 | --- | --- |
-| **Current-source verified** | Terminal `fcc-server`/`fccdanger`, the local repo/profile control center with next-launch isolation and bundle transfer, fuzzy provider/model selection, secret-safe custom OpenAI-compatible provider CRUD, independent FCC provider and Codex Tool Account management, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
+| **Current-source verified** | Textual terminal `fcc-server`/`fccdanger`, the local repo/profile control center with next-launch isolation and bundle transfer, fuzzy provider/model selection, secret-safe custom OpenAI-compatible provider CRUD, independent FCC provider and Codex Tool Account management, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
 | **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
 | **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
@@ -301,9 +302,13 @@ PASS/UNVERIFIED/SKIPPED map is in the
 [Claude compatibility matrix](smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
 ### Emergency AgentSwitchboard CI on Codespaces
 
-The optional `fcc burst` command adds emergency compute when the Mac runner is
-overloaded or slow. It runs AgentSwitchboard's CI workflow on a temporary runner hosted
-by the minimal private repository `tverma101/Rumple`:
+Protected push, pull-request, and merge-group CI uses GitHub-hosted
+`ubuntu-latest` runners. It does not depend on a Mac runner or the
+`HARNESS_RUNNER` repository variable.
+
+The optional `fcc burst` command is a separate emergency path. It adds compute
+through a temporary runner hosted by the minimal private repository
+`tverma101/Rumple`:
 
 ```bash
 fcc burst --ref fix/my-branch
@@ -316,7 +321,7 @@ must already be pushed because GitHub Actions runs against the remote ref.
 Configure the `GH_OWNER`, `GH_REPOSITORY`, and `GH_TOKEN` Codespaces secrets
 described in the [Rumple setup](https://github.com/tverma101/Rumple) first.
 Use `fcc burst stop` to stop the selected Rumple Codespace on demand. This
-path does not change the normal `HARNESS_RUNNER` routing.
+explicit burst path does not change the normal GitHub-hosted CI routing.
 
 ### Inspect usage and model labels
 
