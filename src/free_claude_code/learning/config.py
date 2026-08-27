@@ -9,6 +9,7 @@ PROFILE_ENV = "FCC_LEARNING_PROFILE"
 DEFAULT_PROFILE = "default"
 PROFILE_SCHEMA = "fcc.learning.profile"
 PROFILE_VERSION = 1
+_PROFILE_ARCHIVE_DIR = ".archive"
 
 _PROFILE_RE = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,31})\Z")
 
@@ -58,6 +59,121 @@ def profile_database(profile: str | None = None) -> Path:
     """Return the SQLite path for one profile."""
 
     return profile_home(profile) / "learning.db"
+
+
+def list_profiles() -> tuple[str, ...]:
+    """Return the default profile and discovered named profile directories."""
+
+    profiles_root = learning_home() / "profiles"
+    names = {DEFAULT_PROFILE}
+    try:
+        entries = profiles_root.iterdir()
+    except FileNotFoundError:
+        return (DEFAULT_PROFILE,)
+    except OSError as exc:
+        raise LearningProfileError("cannot list learning profiles") from exc
+    for entry in entries:
+        if (
+            entry.name == _PROFILE_ARCHIVE_DIR
+            or entry.name.startswith(".")
+            or entry.is_symlink()
+            or not entry.is_dir()
+        ):
+            continue
+        try:
+            name = normalize_profile(entry.name)
+        except LearningProfileError:
+            continue
+        if name != DEFAULT_PROFILE:
+            names.add(name)
+    return tuple(sorted(names))
+
+
+def _named_profile_path(profile: str) -> tuple[str, Path]:
+    name = normalize_profile(profile)
+    if name == DEFAULT_PROFILE:
+        raise LearningProfileError("the default profile cannot be renamed or archived")
+    return name, learning_home() / "profiles" / name
+
+
+def _ensure_profile_is_not_active(name: str) -> None:
+    if configured_profile() == name:
+        raise LearningProfileError(
+            f"profile {name!r} is active; start a new session before changing it"
+        )
+
+
+def create_profile(profile: str) -> str:
+    """Create an empty named profile without initializing a learning database."""
+
+    name, path = _named_profile_path(profile)
+    if path.exists() or path.is_symlink():
+        raise LearningProfileError(f"profile already exists: {name}")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.mkdir()
+    except FileExistsError as exc:
+        raise LearningProfileError(f"profile already exists: {name}") from exc
+    except OSError as exc:
+        raise LearningProfileError(f"cannot create profile: {name}") from exc
+    return name
+
+
+def rename_profile(profile: str, new_profile: str) -> str:
+    """Atomically rename one inactive named profile without deleting its state."""
+
+    name, source = _named_profile_path(profile)
+    target_name, target = _named_profile_path(new_profile)
+    if name == target_name:
+        raise LearningProfileError("new profile name must differ from the old name")
+    _ensure_profile_is_not_active(name)
+    if source.is_symlink() or not source.is_dir():
+        raise LearningProfileError(f"profile does not exist: {name}")
+    if target.exists() or target.is_symlink():
+        raise LearningProfileError(f"profile already exists: {target_name}")
+    try:
+        source.rename(target)
+    except OSError as exc:
+        raise LearningProfileError(
+            f"cannot rename profile {name!r} to {target_name!r}"
+        ) from exc
+    return target_name
+
+
+def archive_profile(profile: str) -> str:
+    """Move one inactive named profile into its local recovery archive."""
+
+    name, source = _named_profile_path(profile)
+    _ensure_profile_is_not_active(name)
+    if source.is_symlink() or not source.is_dir():
+        raise LearningProfileError(f"profile does not exist: {name}")
+    archive_root = source.parent / _PROFILE_ARCHIVE_DIR
+    target = archive_root / name
+    if target.exists() or target.is_symlink():
+        raise LearningProfileError(f"archived profile already exists: {name}")
+    try:
+        archive_root.mkdir(parents=True, exist_ok=True)
+        source.rename(target)
+    except OSError as exc:
+        raise LearningProfileError(f"cannot archive profile: {name}") from exc
+    return name
+
+
+def restore_profile(profile: str) -> str:
+    """Restore one named profile from the local recovery archive."""
+
+    name, target = _named_profile_path(profile)
+    source = target.parent / _PROFILE_ARCHIVE_DIR / name
+    if source.is_symlink() or not source.is_dir():
+        raise LearningProfileError(f"archived profile does not exist: {name}")
+    if target.exists() or target.is_symlink():
+        raise LearningProfileError(f"profile already exists: {name}")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(target)
+    except OSError as exc:
+        raise LearningProfileError(f"cannot restore profile: {name}") from exc
+    return name
 
 
 def qualify_skill_key(skill_key: str, profile: str | None = None) -> str:
