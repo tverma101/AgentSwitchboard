@@ -141,7 +141,7 @@ def test_persist_requires_explicitly_supplied_candidate(
     assert len(registry.load()) == 1
 
 
-def test_subagent_hooks_inject_and_return_machine_dense_context(
+def test_subagent_hooks_inject_fallback_contract_without_parent_reinjection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -175,5 +175,4 @@ def test_subagent_hooks_inject_and_return_machine_dense_context(
         io.StringIO(json.dumps({"last_assistant_message": _ticket().compact()})),
     )
     run_hook("subagent-stop", profile="coding")
-    stop = json.loads(capsys.readouterr().out)
-    assert "X1|st=DONE" in stop["hookSpecificOutput"]["additionalContext"]
+    assert json.loads(capsys.readouterr().out) == {}
