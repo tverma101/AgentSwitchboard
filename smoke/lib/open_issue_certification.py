@@ -113,7 +113,7 @@ CERTIFICATION_STEPS: tuple[CertificationStep, ...] = (
             "pytest",
             "-n",
             "0",
-            "tests/learning/test_reviewer_scars.py",
+            "tests/learning/test_reviewer_scar_learning.py",
             "-q",
         ),
         description=(

@@ -1,7 +1,5 @@
 """Deterministic coverage for bounded reviewer/scar learning."""
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -53,9 +51,7 @@ def test_pack_selection_is_small_for_three_distinct_task_classes() -> None:
         ReviewerPack.IMPLEMENTATION_TRUTH,
         ReviewerPack.REDUNDANCY,
     )
-    assert select_reviewer_packs(
-        TaskFingerprint(operations=("performance",))
-    ) == (
+    assert select_reviewer_packs(TaskFingerprint(operations=("performance",))) == (
         ReviewerPack.EFFICIENCY,
         ReviewerPack.EDGE_CASES,
     )
@@ -68,9 +64,7 @@ def test_pack_selection_is_small_for_three_distinct_task_classes() -> None:
 
 
 def test_counterfactual_gate_defaults_to_drop() -> None:
-    decision = admit_scar_candidate(
-        _candidate(prevention=PreventionClass.NONE)
-    )
+    decision = admit_scar_candidate(_candidate(prevention=PreventionClass.NONE))
 
     assert decision.promote is False
     assert decision.reason == "no_concrete_prevented_pain"
