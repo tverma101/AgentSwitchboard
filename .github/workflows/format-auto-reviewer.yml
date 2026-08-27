@@ -1,6 +1,8 @@
 name: Reviewer formatter diff
 
 on:
+  push:
+    branches: [feat/auto-reviewer-scar-learning]
   pull_request:
     branches: [main]
 
