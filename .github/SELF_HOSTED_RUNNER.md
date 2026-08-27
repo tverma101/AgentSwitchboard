@@ -12,7 +12,22 @@ set, because their code is not trusted to run on the persistent Mac.
 The CI workflow disables `setup-uv`'s GitHub cache archive. The persistent
 self-hosted runner retains uv's filesystem cache between jobs, and archiving
 that cache in a post-job hook can block the only runner while it is serialized.
+Each quality matrix job exact-syncs a shared warm environment at:
+
+```text
+$HOME/.cache/harness-actions/venvs/${RUNNER_OS}-${RUNNER_ARCH}-py314
+```
+
+The checks use `uv run --no-sync` after that sync, avoiding repeated dependency
+resolution and virtual-environment setup across the serial matrix jobs.
 Hosted fallback remains correct without this optional cache.
+
+On the current 4-performance-core/6-efficiency-core Apple Silicon runner, the
+pytest job sets `PYTEST_XDIST_AUTO_NUM_WORKERS=6`. This uses pytest-xdist's
+supported auto-worker override and was measured against this repository's full
+suite; the default ten-worker setting was slower. The workflow keeps xdist's
+default `load` scheduler because this suite's local `worksteal` benchmark was
+slower.
 
 GitHub does not treat a self-hosted label and a GitHub-hosted label as an `OR`
 choice. If the local runner is offline while `HARNESS_RUNNER=harness-local`,
@@ -31,7 +46,14 @@ the persistent Mac runner.
 
 The runner is registered only for `tverma101/Harness`, with the custom label
 `harness-local`. It runs as the user LaunchAgent
-`com.tverma101.harness-actions-runner`.
+`com.tverma101.harness-actions-runner`. Keep the LaunchAgent's process type as
+`Interactive`; GitHub's macOS runner template uses that type so the persistent
+runner is not treated as a constrained background service.
+
+The runner application should be kept current. In particular, runner 2.336.0
+has open macOS ARM64 reports of process-spawn and finalization hangs; verify
+the installed version after runner updates and do not leave a known-bad
+version in service when a newer release is available.
 
 Check service state:
 

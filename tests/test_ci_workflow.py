@@ -22,6 +22,10 @@ def test_ci_workflow_routes_trusted_jobs_to_the_configured_runner() -> None:
     )
     assert "enable-cache: false" in workflow
     assert "cache-python: false" in workflow
+    assert workflow.count("uv run --no-sync") == 4
+    assert "uv sync --locked" in workflow
+    assert "PYTEST_XDIST_AUTO_NUM_WORKERS=6" in workflow
+    assert "hw.perflevel0.physicalcpu" in workflow
 
 
 def test_issue_validator_remains_on_hosted_runner() -> None:

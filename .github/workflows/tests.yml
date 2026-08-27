@@ -56,13 +56,13 @@ jobs:
       matrix:
         include:
           - id: ruff-format
-            run: uv run ruff format --check
+            run: uv run --no-sync ruff format --check
           - id: ruff-check
-            run: uv run ruff check
+            run: uv run --no-sync ruff check
           - id: ty
-            run: uv run ty check
+            run: uv run --no-sync ty check
           - id: pytest
-            run: uv run pytest -v --tb=short
+            run: uv run --no-sync pytest -v --tb=short
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -78,6 +78,32 @@ jobs:
           # Do not archive it in setup-uv's post-job hook and block the only runner.
           enable-cache: false
           cache-python: false
+
+      - name: Reuse warm Harness environment
+        shell: bash
+        run: |
+          environment_root="$HOME/.cache/harness-actions/venvs"
+          environment_path="$environment_root/${RUNNER_OS}-${RUNNER_ARCH}-py314"
+          mkdir -p "$environment_root"
+          echo "UV_PROJECT_ENVIRONMENT=$environment_path" >> "$GITHUB_ENV"
+          export UV_PROJECT_ENVIRONMENT="$environment_path"
+          uv sync --locked
+
+      - name: Tune pytest for the Apple Silicon runner
+        if: matrix.id == 'pytest'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ] && [ "$RUNNER_ARCH" = "ARM64" ]; then
+            performance_cores="$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || true)"
+            if [ "$performance_cores" = "4" ]; then
+              # This M4 class host is 4P+6E/16 GB. Six xdist workers beat
+              # xdist's ten-worker physical-core default for this suite.
+              echo "PYTEST_XDIST_AUTO_NUM_WORKERS=6" >> "$GITHUB_ENV"
+              echo "Using six xdist workers for a 4P+6E Apple Silicon host."
+              exit 0
+            fi
+          fi
+          echo "PYTEST_XDIST_AUTO_NUM_WORKERS=auto" >> "$GITHUB_ENV"
 
       - name: Run
         run: ${{ matrix.run }}
