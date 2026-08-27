@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
@@ -66,12 +67,16 @@ def run_client_process(
     binary_name: str,
     display_name: str,
     install_hint: str,
+    cwd: Path | None = None,
 ) -> None:
     """Run a client CLI command and mirror its exit code."""
 
     process: subprocess.Popen[bytes] | None = None
     try:
-        process = subprocess.Popen(command, env=dict(env))
+        if cwd is None:
+            process = subprocess.Popen(command, env=dict(env))
+        else:
+            process = subprocess.Popen(command, env=dict(env), cwd=str(cwd))
         if process.pid:
             register_pid(process.pid)
         return_code = process.wait()

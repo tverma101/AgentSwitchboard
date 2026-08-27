@@ -1,7 +1,6 @@
 """Tiny terminal picker for launching ``fccdanger`` in a local GitHub repo."""
 
 import argparse
-import curses
 import json
 import os
 import subprocess
@@ -10,6 +9,9 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import NoReturn
+
+from .selection import SelectionItem, choose_item
+from .selection import fuzzy_match as match_items
 
 _CACHE_MAX_AGE_SECONDS = 24 * 60 * 60
 _SKIP_DIRS = frozenset(
@@ -220,89 +222,44 @@ def cache_is_fresh(path: Path | None = None) -> bool:
 
 
 def fuzzy_match(repos: list[RepoEntry], query: str) -> list[RepoEntry]:
-    """Return repositories ranked by a cheap subsequence match."""
+    """Return repositories ranked by the shared terminal picker matcher."""
 
-    query = query.casefold().strip()
-    if not query:
-        return sorted(repos, key=lambda repo: (-repo.last_used, repo.name.casefold()))
-
-    scored: list[tuple[int, RepoEntry]] = []
-    for repo in repos:
-        haystack = f"{repo.name} {repo.remote} {repo.path}".casefold()
-        score = _subsequence_score(haystack, query)
-        if score is not None:
-            scored.append((score, repo))
-    scored.sort(key=lambda item: (item[0], -item[1].last_used, item[1].name.casefold()))
-    return [repo for _, repo in scored]
-
-
-def _subsequence_score(haystack: str, needle: str) -> int | None:
-    position = -1
-    score = 0
-    for character in needle:
-        next_position = haystack.find(character, position + 1)
-        if next_position < 0:
-            return None
-        score += next_position - position - 1
-        position = next_position
-    return score
+    matches = match_items(
+        [
+            SelectionItem(
+                item_id=repo.path,
+                label=repo.name,
+                detail=f"{repo.branch} {repo.display_path} {repo.remote}".strip(),
+                last_used=repo.last_used,
+            )
+            for repo in repos
+        ],
+        query,
+    )
+    by_path = {repo.path: repo for repo in repos}
+    return [by_path[item.item_id] for item in matches]
 
 
 def choose_repo(repos: list[RepoEntry], initial_query: str = "") -> RepoEntry | None:
-    """Open the tiny curses picker and return the selected repository."""
+    """Open the shared picker and return the selected repository."""
 
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        matches = fuzzy_match(repos, initial_query)
-        return matches[0] if matches else None
-    return curses.wrapper(_picker, repos, initial_query)
-
-
-def _picker(
-    screen: curses.window, repos: list[RepoEntry], initial_query: str
-) -> RepoEntry | None:
-    curses.curs_set(0)
-    screen.keypad(True)
-    query = initial_query
-    selected = 0
-
-    while True:
-        matches = fuzzy_match(repos, query)
-        selected = min(selected, max(0, len(matches) - 1))
-        screen.erase()
-        height, width = screen.getmaxyx()
-        screen.addnstr(0, 0, "Harness repos", max(1, width - 1))
-        screen.addnstr(1, 0, f"> {query}", max(1, width - 1))
-
-        visible_rows = max(1, height - 4)
-        for row, repo in enumerate(matches[:visible_rows]):
-            prefix = ">" if row == selected else " "
-            text = (
-                f"{prefix} {repo.name:<22.22} {repo.branch:<18.18} {repo.display_path}"
+    selected = choose_item(
+        [
+            SelectionItem(
+                item_id=repo.path,
+                label=repo.name,
+                detail=f"{repo.branch} {repo.display_path} {repo.remote}".strip(),
+                last_used=repo.last_used,
             )
-            screen.addnstr(row + 2, 0, text, max(1, width - 1))
-
-        footer = "type filter · ↑↓ move · enter launch · esc quit"
-        screen.addnstr(height - 1, 0, footer, max(1, width - 1))
-        screen.refresh()
-
-        key = screen.get_wch()
-        if key in ("\x1b", "\x03"):
-            return None
-        if key in ("\n", "\r", curses.KEY_ENTER):
-            return matches[selected] if matches else None
-        if key == curses.KEY_UP:
-            selected = max(0, selected - 1)
-            continue
-        if key == curses.KEY_DOWN:
-            selected = min(max(0, len(matches) - 1), selected + 1)
-            continue
-        if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-            query = query[:-1]
-            selected = 0
-            continue
-        if isinstance(key, str) and key.isprintable():
-            query += key
-            selected = 0
+            for repo in repos
+        ],
+        title="Harness repos",
+        initial_query=initial_query,
+        footer="type filter · ↑↓ move · enter launch · esc cancel",
+    )
+    if selected is None:
+        return None
+    return next((repo for repo in repos if repo.path == selected.item_id), None)
 
 
 def _mark_used(repos: list[RepoEntry], selected: RepoEntry) -> list[RepoEntry]:

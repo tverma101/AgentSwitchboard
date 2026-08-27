@@ -175,8 +175,9 @@ Bundle export/import operate on the explicitly selected learning store when
 `--skill-key` selectors; import accepts repeatable portable `--memory-key` and
 `--skill-key` selectors and reports the selected counts in its JSON result.
 This supports explicit selective cross-profile re-homing without copying raw
-SQLite state. Full history transfer and admin/App Mode profile selection remain
-follow-up work.
+SQLite state. The terminal control center exposes the same profile selection and
+bundle preview/transfer operations for the next launch; full history transfer
+and browser/Admin profile selection remain follow-up work.
 
 `fcc-claude` normally installs/repairs the hooks automatically, so manual `install` is usually unnecessary.
 

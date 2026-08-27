@@ -1,5 +1,6 @@
 """Behavior tests for the terminal FCC server control surface."""
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -279,6 +280,110 @@ def test_policy_status_print_is_metadata_only(
     assert "opencode_go/muse-spark-1.2-contributor" in output
     assert "codex-computer-use" in output
     assert "strict" in output
+
+
+def test_selected_profile_and_repo_are_forwarded_without_mutating_server_state(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import terminal_control
+    from free_claude_code.learning.config import PROFILE_ENV
+
+    repo = terminal_control.RepoEntry(
+        "selected",
+        str(tmp_path / "selected"),
+        "main",
+        "acme/selected",
+    )
+    launch = MagicMock()
+    with patch.dict("os.environ", {}, clear=False):
+        os.environ.pop(PROFILE_ENV, None)
+        terminal_control._launch_selected(
+            launch,
+            danger=True,
+            profile="coding",
+            repo=repo,
+        )
+
+    launch.assert_called_once_with(
+        True,
+        ("--profile", "coding"),
+        Path(repo.path),
+    )
+    assert PROFILE_ENV not in os.environ
+
+
+def test_profile_menu_selection_is_next_launch_only() -> None:
+    from free_claude_code.cli import terminal_control
+
+    with (
+        patch.object(
+            terminal_control, "list_profiles", return_value=("default", "coding")
+        ),
+        patch.object(terminal_control, "list_archived_profiles", return_value=()),
+        patch.object(terminal_control, "_choose_profile", return_value="coding"),
+        patch("builtins.input", side_effect=["s", "b"]),
+    ):
+        selected = terminal_control._run_profile_menu("default")
+
+    assert selected == "coding"
+
+
+def test_repo_menu_uses_cached_repo_picker_and_records_last_use(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    cache = tmp_path / "repos.json"
+    repo = terminal_control.RepoEntry(
+        "selected",
+        str(tmp_path / "selected"),
+        "main",
+        "acme/selected",
+    )
+    with (
+        patch.object(terminal_control, "cache_path", return_value=cache),
+        patch.object(terminal_control, "load_cached_repos", return_value=[repo]),
+        patch.object(terminal_control, "cache_is_fresh", return_value=True),
+        patch.object(terminal_control, "choose_repo", return_value=repo),
+        patch.object(terminal_control, "save_cached_repos") as save,
+        patch("builtins.input", return_value="s"),
+    ):
+        selected = terminal_control._run_repo_menu(None)
+
+    assert selected == repo
+    save.assert_called_once()
+    assert save.call_args.args[1] == cache
+
+
+def test_bundle_menu_previews_import_before_apply(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    bundle = tmp_path / "portable.bundle"
+    store = MagicMock()
+    preview = {
+        "selected": {"memories": 1, "skills": 0},
+        "actions": [{"kind": "memory", "key": "a" * 64, "action": "add"}],
+    }
+    applied = {**preview, "applied": {"memories": 1, "skills": 0}}
+    with (
+        patch.object(terminal_control, "project_identity", return_value="project"),
+        patch.object(terminal_control, "LearningStore", return_value=store),
+        patch.object(terminal_control, "claude_config_dir", return_value=tmp_path),
+        patch.object(
+            terminal_control, "import_bundle", side_effect=[preview, applied]
+        ) as imp,
+        patch(
+            "builtins.input",
+            side_effect=["i", str(bundle), "skip", "", "", "y", "b"],
+        ),
+    ):
+        terminal_control._run_bundle_menu("coding")
+
+    assert imp.call_count == 2
+    assert imp.call_args_list[0].kwargs["dry_run"] is True
+    assert imp.call_args_list[1].kwargs["dry_run"] is False
 
 
 def test_attached_control_menu_refuses_to_claim_restart_ownership(

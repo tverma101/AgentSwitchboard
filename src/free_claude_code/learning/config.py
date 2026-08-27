@@ -89,6 +89,29 @@ def list_profiles() -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def list_archived_profiles() -> tuple[str, ...]:
+    """Return named profiles available in the local recovery archive."""
+
+    archive_root = learning_home() / "profiles" / _PROFILE_ARCHIVE_DIR
+    names: set[str] = set()
+    try:
+        entries = archive_root.iterdir()
+    except FileNotFoundError:
+        return ()
+    except OSError as exc:
+        raise LearningProfileError("cannot list archived learning profiles") from exc
+    for entry in entries:
+        if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            name = normalize_profile(entry.name)
+        except LearningProfileError:
+            continue
+        if name != DEFAULT_PROFILE:
+            names.add(name)
+    return tuple(sorted(names))
+
+
 def _named_profile_path(profile: str) -> tuple[str, Path]:
     name = normalize_profile(profile)
     if name == DEFAULT_PROFILE:
