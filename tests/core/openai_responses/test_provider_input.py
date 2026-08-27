@@ -221,6 +221,82 @@ def test_responses_prompt_cache_key_ignores_unsafe_candidates() -> None:
     assert body["prompt_cache_key"] == "fallback-key"
 
 
+@pytest.mark.parametrize(
+    "unsafe_key",
+    [
+        "hello",
+        "Please summarize this private prompt",
+        "req_123456",
+        "turn-123456",
+        "2026-08-24T12:00:00Z",
+        "1724500000",
+        "/Users/example/project",
+        "sk-live-secret",
+        "my-secret-value",
+        "api_key_value",
+        "550e8400-e29b-41d4-a716-446655440000",
+    ],
+)
+def test_responses_prompt_cache_key_rejects_content_and_unstable_identifiers(
+    unsafe_key: str,
+) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "hello; Please summarize this private prompt",
+                }
+            ],
+            "prompt_cache_key": unsafe_key,
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert "prompt_cache_key" not in body
+
+
+def test_responses_prompt_cache_key_normalizes_stable_metadata_only_identity() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "prompt_cache_key": "  stable-session-key  ",
+            "metadata": {"timestamp": "2026-08-24T12:00:00Z"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["prompt_cache_key"] == "stable-session-key"
+    assert body["input"][0]["content"][0]["text"] == "hello"
+
+
+def test_responses_prompt_cache_key_uses_metadata_session_id_fallback() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "metadata": {"session_id": "metadata-session"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["prompt_cache_key"] == "metadata-session"
+
+
 def test_build_responses_provider_request_accepts_claude_client_controls() -> None:
     request = MessagesRequest.model_validate(
         {

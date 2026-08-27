@@ -290,6 +290,7 @@ def test_stable_prefix_hash_ignores_appended_suffix_but_detects_tool_reordering(
         "tools": [{"name": "Read"}, {"name": "Write"}],
         "cache_prefix": {"history": ["turn-1", "tool-result-1"]},
         "messages": [{"role": "user", "content": "next"}],
+        "metadata": {"session_id": "session-a", "timestamp": "2026-08-24"},
         "request_id": "volatile-1",
         "timestamp": "volatile-1",
     }
@@ -299,6 +300,7 @@ def test_stable_prefix_hash_ignores_appended_suffix_but_detects_tool_reordering(
             {"role": "user", "content": "next"},
             {"role": "user", "content": "appended"},
         ],
+        "metadata": {"session_id": "session-b", "timestamp": "2026-08-25"},
         "request_id": "volatile-2",
         "timestamp": "volatile-2",
     }
@@ -309,6 +311,29 @@ def test_stable_prefix_hash_ignores_appended_suffix_but_detects_tool_reordering(
 
     assert stable_prefix_hash(prefix) == stable_prefix_hash(next_turn)
     assert stable_prefix_hash(next_turn) != stable_prefix_hash(shuffled_tools)
+
+
+def test_receipt_loader_rejects_raw_content_and_unstable_identity_fields(
+    tmp_path,
+) -> None:
+    receipt = tmp_path / "unsafe-receipt.jsonl"
+    receipt.write_text(
+        json.dumps(
+            {
+                "model": "muse-spark-1.2-contributor",
+                "uncached_input_tokens": 1,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "output_tokens": 1,
+                "prompt": "private prompt text",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="raw content or unstable identity"):
+        load_receipt(receipt)
 
 
 def test_compare_receipts_reports_token_and_retry_amplification() -> None:

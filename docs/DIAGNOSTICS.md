@@ -53,3 +53,16 @@ inline byte totals, validated attachment metadata, and the selected provider
 reference; it never includes image URLs or base64 data. Invalid inline bytes,
 unsupported source types, unsafe URL schemes, and missing vision evidence fail
 before provider construction.
+Request-shape and
+stable-prefix hashes deliberately exclude `metadata` and the Responses
+`prompt_cache_key`: those values partition cache state or carry client
+bookkeeping, but are not logical prompt shape. This keeps session affinity from
+making an otherwise identical native/Harness envelope appear different.
+
+Responses cache affinity is conservative and metadata-only. A normalized
+opaque caller key or persistent client session header may be forwarded when it
+passes the identifier guard; prompt text, paths, timestamps, secrets, and
+request-shaped identifiers are rejected. This is a source-level invariant,
+not a native-vs-Harness economic result: no cache-key promotion or parity claim
+is made without comparable live receipts containing cache read/write, uncached
+input, cost, TTFT, and retry evidence.

@@ -17,6 +17,7 @@ from free_claude_code.core.visual_attachments import (
     validate_image_url,
 )
 
+from .cache_identity import select_prompt_cache_key
 from .errors import ResponsesConversionError
 
 _REASONING_SUMMARIES = frozenset({"auto", "concise", "detailed"})
@@ -66,6 +67,7 @@ def build_responses_provider_request(
         explicit=request.prompt_cache_key,
         session=prompt_cache_key or request.claude_session_id,
         metadata=request.metadata,
+        content_values=_request_text_values(request),
     ):
         body["prompt_cache_key"] = cache_key
     if instructions:
@@ -101,32 +103,19 @@ def build_responses_provider_request(
 
 def _select_prompt_cache_key(
     *,
-    explicit: str | None,
-    session: str | None,
+    explicit: object,
+    session: object,
     metadata: dict[str, Any] | None,
+    content_values: list[str],
 ) -> str | None:
-    """Choose a stable Responses affinity key without touching prompt input.
+    """Choose a safe metadata-only Responses affinity key."""
 
-    A caller-supplied key wins.  The session/header key is the normal Claude
-    Code path, and ``metadata.user_id`` is only a compatibility fallback for
-    clients that cannot forward a session header.  Invalid/non-string values
-    are ignored instead of becoming unstable cache identity.
-    """
-
-    for candidate in (explicit, session, _metadata_user_id(metadata)):
-        if not isinstance(candidate, str):
-            continue
-        normalized = candidate.strip()
-        if normalized and len(normalized) <= 512 and "\n" not in normalized:
-            return normalized
-    return None
-
-
-def _metadata_user_id(metadata: dict[str, Any] | None) -> str | None:
-    if metadata is None:
-        return None
-    user_id = metadata.get("user_id")
-    return user_id if isinstance(user_id, str) else None
+    return select_prompt_cache_key(
+        explicit=explicit,
+        session=session,
+        metadata=metadata,
+        content_values=content_values,
+    )
 
 
 def _validate_supported_request(request: MessagesRequest) -> None:
@@ -210,6 +199,33 @@ def _system_text(request: MessagesRequest) -> list[str]:
     if isinstance(request.system, str):
         return [request.system] if request.system else []
     return [part.text for part in request.system if part.text]
+
+
+def _request_text_values(request: MessagesRequest) -> list[str]:
+    """Collect text only to reject cache keys copied from request content."""
+
+    values = _system_text(request)
+    for message in request.messages:
+        if isinstance(message.content, str):
+            values.append(message.content)
+        else:
+            for block in message.content:
+                block_type = get_block_type(block)
+                if block_type == "text":
+                    text = get_block_attr(block, "text", "")
+                    if isinstance(text, str):
+                        values.append(text)
+                elif block_type == "thinking":
+                    thinking = get_block_attr(block, "thinking", "")
+                    if isinstance(thinking, str):
+                        values.append(thinking)
+                elif block_type == "tool_result":
+                    content = get_block_attr(block, "content")
+                    if isinstance(content, str):
+                        values.append(content)
+        if message.reasoning_content:
+            values.append(message.reasoning_content)
+    return values
 
 
 def _assistant_items(
