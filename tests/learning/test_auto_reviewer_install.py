@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from free_claude_code.learning.cli import _parser
 from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
 
 
@@ -30,3 +31,13 @@ def test_agent_hooks_install_with_exact_matchers_and_uninstall_cleanly(
     restored = json.loads(settings.read_text(encoding="utf-8"))
     assert "PreToolUse" not in restored.get("hooks", {})
     assert "PostToolUse" not in restored.get("hooks", {})
+
+
+def test_cli_accepts_events_emitted_by_agent_hook_installation() -> None:
+    parser = _parser()
+
+    for event in ("agent-pre", "agent-post"):
+        args = parser.parse_args(["hook", event, "--profile", "coding"])
+        assert args.command == "hook"
+        assert args.event == event
+        assert args.profile == "coding"

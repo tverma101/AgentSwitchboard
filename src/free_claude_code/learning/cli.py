@@ -257,7 +257,14 @@ def _parser() -> argparse.ArgumentParser:
     hook = subcommands.add_parser("hook", help=argparse.SUPPRESS)
     hook.add_argument(
         "event",
-        choices=("session-start", "user-prompt", "subagent-start", "subagent-stop"),
+        choices=(
+            "session-start",
+            "user-prompt",
+            "agent-pre",
+            "agent-post",
+            "subagent-start",
+            "subagent-stop",
+        ),
     )
     _profile(hook)
     return parser
