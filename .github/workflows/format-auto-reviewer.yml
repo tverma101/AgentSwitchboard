@@ -1,4 +1,4 @@
-name: Reviewer formatter fix
+name: Reviewer release finalize
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  fix:
+  finalize:
     runs-on: harness-local
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -27,60 +27,58 @@ jobs:
           echo "UV_PROJECT_ENVIRONMENT=$environment_path" >> "$GITHUB_ENV"
           export UV_PROJECT_ENVIRONMENT="$environment_path"
           uv sync --locked
-      - name: Apply diagnosed static fixes
+      - name: Finalize docs and release metadata
         shell: bash
         run: |
           uv run --no-sync python - <<'PY'
           from pathlib import Path
 
-          path = Path("src/free_claude_code/learning/auto_reviewer.py")
-          text = path.read_text()
-          replacements = {
-              "from contextlib import contextmanager\n": "from contextlib import contextmanager, suppress\n",
-              "from pathlib import Path\n": "",
-              "from typing import Any, Final\n": "from typing import Final\n",
-              '''    base_input = _base_agent_input(raw_input)\n    try:\n        plan = build_reviewer_plan(base_input, profile=profile)\n''': '''    input_mapping = {\n        key: value for key, value in raw_input.items() if isinstance(key, str)\n    }\n    response_mapping = {\n        key: value for key, value in raw_response.items() if isinstance(key, str)\n    }\n    base_input = _base_agent_input(input_mapping)\n    try:\n        plan = build_reviewer_plan(base_input, profile=profile)\n''',
-              '    status = raw_response.get("status")\n': '    status = response_mapping.get("status")\n',
-              '        agent_id = raw_response.get("agentId")\n': '        agent_id = response_mapping.get("agentId")\n',
-              '''        if isinstance(session_id, str) and isinstance(agent_id, str):\n            try:\n                PendingReviewerTasks(profile).save(session_id, agent_id, plan)\n            except OSError, ReviewerScarError:\n                pass\n''': '''        if isinstance(session_id, str) and isinstance(agent_id, str):\n            with suppress(OSError, ReviewerScarError):\n                PendingReviewerTasks(profile).save(session_id, agent_id, plan)\n''',
-              '    message = _agent_response_text(raw_response)\n': '    message = _agent_response_text(response_mapping)\n',
-              '                    key=lambda item: int(entries[item].get("created_at", 0)),\n': '                    key=lambda item: _created_at(entries[item]),\n',
-              '    return hashlib.sha256(f"{session_id}\\0{agent_id}".encode("utf-8")).hexdigest()[:24]\n': '    return hashlib.sha256(f"{session_id}\\0{agent_id}".encode()).hexdigest()[:24]\n',
-              '''def _string_tuple(value: object) -> tuple[str, ...]:\n    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):\n        return ()\n    return tuple(value)\n''': '''def _created_at(value: Mapping[str, object]) -> int:\n    created = value.get("created_at")\n    return created if isinstance(created, int) and not isinstance(created, bool) else 0\n\n\ndef _string_tuple(value: object) -> tuple[str, ...]:\n    if not isinstance(value, list):\n        return ()\n    return tuple(item for item in value if isinstance(item, str))\n''',
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise SystemExit(f"expected source fragment missing: {old[:80]!r}")
-              text = text.replace(old, new, 1)
-          path.write_text(text)
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old in text:
+                  file.write_text(text.replace(old, new, 1))
+              elif new not in text:
+                  raise SystemExit(f"missing expected release fragment in {path}: {old[:80]!r}")
+
+          replace_once("pyproject.toml", 'version = "4.56.0"', 'version = "4.57.0"')
+          replace_once("README.md", '`4.56.0`', '`4.57.0`')
+          replace_once(
+              "docs/CLAUDE_LEARNING.md",
+              "When `fcc-claude` starts successfully, FCC idempotently merges five hooks into the active Claude Code `settings.json` while preserving unrelated settings/hooks:",
+              "When `fcc-claude` starts successfully, FCC idempotently merges seven hooks into the active Claude Code `settings.json` while preserving unrelated settings/hooks:",
+          )
+          replace_once(
+              "docs/CLAUDE_LEARNING.md",
+              "- **UserPromptSubmit**: save the current prompt and inject the most relevant memories using deterministic token overlap + recency scoring.\n- **SubagentStart**: fingerprint the delegated task and inject only the selected compact reviewer-scar slice plus the bounded exit-ticket contract.",
+              "- **UserPromptSubmit**: save the current prompt and inject the most relevant memories using deterministic token overlap + recency scoring.\n- **PreToolUse(Agent)**: fingerprint the actual delegated Agent task, select the smallest relevant reviewer packs, and append only the bounded scar slice plus X1/A1 learning contract to that Agent prompt. It does not auto-approve the tool.\n- **PostToolUse(Agent)**: for a completed foreground Agent, validate its X1 result plus optional A1 scar candidate, return the compact result to the parent, and automatically persist only a candidate that passes the existing counterfactual gate. Background launches store only a short-lived metadata-only task plan.\n- **SubagentStart**: retain a small fallback reviewer/exit-ticket contract for direct subagent lifecycle events; task-specific Agent selection is owned by PreToolUse where the real delegated prompt exists.",
+          )
+          replace_once(
+              "docs/CLAUDE_LEARNING.md",
+              "Reviewer hooks are advisory and non-critical. A missing or malformed X1 ticket is\nreported to the parent as `UNVERIFIED`; it does not persist the worker message or\nsilently promote a scar. An explicitly supplied candidate must still pass the\nexisting counterfactual admission gate before a caller persists it.",
+              "Reviewer hooks are advisory and non-critical. A missing or malformed X1 ticket, a missing/malformed A1 candidate, `learn=0`, failed work, an unselected reviewer pack, mismatched task scope/evidence, or weak verification all default to **DROP**. Foreground Agent results are learned at PostToolUse; background Agent launches keep only hashed session/agent identity plus task fingerprint/pack metadata until SubagentStop. Neither path stores the subagent transcript. A1 may persist only when its pack is task-selected, its condition/rule/evidence bind exactly to X1, and the existing counterfactual admission gate accepts the prevented-pain claim.",
+          )
+          replace_once(
+              "docs/CLAUDE_LEARNING.md",
+              "~/.fcc/learning/reviewer-packs.json\n```",
+              "~/.fcc/learning/reviewer-packs.json\n~/.fcc/learning/reviewer-pending.json  # short-lived background Agent metadata only\n```",
+          )
           PY
-      - name: Ruff normalize
+          uv lock
+          uv run --no-sync ruff format tests/learning/test_auto_reviewer_install.py
+          uv run --no-sync ruff check tests/learning/test_auto_reviewer_install.py
+          uv run --no-sync ty check \
+            src/free_claude_code/learning/auto_reviewer.py \
+            src/free_claude_code/learning/hooks.py
+      - name: Commit release cleanup
         shell: bash
         run: |
-          uv run --no-sync ruff format \
-            src/free_claude_code/learning/auto_reviewer.py \
-            src/free_claude_code/learning/hooks.py \
-            tests/learning/test_auto_reviewer.py
-          uv run --no-sync ruff check --fix \
-            src/free_claude_code/learning/auto_reviewer.py \
-            src/free_claude_code/learning/hooks.py \
-            tests/learning/test_auto_reviewer.py
-          uv run --no-sync ty check src/free_claude_code/learning/auto_reviewer.py
-      - name: Commit normalized files
-        shell: bash
-        run: |
-          if git diff --quiet -- \
-            src/free_claude_code/learning/auto_reviewer.py \
-            src/free_claude_code/learning/hooks.py \
-            tests/learning/test_auto_reviewer.py; then
-            echo "No normalization changes needed."
+          if git diff --quiet; then
+            echo "No release cleanup changes needed."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            src/free_claude_code/learning/auto_reviewer.py \
-            src/free_claude_code/learning/hooks.py \
-            tests/learning/test_auto_reviewer.py
-          git commit -m "style: normalize automatic reviewer learning"
+          git add README.md docs/CLAUDE_LEARNING.md pyproject.toml uv.lock tests/learning/test_auto_reviewer_install.py
+          git commit -m "chore: finalize automatic reviewer learning release"
           git push origin HEAD:feat/auto-reviewer-scar-learning
