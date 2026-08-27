@@ -22,6 +22,14 @@ The checks use `uv run --no-sync` after that sync, avoiding repeated dependency
 resolution and virtual-environment setup across the serial matrix jobs.
 Hosted fallback remains correct without this optional cache.
 
+The local Python entrypoints set descriptive operating-system process titles via
+`setproctitle`. Activity Monitor should therefore show names such as `Harness
+Server`, `Harness Desktop`, and `Harness CI pytest [gw0]` instead of treating
+every FCC or xdist process as an anonymous Python 3.14 process. xdist workers
+remain separate processes so their CPU and memory still need to be summed when
+measuring a test job; this change labels the work and does not hide or merge
+resource usage. External Node-based clients keep their own process names.
+
 On the current 4-performance-core/6-efficiency-core Apple Silicon runner, the
 pytest job sets `PYTEST_XDIST_AUTO_NUM_WORKERS=6`. This uses pytest-xdist's
 supported auto-worker override and was measured against this repository's full

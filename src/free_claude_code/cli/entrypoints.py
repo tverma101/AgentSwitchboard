@@ -8,6 +8,7 @@ from pathlib import Path
 from free_claude_code.cli.server_startup import (
     server_port_is_occupied as _server_port_is_occupied,
 )
+from free_claude_code.core.process_identity import set_process_identity
 from free_claude_code.core.version import package_version
 from free_claude_code.learning.config import (
     PROFILE_ENV,
@@ -31,6 +32,7 @@ def serve(argv: Sequence[str] | None = None) -> None:
     if profile is not None:
         os.environ[PROFILE_ENV] = profile
     _parse_server_options(remaining)
+    set_process_identity("Server")
     if "--headless" in remaining:
         _run_server_entrypoint(headless=True)
     else:
