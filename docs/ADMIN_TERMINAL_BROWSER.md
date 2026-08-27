@@ -54,3 +54,7 @@ Codex ChatGPT subscription profiles are managed separately with `fcc accounts`.
 That command lists, switches, refreshes, adds, and forgets private local auth
 snapshots without logging out an upstream account; selections apply only to
 new Codex/helper sessions.
+
+From the terminal control-center home, press `A` (or enter `accounts` or
+`subscriptions`) to open that same account surface; `P` remains the provider
+menu.
