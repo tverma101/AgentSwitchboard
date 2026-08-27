@@ -10,9 +10,120 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 PRICING_SOURCE_DATE = "2026-08-23"
 PRICING_SOURCE_URL = "https://dev.opencode.ai/docs/go/"
-COMPACTION_PHASES = frozenset({"pre_compact", "compact_turn", "post_compact", "resume"})
+COMPACTION_PHASES = frozenset(
+    {
+        "pre_compact",
+        "compact_turn",
+        "post_compact",
+        "mature_post_compact",
+        "resume",
+    }
+)
+COMPACTION_ECONOMICS_SCHEMA = "fcc.compaction-economics.v1"
+COMPACTION_ECONOMICS_PHASE_SEQUENCE = (
+    "pre_compact",
+    "compact_turn",
+    "post_compact",
+    "mature_post_compact",
+    "resume",
+)
+_RAW_RECEIPT_FIELDS = frozenset(
+    {
+        "prompt",
+        "messages",
+        "content",
+        "text",
+        "input",
+        "response",
+        "output",
+        "tool_result",
+        "arguments",
+        "image",
+        "image_data",
+        "reasoning",
+    }
+)
+
+
+COMPACTION_ECONOMICS_RECEIPT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "FCC synthetic compaction economics receipt",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["schema", "evidence", "model", "protocol", "turns"],
+    "properties": {
+        "schema": {"const": COMPACTION_ECONOMICS_SCHEMA},
+        "evidence": {"const": "synthetic-only"},
+        "fixture": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "protocol": {
+            "type": "string",
+            "enum": ["responses", "messages", "chat_completions"],
+        },
+        "turns": {
+            "type": "array",
+            "minItems": 5,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "model",
+                    "protocol",
+                    "logical_request_id",
+                    "phase",
+                    "input_tokens",
+                    "effective_uncached_input_tokens",
+                    "cache_read_tokens",
+                    "cache_write_tokens",
+                    "output_tokens",
+                    "upstream_attempts",
+                    "retries",
+                    "stable_prefix_hash",
+                    "request_shape_hash",
+                    "compact_boundary_hash",
+                    "learning_memory_ids",
+                ],
+                "properties": {
+                    "model": {"type": "string", "minLength": 1},
+                    "protocol": {"type": "string", "minLength": 1},
+                    "logical_request_id": {"type": "string", "minLength": 1},
+                    "phase": {
+                        "type": "string",
+                        "enum": list(COMPACTION_ECONOMICS_PHASE_SEQUENCE),
+                    },
+                    "input_tokens": {"type": "integer", "minimum": 0},
+                    "effective_uncached_input_tokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                    "cache_read_tokens": {"type": "integer", "minimum": 0},
+                    "cache_write_tokens": {"type": "integer", "minimum": 0},
+                    "output_tokens": {"type": "integer", "minimum": 0},
+                    "upstream_attempts": {"type": "integer", "minimum": 1},
+                    "retries": {"type": "integer", "minimum": 0},
+                    "retry_reason": {"type": "string"},
+                    "stable_prefix_hash": {"type": "string", "minLength": 1},
+                    "request_shape_hash": {"type": "string", "minLength": 1},
+                    "compact_boundary_hash": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "learning_memory_ids": {
+                        "type": "array",
+                        "uniqueItems": True,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "ttft_ms": {"type": "number", "minimum": 0},
+                    "duration_ms": {"type": "number", "minimum": 0},
+                },
+            },
+        },
+    },
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,28 +161,94 @@ class GoUsage:
     phase: str | None = None
     compact_boundary_hash: str | None = None
     reasoning_tokens: int | None = None
+    learning_memory_ids: tuple[str, ...] = ()
+
+    @property
+    def input_tokens(self) -> int:
+        """Return total input tokens represented by the disjoint input buckets."""
+
+        return self.uncached_input_tokens + self.cache_read_tokens
+
+    @property
+    def effective_uncached_input_tokens(self) -> int:
+        """Return input tokens billed outside the provider cache-read bucket."""
+
+        return self.uncached_input_tokens
+
+    @property
+    def attempts(self) -> int:
+        """Return upstream attempts for this logical request."""
+
+        return self.upstream_attempts
+
+    @property
+    def retries(self) -> int:
+        """Return retries after the first upstream attempt."""
+
+        return self.upstream_attempts - 1
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> GoUsage:
+        leaked = sorted(_RAW_RECEIPT_FIELDS.intersection(value))
+        if leaked:
+            raise ValueError(
+                f"receipt must be metadata-only; forbidden fields: {leaked}"
+            )
         required = (
             "model",
-            "uncached_input_tokens",
             "cache_read_tokens",
             "cache_write_tokens",
             "output_tokens",
         )
         missing = [key for key in required if key not in value]
+        if (
+            "uncached_input_tokens" not in value
+            and "effective_uncached_input_tokens" not in value
+        ):
+            missing.append("effective_uncached_input_tokens")
         if missing:
             raise ValueError(f"receipt row missing fields: {missing}")
         model = value["model"]
         if not isinstance(model, str) or not model:
             raise ValueError("receipt model must be a non-empty string")
         counts: dict[str, int] = {}
-        for key in required[1:]:
+        for key in ("cache_read_tokens", "cache_write_tokens", "output_tokens"):
             raw = value[key]
             if not isinstance(raw, int) or isinstance(raw, bool) or raw < 0:
                 raise ValueError(f"{key} must be a non-negative integer")
             counts[key] = raw
+        uncached_input_tokens = value.get(
+            "uncached_input_tokens", value.get("effective_uncached_input_tokens")
+        )
+        if (
+            not isinstance(uncached_input_tokens, int)
+            or isinstance(uncached_input_tokens, bool)
+            or uncached_input_tokens < 0
+        ):
+            raise ValueError(
+                "effective_uncached_input_tokens must be a non-negative integer"
+            )
+        explicit_effective = value.get("effective_uncached_input_tokens")
+        if (
+            explicit_effective is not None
+            and explicit_effective != uncached_input_tokens
+        ):
+            raise ValueError(
+                "uncached_input_tokens and effective_uncached_input_tokens must match"
+            )
+        reported_input_tokens = value.get("input_tokens")
+        if reported_input_tokens is not None and (
+            not isinstance(reported_input_tokens, int)
+            or isinstance(reported_input_tokens, bool)
+            or reported_input_tokens < 0
+        ):
+            raise ValueError("input_tokens must be a non-negative integer")
+        if reported_input_tokens is not None and reported_input_tokens != (
+            uncached_input_tokens + counts["cache_read_tokens"]
+        ):
+            raise ValueError(
+                "input_tokens must equal effective uncached plus cache-read tokens"
+            )
         context_tokens = value.get("context_tokens")
         if context_tokens is not None and (
             not isinstance(context_tokens, int)
@@ -98,6 +275,15 @@ class GoUsage:
             or upstream_attempts <= 0
         ):
             raise ValueError("upstream_attempts must be a positive integer")
+        reported_retries = value.get("retries")
+        if reported_retries is not None and (
+            not isinstance(reported_retries, int)
+            or isinstance(reported_retries, bool)
+            or reported_retries < 0
+        ):
+            raise ValueError("retries must be a non-negative integer")
+        if reported_retries is not None and reported_retries != upstream_attempts - 1:
+            raise ValueError("retries must equal upstream_attempts minus one")
         retry_reason = value.get("retry_reason")
         if retry_reason is not None and not isinstance(retry_reason, str):
             raise ValueError("retry_reason must be a string")
@@ -140,6 +326,15 @@ class GoUsage:
             or reasoning_tokens < 0
         ):
             raise ValueError("reasoning_tokens must be a non-negative integer")
+        learning_memory_ids = value.get("learning_memory_ids", ())
+        if not isinstance(learning_memory_ids, list | tuple) or not all(
+            isinstance(item, str) and item for item in learning_memory_ids
+        ):
+            raise ValueError(
+                "learning_memory_ids must be an array of non-empty strings"
+            )
+        if len(learning_memory_ids) != len(set(learning_memory_ids)):
+            raise ValueError("learning_memory_ids must not contain duplicates")
         return cls(
             model=model,
             context_tokens=context_tokens,
@@ -158,7 +353,8 @@ class GoUsage:
             phase=phase,
             compact_boundary_hash=compact_boundary_hash,
             reasoning_tokens=reasoning_tokens,
-            uncached_input_tokens=counts["uncached_input_tokens"],
+            learning_memory_ids=tuple(learning_memory_ids),
+            uncached_input_tokens=uncached_input_tokens,
             cache_read_tokens=counts["cache_read_tokens"],
             cache_write_tokens=counts["cache_write_tokens"],
             output_tokens=counts["output_tokens"],
@@ -470,6 +666,170 @@ def summarize_phases(rows: list[GoUsage]) -> dict[str, dict[str, Any]]:
     if not grouped:
         raise ValueError("receipt contains no compaction phases")
     return {phase: summarize(group) for phase, group in sorted(grouped.items())}
+
+
+def validate_compaction_economics(rows: list[GoUsage]) -> dict[str, Any]:
+    """Validate the five-turn synthetic economics contract.
+
+    The result is a metadata-only, machine-readable receipt. It intentionally
+    validates the relationship between rows instead of claiming provider or
+    client behavior that a synthetic fixture cannot prove.
+    """
+
+    if not rows:
+        raise ValueError("compaction economics receipt contains no usage rows")
+
+    phases = [row.phase for row in rows]
+    mature_phases = phases[3:-1]
+    expected_shape = (
+        len(phases) >= len(COMPACTION_ECONOMICS_PHASE_SEQUENCE)
+        and phases[:3] == list(COMPACTION_ECONOMICS_PHASE_SEQUENCE[:3])
+        and bool(mature_phases)
+        and all(phase == "mature_post_compact" for phase in mature_phases)
+        and phases[-1] == "resume"
+    )
+    stable_prefixes = [row.stable_prefix_hash for row in rows]
+    request_shapes = [row.request_shape_hash for row in rows]
+    boundary_hashes = [row.compact_boundary_hash for row in rows]
+    post_compact_prefixes = stable_prefixes[2:]
+    learning_ids = [memory_id for row in rows for memory_id in row.learning_memory_ids]
+    timings_valid = all(
+        row.ttft_ms is None or row.duration_ms is None or row.duration_ms >= row.ttft_ms
+        for row in rows
+    )
+    invariants = {
+        "required_phase_sequence": expected_shape,
+        "model_stable": len({row.model for row in rows}) == 1,
+        "protocol_stable": len({row.protocol for row in rows}) == 1
+        and rows[0].protocol is not None,
+        "input_bucket_accounting": all(
+            row.input_tokens
+            == row.effective_uncached_input_tokens + row.cache_read_tokens
+            for row in rows
+        ),
+        "stable_prefix_hashes_present": all(
+            isinstance(value, str) and bool(value) for value in stable_prefixes
+        ),
+        "request_shape_hashes_present": all(
+            isinstance(value, str) and bool(value) for value in request_shapes
+        ),
+        "request_shape_hashes_unique": len(set(request_shapes)) == len(rows)
+        and all(isinstance(value, str) and bool(value) for value in request_shapes),
+        "logical_request_ids_unique": len(
+            {
+                row.logical_request_id
+                for row in rows
+                if row.logical_request_id is not None
+            }
+        )
+        == len(rows)
+        and all(row.logical_request_id for row in rows),
+        "compact_boundary_identity": len(set(boundary_hashes)) == 1
+        and all(isinstance(value, str) and bool(value) for value in boundary_hashes),
+        "post_compact_prefix_stable": len(set(post_compact_prefixes)) == 1
+        and all(
+            isinstance(value, str) and bool(value) for value in post_compact_prefixes
+        ),
+        "learning_memory_not_duplicated": len(learning_ids) == len(set(learning_ids)),
+        "retry_amplification_bounded": sum(row.attempts for row in rows) == len(rows),
+        "timings_ordered_when_available": timings_valid,
+    }
+    report = {
+        "schema": COMPACTION_ECONOMICS_SCHEMA,
+        "evidence": "synthetic-only",
+        "passed": all(invariants.values()),
+        "invariants": invariants,
+        "summary": summarize(rows),
+        "turns": [_economics_row_receipt(row) for row in rows],
+    }
+    return report
+
+
+def assert_compaction_economics(rows: list[GoUsage]) -> dict[str, Any]:
+    """Validate synthetic economics and raise with failed invariant names."""
+
+    receipt = validate_compaction_economics(rows)
+    if not receipt["passed"]:
+        failed = [name for name, passed in receipt["invariants"].items() if not passed]
+        raise ValueError("compaction economics failed: " + ", ".join(failed))
+    return receipt
+
+
+def load_compaction_economics_receipt(
+    path: str | Path,
+) -> tuple[dict[str, Any], list[GoUsage]]:
+    """Load and validate one checked-in JSON synthetic economics receipt."""
+
+    try:
+        payload = json.loads(Path(path).read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid compaction economics receipt: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("compaction economics receipt must be an object")
+    leaked = sorted(_RAW_RECEIPT_FIELDS.intersection(payload))
+    if leaked:
+        raise ValueError(f"receipt must be metadata-only; forbidden fields: {leaked}")
+    if payload.get("schema") != COMPACTION_ECONOMICS_SCHEMA:
+        raise ValueError("unexpected compaction economics receipt schema")
+    if payload.get("evidence") != "synthetic-only":
+        raise ValueError("compaction economics receipt must be synthetic-only")
+    turns = payload.get("turns")
+    if not isinstance(turns, list):
+        raise ValueError("compaction economics receipt turns must be an array")
+    if not all(isinstance(turn, dict) for turn in turns):
+        raise ValueError("compaction economics receipt turns must be objects")
+    for turn in turns:
+        leaked = sorted(_RAW_RECEIPT_FIELDS.intersection(turn))
+        if leaked:
+            raise ValueError(
+                f"receipt must be metadata-only; forbidden fields: {leaked}"
+            )
+    schema_errors = sorted(
+        Draft202012Validator(COMPACTION_ECONOMICS_RECEIPT_SCHEMA).iter_errors(payload),
+        key=lambda error: list(error.absolute_path),
+    )
+    if schema_errors:
+        raise ValueError(
+            "invalid compaction economics receipt: " + schema_errors[0].message
+        )
+    rows = [GoUsage.from_mapping(turn) for turn in turns]
+    model = payload.get("model")
+    protocol = payload.get("protocol")
+    if any(row.model != model for row in rows):
+        raise ValueError("receipt model metadata does not match every turn")
+    if any(row.protocol != protocol for row in rows):
+        raise ValueError("receipt protocol metadata does not match every turn")
+    assert_compaction_economics(rows)
+    return payload, rows
+
+
+def _economics_row_receipt(row: GoUsage) -> dict[str, Any]:
+    """Serialize one usage row without retaining request or response content."""
+
+    receipt: dict[str, Any] = {
+        "model": row.model,
+        "protocol": row.protocol,
+        "logical_request_id": row.logical_request_id,
+        "phase": row.phase,
+        "input_tokens": row.input_tokens,
+        "effective_uncached_input_tokens": row.effective_uncached_input_tokens,
+        "cache_read_tokens": row.cache_read_tokens,
+        "cache_write_tokens": row.cache_write_tokens,
+        "output_tokens": row.output_tokens,
+        "upstream_attempts": row.attempts,
+        "retries": row.retries,
+        "stable_prefix_hash": row.stable_prefix_hash,
+        "request_shape_hash": row.request_shape_hash,
+        "compact_boundary_hash": row.compact_boundary_hash,
+        "learning_memory_ids": list(row.learning_memory_ids),
+    }
+    if row.retry_reason is not None:
+        receipt["retry_reason"] = row.retry_reason
+    if row.ttft_ms is not None:
+        receipt["ttft_ms"] = row.ttft_ms
+    if row.duration_ms is not None:
+        receipt["duration_ms"] = row.duration_ms
+    return receipt
 
 
 def _prefix_match_rate(
