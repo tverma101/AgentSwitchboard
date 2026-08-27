@@ -10,4 +10,5 @@ def test_open_issue_sweep_status_lists_unverified_live_boundaries() -> None:
     assert "no live OpenCode Go/Muse success receipt" in text
     assert "no real Codex browser-plugin device pass" in text
     assert "no provider visual round-trip" in text
-    assert "no automatic parent/subagent reviewer-scar integration" in text
+    assert "no automatic durable scar persistence from a worker ticket" in text
+    assert "no live A/B canary" in text

@@ -59,6 +59,14 @@ from free_claude_code.learning.config import (
     restore_profile,
 )
 from free_claude_code.learning.hooks import claude_config_dir
+from free_claude_code.learning.reviewer_config import ReviewerPackSettings
+from free_claude_code.learning.reviewer_flow import reviewer_status
+from free_claude_code.learning.reviewer_scars import (
+    ReviewerPack,
+    ReviewerScarError,
+    ScarRegistry,
+    ScarState,
+)
 from free_claude_code.learning.store import LearningStore, project_identity
 
 from . import codex_accounts
@@ -206,6 +214,8 @@ def run_control_menu(
             _run_logs_menu()
         elif choice in {"f", "profile", "profiles"}:
             next_profile = _run_profile_menu(next_profile)
+        elif choice in {"v", "reviewer", "reviewers", "scars"}:
+            _run_reviewer_menu(next_profile)
         elif choice in {"o", "repo", "repos"}:
             selected_repo = _run_repo_menu(selected_repo)
         elif choice in {"r", "restart"}:
@@ -221,7 +231,7 @@ def run_control_menu(
             return
         else:
             print(
-                "Unknown command. Use C, D, A, P, M, U, N, Y, X, S, L, F, O, R, or Q."
+                "Unknown command. Use C, D, A, P, M, U, N, Y, X, S, L, F, V, O, R, or Q."
             )
 
 
@@ -253,8 +263,9 @@ def _print_home(
     print()
     print("[Enter/C] Claude   [D] Danger   [A] Accounts [O] Repos")
     print("[F] Profiles       [P] Providers [M] Models   [U] Usage")
-    print("[N] Diagnose       [Y] Policy    [X] Connect  [S] Settings")
-    print("[L] Logs           [R] Restart  [Q] Quit")
+    print("[V] Reviewers      [N] Diagnose  [Y] Policy")
+    print("[X] Connect        [S] Settings [L] Logs")
+    print("[R] Restart        [Q] Quit")
 
 
 def _print_policy_status(settings: Settings) -> None:
@@ -470,6 +481,82 @@ def _choose_named_profile(profiles: Sequence[str], active: str) -> str | None:
         print("No named profiles are available; the default profile is protected.")
         return None
     return _choose_profile(named, selected=active, active=active)
+
+
+def _run_reviewer_menu(profile: str) -> None:
+    """Manage reviewer pack overrides and compact scar lifecycle state."""
+
+    while True:
+        try:
+            status = reviewer_status(profile=profile)
+        except (LearningProfileError, ReviewerScarError) as exc:
+            print(f"Reviewer state unavailable: {exc}")
+            return
+        print()
+        print(f"Reviewers ({profile})")
+        print("----------------")
+        for pack in status["packs"]:
+            if not isinstance(pack, Mapping):
+                continue
+            print(f"  {pack.get('pack', '?')}: {pack.get('mode', 'automatic')}")
+        scars = status["scars"]
+        if isinstance(scars, list) and scars:
+            print("Scars:")
+            for scar in scars[:24]:
+                if isinstance(scar, Mapping):
+                    print(
+                        f"  {scar.get('scar_id', '?')} "
+                        f"{scar.get('kind', '?')} "
+                        f"{scar.get('state', '?')} "
+                        f"{scar.get('scope', '?')}"
+                    )
+            if len(scars) > 24:
+                print(f"  ... {len(scars) - 24} more")
+        else:
+            print("Scars: none")
+        print("[E] Enable pack [D] Disable pack [F] Forget scar")
+        print("[S] Supersede scar [B] Back")
+        try:
+            choice = input("Reviewer> ").strip().casefold()
+        except EOFError, KeyboardInterrupt:
+            print()
+            return
+        if choice in {"b", "back", "q", "quit"}:
+            return
+        if choice in {"e", "enable", "d", "disable"}:
+            try:
+                raw_pack = (
+                    input(
+                        "Pack (efficiency, edge-cases, implementation-truth, redundancy)> "
+                    )
+                    .strip()
+                    .casefold()
+                )
+                pack = ReviewerPack(raw_pack)
+                enabled = choice in {"e", "enable"}
+                ReviewerPackSettings(profile).set_override(pack, enabled)
+            except (LearningProfileError, ReviewerScarError, ValueError) as exc:
+                print(f"Could not update reviewer pack: {exc}")
+            else:
+                print(
+                    f"Reviewer pack {pack.value}: {'enabled' if enabled else 'disabled'}"
+                )
+            continue
+        if choice in {"f", "forget", "s", "supersede"}:
+            try:
+                scar_id = input("Scar ID> ").strip()
+                state = (
+                    ScarState.STALE
+                    if choice in {"f", "forget"}
+                    else ScarState.SUPERSEDED
+                )
+                record = ScarRegistry(profile).update_state(scar_id, state)
+            except (LearningProfileError, ReviewerScarError, ValueError) as exc:
+                print(f"Could not update scar: {exc}")
+            else:
+                print(f"Scar {record.scar_id}: {record.state.value}")
+            continue
+        print("Unknown reviewer action. Use E, D, F, S, or B.")
 
 
 def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:

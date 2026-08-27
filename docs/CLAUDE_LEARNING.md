@@ -9,13 +9,20 @@ It is integrated into `fcc-claude` and uses Claude Code lifecycle hooks. There i
 
 ## Lifecycle
 
-When `fcc-claude` starts successfully, FCC idempotently merges three hooks into the active Claude Code `settings.json` while preserving unrelated settings/hooks:
+When `fcc-claude` starts successfully, FCC idempotently merges five hooks into the active Claude Code `settings.json` while preserving unrelated settings/hooks:
 
 - **SessionStart**: inject recent global + current-project memory and request a skill reload.
 - **UserPromptSubmit**: save the current prompt and inject the most relevant memories using deterministic token overlap + recency scoring.
+- **SubagentStart**: fingerprint the delegated task and inject only the selected compact reviewer-scar slice plus the bounded exit-ticket contract.
+- **SubagentStop**: validate one X1 exit ticket from the worker's final message and return the sanitized machine-dense result to the parent without rereading the subagent transcript.
 - **Stop** *(async)*: redact and enqueue the last user prompt plus Claude's final assistant message, then start one bounded worker to ask FCC's Haiku route for a conservative learning decision.
 
 The Stop hook is asynchronous so the learning pass does not hold up the interactive Claude Code response. The queue is SQLite-backed, deterministic, idempotent, retry-limited, and reclaimed after a crashed worker. A later SessionStart starts another bounded worker for stale work. There is no resident learner daemon; each worker exits after a small number of rows.
+
+Reviewer hooks are advisory and non-critical. A missing or malformed X1 ticket is
+reported to the parent as `UNVERIFIED`; it does not persist the worker message or
+silently promote a scar. An explicitly supplied candidate must still pass the
+existing counterfactual admission gate before a caller persists it.
 
 ## Storage
 
@@ -24,6 +31,8 @@ Local state lives under:
 ```text
 ~/.fcc/learning/learning.db
 ~/.fcc/learning/profiles/<profile>/learning.db
+~/.fcc/learning/reviewer-scars.json
+~/.fcc/learning/reviewer-packs.json
 ```
 
 The first path is the backward-compatible `default` profile. Named profiles
@@ -58,6 +67,13 @@ Project-scoped learned skills use Claude Code's native repository scope:
 That means a project-specific learned procedure is visible as a normal working-tree change and can be reviewed or committed with the project. FCC does not embed the machine's absolute project path into the generated skill. It never intentionally writes outside an FCC-owned `fcc-auto-*` skill directory.
 
 Every accepted skill revision is stored in the local `skill_revisions` table with a SHA-256 digest. Before an update, the previous bytes are retained. The current skill is provided to the distiller so an update must be a complete procedure; local validation requires frontmatter, bounded fields, no secrets or project-path leakage, and an explicit validation/check/test step. An update is rejected if it drops a normalized validation clause from the current skill. A prior revision can be restored byte-for-byte with `fcc-learning skill rollback <skill-key> <revision>`.
+
+Reviewer scars are compact, profile-isolated metadata records. Their state is
+retained when a user chooses `forget` (`STALE`) or `supersede` (`SUPERSEDED`);
+neither action deletes evidence. Reviewer packs are automatically selected from
+task fingerprints by default. An explicit `enable` or `disable` override is
+stored in `reviewer-packs.json` for that profile and does not affect another
+profile.
 
 Skill replacements may also use an opt-in trusted promotion check registered by
 repository/user-authored code for the computed skill key. The evaluator is
@@ -144,6 +160,11 @@ fcc-learning memory history <id>
 fcc-learning skill list
 fcc-learning skill history <skill-key>
 fcc-learning skill rollback <skill-key> <revision>
+fcc-learning reviewer list
+fcc-learning reviewer enable edge-cases --profile coding
+fcc-learning reviewer disable redundancy --profile coding
+fcc-learning reviewer forget <scar-id> --profile coding
+fcc-learning reviewer supersede <scar-id> --profile coding
 fcc-learning bundle export ./fcc-learning.bundle --profile coding
 fcc-learning bundle inspect ./fcc-learning.bundle
 fcc-learning bundle import ./fcc-learning.bundle --cwd /path/to/project --dry-run
@@ -176,8 +197,10 @@ Bundle export/import operate on the explicitly selected learning store when
 `--skill-key` selectors and reports the selected counts in its JSON result.
 This supports explicit selective cross-profile re-homing without copying raw
 SQLite state. The terminal control center exposes the same profile selection and
-bundle preview/transfer operations for the next launch; full history transfer
-and browser/Admin profile selection remain follow-up work.
+bundle preview/transfer operations for the next launch. The terminal control
+center and loopback Admin page expose reviewer pack enable/disable and scar
+forget/supersede controls; these controls operate only on compact local
+metadata.
 
 `fcc-claude` normally installs/repairs the hooks automatically, so manual `install` is usually unnecessary.
 

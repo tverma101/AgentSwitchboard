@@ -180,6 +180,25 @@
             </section>
           </section>
 
+          <section id="view-reviewer" class="admin-view" data-view="reviewer" hidden>
+            <section class="reviewer-panel" aria-label="Reviewer controls">
+              <div class="reviewer-toolbar">
+                <div>
+                  <h3>Reviewer packs and scars</h3>
+                  <p>Profile-local controls. Only bounded metadata is stored; transcripts are never shown here.</p>
+                </div>
+                <button id="reviewerRefreshButton" class="secondary-button" type="button">Refresh</button>
+              </div>
+              <div id="reviewerPackGrid" class="reviewer-pack-grid"></div>
+              <div class="reviewer-scar-heading">
+                <h3>Compact scars</h3>
+                <span id="reviewerProfileLabel"></span>
+              </div>
+              <div id="reviewerScarGrid" class="reviewer-scar-grid"></div>
+              <p id="reviewerEmptyState" class="usage-empty" hidden>No compact scars are stored for this profile.</p>
+            </section>
+          </section>
+
           <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
             <div
               id="messagingSections"

@@ -30,6 +30,15 @@ from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
 )
+from free_claude_code.learning.config import configured_profile
+from free_claude_code.learning.reviewer_config import ReviewerPackSettings
+from free_claude_code.learning.reviewer_flow import reviewer_status
+from free_claude_code.learning.reviewer_scars import (
+    ReviewerPack,
+    ReviewerScarError,
+    ScarRegistry,
+    ScarState,
+)
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -71,6 +80,14 @@ class AdminRouteDiagnosticPayload(BaseModel):
     model: str | None = Field(default=None, max_length=256, pattern=r"^[^\r\n]*$")
     shapes: tuple[str, ...] = Field(default=("text",), min_length=1, max_length=10)
     mode: CapabilityRoutingMode = CapabilityRoutingMode.STRICT
+
+
+class ReviewerPackPayload(BaseModel):
+    """Explicit enable/disable choice for one reviewer pack."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
 
 
 class ConnectedAccountLoginPayload(BaseModel):
@@ -368,6 +385,70 @@ async def usage(
         [row["model"] for row in summary["models"]]
     )
     return summary
+
+
+@router.get("/admin/api/reviewer")
+async def reviewer_controls(request: Request):
+    """Return profile-local reviewer controls and compact scar metadata."""
+
+    require_loopback_admin(request)
+    try:
+        return _no_store(reviewer_status(profile=configured_profile()))
+    except (ReviewerScarError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500, detail="Reviewer state is unavailable"
+        ) from exc
+
+
+@router.put("/admin/api/reviewer/packs/{pack}")
+async def update_reviewer_pack(
+    pack: ReviewerPack,
+    payload: ReviewerPackPayload,
+    request: Request,
+):
+    """Persist one explicit pack override for the current learning profile."""
+
+    require_loopback_admin(request)
+    try:
+        ReviewerPackSettings(configured_profile()).set_override(pack, payload.enabled)
+        return _no_store(reviewer_status(profile=configured_profile()))
+    except (ReviewerScarError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500, detail="Reviewer state is unavailable"
+        ) from exc
+
+
+@router.post("/admin/api/reviewer/scars/{scar_id}/forget")
+async def forget_reviewer_scar(scar_id: str, request: Request):
+    """Mark a scar stale while retaining its evidence and history."""
+
+    return await _update_reviewer_scar_state(scar_id, ScarState.STALE, request)
+
+
+@router.post("/admin/api/reviewer/scars/{scar_id}/supersede")
+async def supersede_reviewer_scar(scar_id: str, request: Request):
+    """Mark a scar superseded while retaining its evidence and history."""
+
+    return await _update_reviewer_scar_state(scar_id, ScarState.SUPERSEDED, request)
+
+
+async def _update_reviewer_scar_state(
+    scar_id: str,
+    state: ScarState,
+    request: Request,
+) -> JSONResponse:
+    require_loopback_admin(request)
+    try:
+        record = ScarRegistry(configured_profile()).update_state(scar_id, state)
+    except ReviewerScarError as exc:
+        if str(exc).startswith("unknown reviewer scar id:"):
+            raise HTTPException(
+                status_code=404, detail="Reviewer scar not found"
+            ) from exc
+        raise HTTPException(
+            status_code=500, detail="Reviewer state is unavailable"
+        ) from exc
+    return _no_store(record.as_dict())
 
 
 def _model_options(

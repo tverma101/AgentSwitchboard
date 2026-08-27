@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .reviewer_flow import parse_exit_ticket, reviewer_context_for_task
 from .stop_hook import spawn_queue_worker
 from .store import LearningStore, format_memory_context, project_identity
 
@@ -16,6 +17,8 @@ _STOP_HOOK_MODULE = "free_claude_code.learning.stop_hook"
 _HOOK_EVENTS: dict[str, tuple[str, int, bool]] = {
     "SessionStart": ("session-start", 10, False),
     "UserPromptSubmit": ("user-prompt", 10, False),
+    "SubagentStart": ("subagent-start", 10, False),
+    "SubagentStop": ("subagent-stop", 10, False),
     "Stop": ("stop", 60, True),
 }
 
@@ -229,9 +232,28 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
         prompt=prompt_text,
         limit=8,
     )
+    context_parts = [format_memory_context(rows, profile=store.profile)]
+    context_parts.append(reviewer_context_for_task(prompt_text, profile=store.profile))
     _emit_hook_context(
-        "UserPromptSubmit", format_memory_context(rows, profile=store.profile)
+        "UserPromptSubmit", "\n".join(part for part in context_parts if part)
     )
+
+
+def handle_subagent_start(payload: dict[str, Any], store: LearningStore) -> None:
+    """Inject only the task-matched compact reviewer slice into a subagent."""
+
+    _emit_hook_context(
+        "SubagentStart",
+        reviewer_context_for_task(payload, profile=store.profile),
+    )
+
+
+def handle_subagent_stop(payload: dict[str, Any], store: LearningStore) -> None:
+    """Return the validated X1 result to the parent without reading a transcript."""
+
+    del store
+    result = parse_exit_ticket(payload.get("last_assistant_message"))
+    _emit_hook_context("SubagentStop", result.parent_context())
 
 
 def run_hook(event: str, *, profile: str | None = None) -> None:
@@ -245,5 +267,9 @@ def run_hook(event: str, *, profile: str | None = None) -> None:
         handle_session_start(payload, store)
     elif event == "user-prompt":
         handle_user_prompt(payload, store)
+    elif event == "subagent-start":
+        handle_subagent_start(payload, store)
+    elif event == "subagent-stop":
+        handle_subagent_stop(payload, store)
     else:
         raise ValueError(f"unknown FCC Learning hook: {event}")
