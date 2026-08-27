@@ -73,28 +73,13 @@ class BaseProvider(ABC):
         request_id: str | None = None,
     ) -> None:
         """Log streaming transport failures without inventing fault ownership."""
+        fault_domain, confidence, evidence_codes = self._classify_stream_failure(
+            tag, error
+        )
         response = getattr(error, "response", None)
         http_status = (
             getattr(response, "status_code", None) if response is not None else None
         )
-        error_code = (
-            f"http_{http_status}"
-            if isinstance(http_status, int) and 100 <= http_status <= 599
-            else None
-        )
-        if error_code is None:
-            fault_domain, confidence, evidence_codes = classify_failure(transport=True)
-        elif tag.strip().upper() == "OPENCODE_GO":
-            fault_domain, confidence, evidence_codes = classify_failure(
-                error_code=error_code
-            )
-        else:
-            fault_domain = FaultDomain.UNKNOWN
-            confidence = FaultConfidence.MEDIUM
-            evidence_codes = [
-                f"upstream_error:{error_code}",
-                "upstream_provider_domain_unmodeled",
-            ]
         cause_types = exception_cause_types(error)
         trace_event(
             stage="provider",
@@ -127,6 +112,35 @@ class BaseProvider(ABC):
             http_status,
             ",".join(cause_types) if cause_types else None,
         )
+
+    @staticmethod
+    def _classify_stream_failure(
+        tag: str, error: Exception
+    ) -> tuple[FaultDomain, FaultConfidence, list[str]]:
+        """Return conservative attribution fields for one provider failure."""
+        response = getattr(error, "response", None)
+        http_status = (
+            getattr(response, "status_code", None) if response is not None else None
+        )
+        error_code = (
+            f"http_{http_status}"
+            if isinstance(http_status, int) and 100 <= http_status <= 599
+            else None
+        )
+        if error_code is None:
+            fault_domain, confidence, evidence_codes = classify_failure(transport=True)
+        elif tag.strip().upper() == "OPENCODE_GO":
+            fault_domain, confidence, evidence_codes = classify_failure(
+                error_code=error_code
+            )
+        else:
+            fault_domain = FaultDomain.UNKNOWN
+            confidence = FaultConfidence.MEDIUM
+            evidence_codes = [
+                f"upstream_error:{error_code}",
+                "upstream_provider_domain_unmodeled",
+            ]
+        return fault_domain, confidence, evidence_codes
 
     def _authorize_egress(self, url: str, *, category: str = "model") -> None:
         """Enforce an optional launch-time egress policy before network I/O."""

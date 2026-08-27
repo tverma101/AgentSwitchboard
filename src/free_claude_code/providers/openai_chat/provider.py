@@ -647,6 +647,11 @@ class _OpenAIChatStreamRunner:
                         return
 
                 reported_error = underlying_provider_error(error)
+                (
+                    fault_domain,
+                    fault_confidence,
+                    fault_evidence_codes,
+                ) = self._provider._classify_stream_failure(tag, reported_error)
                 self._provider._log_stream_transport_error(
                     tag, req_tag, reported_error, request_id=self._request_id
                 )
@@ -669,6 +674,9 @@ class _OpenAIChatStreamRunner:
                     "failure_kind": failure.kind.value,
                     "status_code": failure.status_code,
                     "provider_retryable": failure.retryable,
+                    "fault_domain": fault_domain.value,
+                    "confidence": fault_confidence.value,
+                    "evidence_codes": fault_evidence_codes,
                 }
                 if self._provider._config.log_api_error_tracebacks:
                     error_trace["error_message"] = failure.message

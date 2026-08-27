@@ -159,6 +159,11 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
     ]
     assert error_traces[-1]["request_id"] == "req_conn"
     assert error_traces[-1]["exc_type"] == "APIConnectionError"
+    assert error_traces[-1]["fault_domain"] == "unknown"
+    assert error_traces[-1]["confidence"] == "medium"
+    assert error_traces[-1]["evidence_codes"] == [
+        "transport_failure_ownership_unproven"
+    ]
     assert "error_message" not in error_traces[-1]
     assert "Caused by:\nConnectError: upstream disconnected" in exc_info.value.message
 
