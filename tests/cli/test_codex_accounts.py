@@ -46,7 +46,9 @@ def _write_auth(home: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
-def test_list_accounts_imports_live_auth_without_exposing_tokens(tmp_path: Path) -> None:
+def test_list_accounts_imports_live_auth_without_exposing_tokens(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / ".codex"
     _write_auth(home, _auth_payload("acct-1", "me@example.com"))
 
@@ -122,7 +124,10 @@ def test_add_account_stashes_live_auth_before_official_login(tmp_path: Path) -> 
     assert observations == [False]
     assert account.profile == "new"
     assert account.email == "new@example.com"
-    assert json.loads((home / "auth.json").read_text())["tokens"]["account_id"] == "acct-new"
+    assert (
+        json.loads((home / "auth.json").read_text())["tokens"]["account_id"]
+        == "acct-new"
+    )
     old_saved = json.loads(
         codex_accounts.profile_auth_path(old_profile, home).read_text()
     )

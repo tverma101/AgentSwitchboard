@@ -23,10 +23,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
+from .local_http import open_local_request
 from .selection import SelectionItem, choose_item
 
 DEFAULT_USAGE_URL = "https://chatgpt.com/backend-api/codex/usage"
@@ -115,7 +116,9 @@ def list_accounts(*, home: Path | None = None) -> tuple[CodexAccount, ...]:
         directory = profiles_dir(root)
         if not directory.is_dir():
             return ()
-        for item in sorted(directory.iterdir(), key=lambda value: value.name.casefold()):
+        for item in sorted(
+            directory.iterdir(), key=lambda value: value.name.casefold()
+        ):
             if not item.is_dir() or not _PROFILE_RE.fullmatch(item.name):
                 continue
             identity = _try_identity(item / "auth.json")
@@ -133,7 +136,9 @@ def list_accounts(*, home: Path | None = None) -> tuple[CodexAccount, ...]:
                     usage=usage,
                 )
             )
-    return tuple(sorted(accounts, key=lambda item: (not item.active, item.profile.casefold())))
+    return tuple(
+        sorted(accounts, key=lambda item: (not item.active, item.profile.casefold()))
+    )
 
 
 def select_account(profile: str, *, home: Path | None = None) -> CodexAccount:
@@ -194,7 +199,9 @@ def add_account(
         result = runner(argv, env=_codex_environment(), check=False)
     except Exception as exc:
         _restore_stash(root, stash, previous_marker)
-        raise CodexAccountError(f"Could not start Codex login ({type(exc).__name__}).") from exc
+        raise CodexAccountError(
+            f"Could not start Codex login ({type(exc).__name__})."
+        ) from exc
     if result.returncode != 0:
         _restore_stash(root, stash, previous_marker)
         raise CodexAccountError(f"Codex login exited with status {result.returncode}.")
@@ -239,7 +246,9 @@ def forget_account(profile: str, *, home: Path | None = None) -> None:
         target_identity = _identity(target / "auth.json")
         live = _try_identity(auth_path(root))
         if live is not None and live.account_id == target_identity.account_id:
-            raise CodexAccountError("Cannot forget the active Codex account. Select another first.")
+            raise CodexAccountError(
+                "Cannot forget the active Codex account. Select another first."
+            )
         shutil.rmtree(target)
         if _read_marker(root) == profile:
             _marker_path(root).unlink(missing_ok=True)
@@ -249,7 +258,7 @@ def refresh_usage(
     profile: str,
     *,
     home: Path | None = None,
-    opener: Callable[..., Any] = urlopen,
+    opener: Callable[..., Any] = open_local_request,
 ) -> Mapping[str, Any]:
     """Refresh a saved account's plan and rate-limit windows without switching."""
 
@@ -317,10 +326,14 @@ def _fetch_usage(
             data = json.loads(response.read())
     except HTTPError as exc:
         if exc.code == 401:
-            raise CodexAccountError("ChatGPT session expired; sign in to this account again.") from exc
+            raise CodexAccountError(
+                "ChatGPT session expired; sign in to this account again."
+            ) from exc
         raise CodexAccountError(f"Usage endpoint returned HTTP {exc.code}.") from exc
     except (URLError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise CodexAccountError(f"Usage refresh failed ({type(exc).__name__}).") from exc
+        raise CodexAccountError(
+            f"Usage refresh failed ({type(exc).__name__})."
+        ) from exc
     if not isinstance(data, Mapping):
         raise CodexAccountError("Usage endpoint returned an invalid payload.")
     return data
@@ -330,7 +343,10 @@ def _normalize_usage(raw: Mapping[str, Any], *, approximate: bool) -> dict[str, 
     rate = raw.get("rate_limit")
     rate = rate if isinstance(rate, Mapping) else {}
     windows: list[dict[str, Any]] = []
-    for window_id, key in (("primary", "primary_window"), ("secondary", "secondary_window")):
+    for window_id, key in (
+        ("primary", "primary_window"),
+        ("secondary", "secondary_window"),
+    ):
         item = rate.get(key)
         if not isinstance(item, Mapping):
             continue
@@ -360,9 +376,15 @@ def _normalize_usage(raw: Mapping[str, Any], *, approximate: bool) -> dict[str, 
             used = _number(window.get("used_percent"))
             additional.append(
                 {
-                    "name": str(item.get("limit_name") or item.get("metered_feature") or "additional"),
+                    "name": str(
+                        item.get("limit_name")
+                        or item.get("metered_feature")
+                        or "additional"
+                    ),
                     "used_percent": used,
-                    "remaining_percent": None if used is None else max(0.0, 100.0 - used),
+                    "remaining_percent": None
+                    if used is None
+                    else max(0.0, 100.0 - used),
                 }
             )
     credits_raw = raw.get("credits")
@@ -489,7 +511,7 @@ def _jwt_claims(token: Any) -> Mapping[str, Any]:
     payload = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
         decoded = json.loads(base64.urlsafe_b64decode(payload).decode())
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+    except ValueError, UnicodeDecodeError, json.JSONDecodeError:
         return {}
     return decoded if isinstance(decoded, Mapping) else {}
 
@@ -562,7 +584,7 @@ def _atomic_json(path: Path, raw: Mapping[str, Any]) -> None:
 def _read_json(path: Path) -> Mapping[str, Any] | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except OSError, UnicodeDecodeError, json.JSONDecodeError:
         return None
     return raw if isinstance(raw, Mapping) else None
 
@@ -609,7 +631,7 @@ def _format_reset(value: Any) -> str:
         return ""
     try:
         return datetime.fromtimestamp(timestamp).astimezone().strftime("%b %d %H:%M")
-    except (OSError, OverflowError, ValueError):
+    except OSError, OverflowError, ValueError:
         return ""
 
 
@@ -618,7 +640,9 @@ def _percent(value: Any) -> str:
     return f"{round(number)}%" if number is not None else "?"
 
 
-def _usage_lines(usage: Mapping[str, Any] | None, *, compact: bool = False) -> list[str]:
+def _usage_lines(
+    usage: Mapping[str, Any] | None, *, compact: bool = False
+) -> list[str]:
     if not usage:
         return ["limits not refreshed"]
     prefix = "~" if usage.get("approximate") is True else ""
@@ -638,18 +662,20 @@ def _usage_lines(usage: Mapping[str, Any] | None, *, compact: bool = False) -> l
             lines.append(text)
     additional = usage.get("additional_limits")
     if isinstance(additional, list):
-        for item in additional:
-            if isinstance(item, Mapping) and item.get("remaining_percent") is not None:
-                lines.append(
-                    f"{item.get('name', 'additional')} {prefix}{_percent(item['remaining_percent'])} left"
-                )
+        lines.extend(
+            f"{item.get('name', 'additional')} {prefix}{_percent(item['remaining_percent'])} left"
+            for item in additional
+            if isinstance(item, Mapping) and item.get("remaining_percent") is not None
+        )
     credits = usage.get("credits")
     if isinstance(credits, Mapping):
         if credits.get("unlimited") is True:
             lines.append("credits unlimited")
         elif credits.get("balance") not in {None, "", 0, "0"}:
             lines.append(f"credits {credits['balance']}")
-    return lines[:2] if compact and len(lines) > 2 else (lines or ["limits unavailable"])
+    return (
+        lines[:2] if compact and len(lines) > 2 else (lines or ["limits unavailable"])
+    )
 
 
 def _print_accounts(accounts: Sequence[CodexAccount]) -> None:
@@ -659,7 +685,9 @@ def _print_accounts(accounts: Sequence[CodexAccount]) -> None:
     for account in accounts:
         marker = ">" if account.active else " "
         plan = f"  {account.plan}" if account.plan else ""
-        print(f"{marker} {account.profile:<18} {account.email or account.profile}{plan}")
+        print(
+            f"{marker} {account.profile:<18} {account.email or account.profile}{plan}"
+        )
         for line in _usage_lines(account.usage):
             print(f"    {line}")
 
@@ -674,7 +702,10 @@ def _choose_account(accounts: Sequence[CodexAccount]) -> CodexAccount | None:
                 item_id=account.profile,
                 label=account.email or account.profile,
                 detail=" · ".join(
-                    [account.plan or "plan unknown", *_usage_lines(account.usage, compact=True)]
+                    [
+                        account.plan or "plan unknown",
+                        *_usage_lines(account.usage, compact=True),
+                    ]
                     + (["active"] if account.active else [])
                 ),
             )
@@ -704,10 +735,12 @@ def _interactive() -> int:
             accounts = ()
         print("\nChatGPT / Codex subscriptions\n-----------------------------")
         _print_accounts(accounts)
-        print("[S] Select  [A] Add/sign up  [D] Device add  [R] Refresh  [F] Forget  [Q] Quit")
+        print(
+            "[S] Select  [A] Add/sign up  [D] Device add  [R] Refresh  [F] Forget  [Q] Quit"
+        )
         try:
             action = input("Accounts> ").strip().casefold()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return 0
         if action in {"q", "quit", "b", "back"}:
@@ -724,7 +757,7 @@ def _interactive() -> int:
         elif action in {"a", "add", "d", "device"}:
             try:
                 profile = input("Profile name> ").strip()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError, KeyboardInterrupt:
                 print()
                 continue
             if not profile:
@@ -735,7 +768,9 @@ def _interactive() -> int:
             except CodexAccountError as exc:
                 print(f"Could not add account: {exc}")
             else:
-                print(f"Added and selected {account.profile} ({account.email or account.account_id}).")
+                print(
+                    f"Added and selected {account.profile} ({account.email or account.account_id})."
+                )
                 _restart_notice()
         elif action in {"r", "refresh", "usage"}:
             for profile, error in refresh_all_usage().items():
@@ -773,16 +808,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _print_accounts(list_accounts())
         elif command in {"switch", "select", "use"} and len(rest) == 1:
             account = select_account(rest[0])
-            print(f"Selected {account.profile} ({account.email or account.account_id}).")
+            print(
+                f"Selected {account.profile} ({account.email or account.account_id})."
+            )
             _restart_notice()
         elif command in {"add", "signup", "sign-up"}:
             device = "--device-auth" in rest
             names = [value for value in rest if value != "--device-auth"]
             if len(names) != 1:
-                raise CodexAccountError("Usage: fcc accounts add <profile> [--device-auth]")
+                raise CodexAccountError(
+                    "Usage: fcc accounts add <profile> [--device-auth]"
+                )
             print("Official Codex login can sign in or create a new ChatGPT account.")
             account = add_account(names[0], device_auth=device)
-            print(f"Added and selected {account.profile} ({account.email or account.account_id}).")
+            print(
+                f"Added and selected {account.profile} ({account.email or account.account_id})."
+            )
             _restart_notice()
         elif command in {"forget", "remove", "rm"} and len(rest) == 1:
             forget_account(rest[0])

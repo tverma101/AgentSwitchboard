@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The local release head is version
-`4.52.0`; examples below describe this checkout, not every feature proposed in
+`4.53.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. Live smoke receipts retain the package version that
 was installed when each receipt was captured; read the receipt's own metadata
 before treating it as evidence for a later release head.
@@ -58,7 +58,7 @@ before treating it as evidence for a later release head.
 
 | Status | Current scope |
 | --- | --- |
-| **Current-source verified** | Terminal `fcc-server`/`fccdanger`, the local repo/profile control center with next-launch isolation and bundle transfer, fuzzy provider/model selection, secret-safe custom OpenAI-compatible provider CRUD, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
+| **Current-source verified** | Terminal `fcc-server`/`fccdanger`, the local repo/profile control center with next-launch isolation and bundle transfer, fuzzy provider/model selection, secret-safe custom OpenAI-compatible provider CRUD, credential-safe multi-account Codex subscription management, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
 | **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
 | **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
@@ -123,6 +123,11 @@ those actions. API keys are entered through hidden prompts and are never
 echoed back. Repository discovery is local and cached; a selected repository
 and profile apply only to the next Claude/Danger launch and never mutate a
 running session.
+The separate `fcc accounts` command manages saved ChatGPT subscription
+profiles for the installed Codex CLI. It can list, switch, refresh, add, or
+forget local snapshots; it never logs out an upstream account when forgetting
+one. Auth snapshots stay under `$CODEX_HOME/accounts/profiles` with private
+permissions, and account selection applies only to new Codex/helper sessions.
 You can still verify the local server explicitly before using a separate client
 terminal:
 

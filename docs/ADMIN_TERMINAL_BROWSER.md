@@ -49,3 +49,8 @@ The terminal control-center home redraw uses the already-loaded local settings
 object and does not make an Admin request. Explicit settings edits still use
 the local Admin API; after a successful edit, the terminal invalidates its
 settings cache before the next redraw.
+
+Codex ChatGPT subscription profiles are managed separately with `fcc accounts`.
+That command lists, switches, refreshes, adds, and forgets private local auth
+snapshots without logging out an upstream account; selections apply only to
+new Codex/helper sessions.
