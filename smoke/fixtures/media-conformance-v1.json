@@ -1,6 +1,31 @@
 {
   "schema": "fcc.media-conformance.v1",
   "payload_policy": "metadata-only; image bytes and source payloads are omitted",
+  "receipt_contract": {
+    "required_fields": ["media_count", "media_type_hash"],
+    "media_count_semantics": "before_and_after_conversion",
+    "hash_input": "ordered block type and declared media type",
+    "payload_free": true,
+    "forbidden_keys": [
+      "base64",
+      "bytes",
+      "content",
+      "data",
+      "image_bytes",
+      "payload",
+      "prompt",
+      "response",
+      "source_data",
+      "tool_arguments"
+    ]
+  },
+  "invariants": {
+    "source_order": "preserve_on_success",
+    "zero_media_after_conversion": "typed_reject",
+    "unsupported_media_route": "reject_before_upstream",
+    "tool_result_association": "tool_use_id",
+    "retry_side_effects": "at_most_one_per_logical_request"
+  },
   "cases": [
     {
       "id": "single-png-base64",
@@ -8,7 +33,13 @@
       "source": "base64",
       "media_type": "image/png",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "preserve_on_success",
+        "association": "none"
+      }
     },
     {
       "id": "single-jpeg-base64",
@@ -16,7 +47,13 @@
       "source": "base64",
       "media_type": "image/jpeg",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/jpeg"],
+        "source_order": "preserve_on_success",
+        "association": "none"
+      }
     },
     {
       "id": "single-webp-base64",
@@ -24,7 +61,13 @@
       "source": "base64",
       "media_type": "image/webp",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/webp"],
+        "source_order": "preserve_on_success",
+        "association": "none"
+      }
     },
     {
       "id": "url-image",
@@ -32,7 +75,13 @@
       "source": "url",
       "media_type": "image/jpeg",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["openai_chat", "openai_responses"]
+      "protocols": ["openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/jpeg"],
+        "source_order": "preserve_on_success",
+        "association": "none"
+      }
     },
     {
       "id": "interleaved-multiple-images",
@@ -40,7 +89,14 @@
       "source": "mixed",
       "media_type": "image/png,image/webp",
       "expected": "preserve_order_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 2,
+        "ordered_media_types": ["image/png", "image/webp"],
+        "source_order": "preserve_on_success",
+        "association": "none",
+        "interleaved_text": true
+      }
     },
     {
       "id": "tool-result-image",
@@ -48,7 +104,14 @@
       "source": "base64",
       "media_type": "image/png",
       "expected": "preserve_association_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "context": "computer_use_screenshot",
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "preserve_on_success",
+        "association": "tool_use_id"
+      }
     },
     {
       "id": "thinking-history-with-image",
@@ -56,7 +119,14 @@
       "source": "base64",
       "media_type": "image/png",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "preserve_on_success",
+        "association": "none",
+        "thinking_history": true
+      }
     },
     {
       "id": "parallel-tools-with-image",
@@ -64,7 +134,14 @@
       "source": "base64",
       "media_type": "image/png",
       "expected": "preserve_association_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "preserve_on_success",
+        "association": "tool_use_id",
+        "parallel_tool_calls": true
+      }
     },
     {
       "id": "oversized-image",
@@ -72,7 +149,14 @@
       "source": "base64",
       "media_type": "image/png",
       "expected": "reject_before_upstream",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "not_applicable_on_reject",
+        "association": "none",
+        "upstream_attempts": 0
+      }
     },
     {
       "id": "unsupported-media-type",
@@ -80,7 +164,14 @@
       "source": "base64",
       "media_type": "image/gif",
       "expected": "reject_before_upstream",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/gif"],
+        "source_order": "not_applicable_on_reject",
+        "association": "none",
+        "upstream_attempts": 0
+      }
     },
     {
       "id": "malformed-base64-source",
@@ -88,7 +179,14 @@
       "source": "base64",
       "media_type": "image/png",
       "expected": "reject_before_upstream",
-      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_chat", "openai_responses"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "not_applicable_on_reject",
+        "association": "none",
+        "upstream_attempts": 0
+      }
     },
     {
       "id": "media-bearing-retry",
@@ -96,7 +194,15 @@
       "source": "base64",
       "media_type": "image/png",
       "expected": "one_metadata_receipt_per_logical_request",
-      "protocols": ["opencode_go_responses", "opencode_go_messages"]
+      "protocols": ["opencode_go_responses", "opencode_go_messages"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "preserve_on_success",
+        "association": "none",
+        "max_receipts_per_logical_request": 1,
+        "max_side_effects_per_logical_request": 1
+      }
     },
     {
       "id": "anthropic-messages-to-openai-chat",
@@ -104,7 +210,13 @@
       "source": "conversion",
       "media_type": "image/png,tool_result",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_chat"]
+      "protocols": ["anthropic_messages", "openai_chat"],
+      "golden": {
+        "media_count": 2,
+        "ordered_media_types": ["image/png", "image/png"],
+        "source_order": "preserve_on_success",
+        "association": "tool_use_id"
+      }
     },
     {
       "id": "anthropic-messages-to-openai-responses",
@@ -112,7 +224,13 @@
       "source": "conversion",
       "media_type": "image/png,tool_result",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["anthropic_messages", "openai_responses"]
+      "protocols": ["anthropic_messages", "openai_responses"],
+      "golden": {
+        "media_count": 2,
+        "ordered_media_types": ["image/png", "image/png"],
+        "source_order": "preserve_on_success",
+        "association": "tool_use_id"
+      }
     },
     {
       "id": "native-anthropic-messages",
@@ -120,7 +238,13 @@
       "source": "structured",
       "media_type": "image/png,tool_result",
       "expected": "preserve_structured_media",
-      "protocols": ["anthropic_messages"]
+      "protocols": ["anthropic_messages"],
+      "golden": {
+        "media_count": 2,
+        "ordered_media_types": ["image/png", "image/png"],
+        "source_order": "preserve_on_success",
+        "association": "tool_use_id"
+      }
     },
     {
       "id": "opencode-go-model-route",
@@ -128,7 +252,13 @@
       "source": "structured",
       "media_type": "image/png",
       "expected": "preserve_or_typed_reject",
-      "protocols": ["opencode_go_responses", "opencode_go_messages"]
+      "protocols": ["opencode_go_responses", "opencode_go_messages"],
+      "golden": {
+        "media_count": 1,
+        "ordered_media_types": ["image/png"],
+        "source_order": "preserve_on_success",
+        "association": "none"
+      }
     }
   ]
 }
