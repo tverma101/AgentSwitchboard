@@ -97,6 +97,82 @@ def test_export_is_deterministic_and_has_no_source_path(tmp_path: Path) -> None:
     assert inspect_bundle(first) == first_summary
 
 
+def test_selective_export_and_import_only_apply_requested_items(tmp_path: Path) -> None:
+    source_store, source_project, _ = _seed_store(tmp_path / "source")
+    source_memory = source_store.list_memories(project_key=str(source_project))[0]
+    source_skill = source_store.list_skills(project_key=str(source_project))[0]
+    bundle_path = tmp_path / "selected.bundle"
+
+    exported = export_from_store(
+        bundle_path,
+        store=source_store,
+        project_key=str(source_project),
+        profile="coding",
+        memory_ids=[int(source_memory["id"])],
+        skill_keys=[str(source_skill["skill_key"])],
+    )
+    bundle = read_bundle(bundle_path)
+    memory_key = str(bundle.manifest["memories"][0]["key"])
+    skill_key = str(bundle.manifest["skills"][0]["key"])
+    assert exported["memories"] == 1
+    assert exported["skills"] == 1
+
+    target_project = tmp_path / "target-project"
+    target_project.mkdir()
+    target_store = LearningStore(tmp_path / "target-learning.db")
+    target_claude = tmp_path / "target-claude"
+
+    skill_plan = import_bundle(
+        bundle_path,
+        store=target_store,
+        target_project_key=str(target_project),
+        claude_config_dir=target_claude,
+        memory_keys=[],
+        skill_keys=[skill_key],
+        dry_run=True,
+    )
+    assert skill_plan["selected"] == {"memories": 0, "skills": 1}
+    assert [action["kind"] for action in skill_plan["actions"]] == ["skill"]
+    assert target_store.counts() == {"memories": 0, "skills": 0}
+
+    applied_skill = import_bundle(
+        bundle_path,
+        store=target_store,
+        target_project_key=str(target_project),
+        claude_config_dir=target_claude,
+        memory_keys=[],
+        skill_keys=[skill_key],
+    )
+    assert applied_skill["applied"] == {"memories": 0, "skills": 1}
+
+    applied_memory = import_bundle(
+        bundle_path,
+        store=target_store,
+        target_project_key=str(target_project),
+        claude_config_dir=target_claude,
+        memory_keys=[memory_key],
+        skill_keys=[],
+    )
+    assert applied_memory["selected"] == {"memories": 1, "skills": 0}
+    assert applied_memory["applied"] == {"memories": 1, "skills": 0}
+    assert target_store.counts() == {"memories": 1, "skills": 1}
+
+    with pytest.raises(BundleError, match="memory selection is not visible"):
+        export_from_store(
+            tmp_path / "missing-memory.bundle",
+            store=source_store,
+            project_key=str(source_project),
+            memory_ids=[999_999],
+        )
+    with pytest.raises(BundleError, match="skill selection is not visible"):
+        export_from_store(
+            tmp_path / "missing-skill.bundle",
+            store=source_store,
+            project_key=str(source_project),
+            skill_keys=["fcc-auto-does-not-exist"],
+        )
+
+
 def test_import_dry_run_round_trip_and_explicit_skill_conflicts(
     tmp_path: Path,
 ) -> None:
@@ -220,7 +296,11 @@ def test_bundle_cli_export_inspect_and_dry_run(
     learning_home = tmp_path / "cli-home"
     monkeypatch.setenv("FCC_LEARNING_HOME", str(learning_home))
     learning_home.mkdir()
-    _, project, _ = _seed_store(tmp_path / "cli", learning_home / "learning.db")
+    store, project, _ = _seed_store(
+        tmp_path / "cli", learning_home / "profiles" / "coding" / "learning.db"
+    )
+    memory_id = int(store.list_memories(project_key=str(project))[0]["id"])
+    skill_key = str(store.list_skills(project_key=str(project))[0]["skill_key"])
     bundle_path = tmp_path / "cli.bundle"
 
     def run(*args: str) -> dict[str, object]:
@@ -236,8 +316,14 @@ def test_bundle_cli_export_inspect_and_dry_run(
         str(project),
         "--profile",
         "coding",
+        "--memory-id",
+        str(memory_id),
+        "--skill-key",
+        skill_key,
     )
     assert exported["profile"] == "coding"
+    bundle = read_bundle(bundle_path)
+    memory_key = str(bundle.manifest["memories"][0]["key"])
     inspected = run("bundle", "inspect", str(bundle_path))
     assert inspected == exported
     planned = run(
@@ -246,6 +332,11 @@ def test_bundle_cli_export_inspect_and_dry_run(
         str(bundle_path),
         "--cwd",
         str(tmp_path / "new-project"),
+        "--memory-key",
+        memory_key,
+        "--skill-key",
+        skill_key,
         "--dry-run",
     )
     assert planned["dry_run"] is True
+    assert planned["selected"] == {"memories": 1, "skills": 1}

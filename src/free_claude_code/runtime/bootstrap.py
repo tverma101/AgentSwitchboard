@@ -6,6 +6,7 @@ from pathlib import Path
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.config.custom_providers import provider_registry_for_settings
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import server_log_path, usage_db_path
 from free_claude_code.config.settings import Settings
@@ -41,14 +42,16 @@ def build_asgi_app(
     )
     openai_auth = OpenAIAuthManager(proxy=settings.openai_proxy)
     openai_factory = partial(_create_openai_provider, auth=openai_auth)
-    provider_constructor = partial(
-        create_provider,
-        injected_factories={"openai": openai_factory},
-    )
-    runtime_factory = partial(
-        ProviderRuntime,
-        provider_constructor=provider_constructor,
-    )
+
+    def runtime_factory(snapshot: Settings) -> ProviderRuntime:
+        """Freeze the built-in plus custom catalog for one runtime generation."""
+        provider_constructor = partial(
+            create_provider,
+            injected_factories={"openai": openai_factory},
+            registry=provider_registry_for_settings(snapshot),
+        )
+        return ProviderRuntime(snapshot, provider_constructor=provider_constructor)
+
     provider_manager = ProviderRuntimeManager(
         settings,
         runtime_factory=runtime_factory,
