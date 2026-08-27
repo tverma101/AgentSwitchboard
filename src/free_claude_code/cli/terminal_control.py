@@ -61,6 +61,7 @@ from free_claude_code.learning.config import (
 from free_claude_code.learning.hooks import claude_config_dir
 from free_claude_code.learning.store import LearningStore, project_identity
 
+from . import codex_accounts
 from .repo_picker import (
     RepoEntry,
     cache_is_fresh,
@@ -183,7 +184,9 @@ def run_control_menu(
             )
         elif choice in {"x", "connect", "codex"}:
             _connect_codex()
-        elif choice in {"p", "providers", "accounts"}:
+        elif choice in {"a", "account", "accounts", "subs", "subscriptions"}:
+            codex_accounts.main(())
+        elif choice in {"p", "providers"}:
             _run_provider_menu(settings)
         elif choice in {"m", "models"}:
             updated_model = _run_models_menu(settings)
@@ -217,7 +220,9 @@ def run_control_menu(
         elif choice in {"q", "quit", "exit"}:
             return
         else:
-            print("Unknown command. Use C, D, P, M, U, N, Y, X, S, L, F, O, R, or Q.")
+            print(
+                "Unknown command. Use C, D, A, P, M, U, N, Y, X, S, L, F, O, R, or Q."
+            )
 
 
 def _print_home(
@@ -246,10 +251,10 @@ def _print_home(
     print(f"Profile   {displayed_profile} (next launch)")
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
     print()
-    print("[Enter/C] Claude   [D] Danger   [O] Repos    [F] Profiles")
-    print("[P] Providers      [M] Models    [U] Usage    [N] Diagnose")
-    print("[Y] Policy         [X] Connect   [S] Settings [L] Logs")
-    print("[R] Restart        [Q] Quit")
+    print("[Enter/C] Claude   [D] Danger   [A] Accounts [O] Repos")
+    print("[F] Profiles       [P] Providers [M] Models   [U] Usage")
+    print("[N] Diagnose       [Y] Policy    [X] Connect  [S] Settings")
+    print("[L] Logs           [R] Restart  [Q] Quit")
 
 
 def _print_policy_status(settings: Settings) -> None:

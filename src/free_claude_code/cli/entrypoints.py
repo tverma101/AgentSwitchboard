@@ -17,6 +17,7 @@ from free_claude_code.learning.config import (
 )
 
 _SERVER_USAGE = "fcc-server [--profile <name>] [--terminal|--no-browser] [--headless]"
+_FCC_USAGE = "fcc <burst|accounts> [options]"
 
 
 def serve(argv: Sequence[str] | None = None) -> None:
@@ -141,14 +142,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         except RuntimeError as exc:
             print(f"fcc burst: {exc}", file=sys.stderr)
             return 1
+    if args and args[0] in {"accounts", "account", "subs", "subscriptions"}:
+        from free_claude_code.cli.codex_accounts import main as run_accounts
+
+        return run_accounts(args[1:])
     if not args or args[0] in {"--help", "-h"}:
-        print("Usage: fcc burst [options]")
+        print(f"Usage: {_FCC_USAGE}")
+        print("  fcc burst ...      opt-in CI burst runner")
+        print("  fcc accounts       manage ChatGPT/Codex subscription accounts")
         return 0
     if args[0] == "--version":
         print(f"free-claude-code {package_version()}")
         return 0
     print(f"fcc: unknown command {args[0]}", file=sys.stderr)
-    print("Usage: fcc burst [options]", file=sys.stderr)
+    print(f"Usage: {_FCC_USAGE}", file=sys.stderr)
     return 2
 
 

@@ -131,6 +131,30 @@ spend, bypass egress policy, or create a second provider engine. The runtime
 uses the existing OpenAI Chat adapter, model cache, routing, and receipts;
 receipts contain provider/model metadata rather than credentials.
 
+## Codex subscription account profiles
+
+The independent `fcc accounts` command manages multiple ChatGPT subscription
+profiles for the installed Codex CLI without changing FCC's separate OpenAI
+provider OAuth state:
+
+```bash
+fcc accounts list
+fcc accounts switch <profile>
+fcc accounts refresh --all
+fcc accounts add <profile>
+fcc accounts forget <profile>
+```
+
+`add` runs the official Codex sign-in/sign-up flow; add `--device-auth` for
+device authorization. FCC removes API-key environment variables before
+starting that login. The manager snapshots the live `$CODEX_HOME/auth.json`
+under `$CODEX_HOME/accounts/profiles/<profile>/auth.json` with private file
+permissions, keeps normalized credential-free usage data, and uses backend
+reported rate-limit durations for labels. Forgetting removes only a local
+snapshot and refuses to remove the currently active account; no upstream
+logout or token revocation is performed. Switching is local and applies to
+new Codex/helper sessions after the documented restart boundary.
+
 ## Context and reasoning
 
 - `FCC_CLAUDE_CONTEXT_TOKENS` defaults to `256000` and accepts `32000` through
