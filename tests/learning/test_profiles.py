@@ -224,7 +224,7 @@ def test_server_profile_option_selects_learning_environment(
     with patch.object(entrypoints, "_run_server_entrypoint") as run:
         entrypoints.serve(["--profile", "school"])
 
-    run.assert_called_once_with(headless=False)
+    run.assert_called_once_with()
     assert os.environ["FCC_LEARNING_PROFILE"] == "school"
     os.environ.pop("FCC_LEARNING_PROFILE", None)
 
