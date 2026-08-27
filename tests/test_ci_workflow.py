@@ -10,12 +10,17 @@ def test_ci_workflow_routes_only_trusted_pull_requests_to_self_hosted_runner() -
         encoding="utf-8"
     )
     expected_runs_on = (
-        "runs-on: ${{ github.event_name == 'pull_request' "
+        "runs-on: ${{ github.event_name == 'workflow_dispatch' "
+        "&& inputs.runner_label || github.event_name == 'pull_request' "
         "&& github.event.pull_request.head.repo.full_name != github.repository "
         "&& 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}"
     )
 
     assert workflow.count(expected_runs_on) == 2
+    assert "workflow_dispatch:" in workflow
+    assert "default: ubuntu-latest" in workflow
+    assert "- harness-burst" in workflow
+    assert workflow.count("vars.HARNESS_RUNNER") == 2
     assert (
         "Never execute fork-controlled code on the persistent self-hosted runner."
         in workflow

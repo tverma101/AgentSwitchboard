@@ -15,6 +15,17 @@ on:
   pull_request:
     branches: [main, master]
   merge_group:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: Emergency runner label when the Mac runner is overloaded
+        required: false
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - harness-burst
+          - harness-local
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,7 +35,7 @@ jobs:
   no-suppressions-or-legacy-annotations:
     name: Ban suppressions and legacy annotations
     # Never execute fork-controlled code on the persistent self-hosted runner.
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -46,7 +57,7 @@ jobs:
   quality:
     name: ${{ matrix.id }}
     # Never execute fork-controlled code on the persistent self-hosted runner.
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
