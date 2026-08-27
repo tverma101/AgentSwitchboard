@@ -169,6 +169,7 @@ def _first_nested_usage_int(usage_info: Any, parent: str, *keys: str) -> int | N
             return value
     return None
 
+
 def _usage_value(value: Any, key: str) -> Any:
     if value is None:
         return None

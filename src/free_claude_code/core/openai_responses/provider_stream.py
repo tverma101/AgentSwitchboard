@@ -395,6 +395,10 @@ class ResponsesProviderStream:
                 # An impossible provider breakdown is less useful than omitting
                 # the suspect cache field and preserving the reported total.
                 cached_tokens = None
+        elif cached_tokens is not None:
+            # Without a valid total, the ledger's input estimate already covers
+            # the prompt. Retaining cached reads would double-count that input.
+            cached_tokens = None
         cache_write_tokens = _non_negative_integer(
             details.get("cache_write_tokens", usage.get("cache_write_tokens"))
         )
@@ -406,7 +410,7 @@ class ResponsesProviderStream:
         self.usage_cache_read_tokens = cached_tokens
         self.usage_cache_write_tokens = cache_write_tokens
         self.usage_output_tokens = output_tokens
-        self.usage_reasoning_tokens = _integer(
+        self.usage_reasoning_tokens = _non_negative_integer(
             output_details.get("reasoning_tokens", usage.get("reasoning_tokens"))
         )
         reasoning = response.get("reasoning")
@@ -417,10 +421,6 @@ class ResponsesProviderStream:
             if isinstance(effective_effort, str) and effective_effort.strip()
             else None
         )
-        elif cached_tokens is not None:
-            # Without a valid total, the ledger's input estimate already covers
-            # the prompt. Retaining cached reads would double-count that input.
-            cached_tokens = None
         usage_fields: dict[str, int] = {}
         if cached_tokens is not None:
             usage_fields["cache_read_input_tokens"] = cached_tokens

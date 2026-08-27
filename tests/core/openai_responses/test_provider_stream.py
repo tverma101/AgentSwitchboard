@@ -590,77 +590,6 @@ def test_responses_provider_stream_ignores_impossible_cached_breakdown() -> None
     }
 
 
-def test_responses_provider_stream_maps_real_cache_write_counter() -> None:
-    stream = ResponsesProviderStream(
-        message_id="msg_test",
-        model="openai/gpt-test",
-        input_tokens=0,
-    )
-    output = stream.start()
-    output.extend(
-        stream.feed(
-            "response.completed",
-            {
-                "response": {
-                    "usage": {
-                        "input_tokens": 20,
-                        "output_tokens": 1,
-                        "input_tokens_details": {
-                            "cached_tokens": 15,
-                            "cache_write_tokens": 3,
-                        },
-                    }
-                }
-            },
-        )
-    )
-
-    message_delta = next(
-        event
-        for event in parse_sse_text("".join(output))
-        if event.event == "message_delta"
-    )
-    assert message_delta.data["usage"] == {
-        "input_tokens": 5,
-        "output_tokens": 1,
-        "cache_read_input_tokens": 15,
-        "cache_creation_input_tokens": 3,
-    }
-
-
-def test_responses_provider_stream_ignores_impossible_cached_breakdown() -> None:
-    stream = ResponsesProviderStream(
-        message_id="msg_test",
-        model="openai/gpt-test",
-        input_tokens=0,
-    )
-    output = stream.start()
-    output.extend(
-        stream.feed(
-            "response.completed",
-            {
-                "response": {
-                    "usage": {
-                        "input_tokens": 10,
-                        "output_tokens": 1,
-                        "input_tokens_details": {"cached_tokens": 20},
-                    }
-                }
-            },
-        )
-    )
-
-    message_delta = next(
-        event
-        for event in parse_sse_text("".join(output))
-        if event.event == "message_delta"
-    )
-    assert message_delta.data["usage"] == {
-        "input_tokens": 10,
-        "output_tokens": 1,
-    }
-
-
 def test_responses_provider_stream_ignores_cache_read_without_valid_total() -> None:
     stream = ResponsesProviderStream(
         message_id="msg_test",
@@ -668,6 +597,7 @@ def test_responses_provider_stream_ignores_cache_read_without_valid_total() -> N
         input_tokens=7,
     )
     output = stream.start()
+    output.extend(stream.feed("response.output_text.delta", {"delta": "visible"}))
     output.extend(
         stream.feed(
             "response.completed",
@@ -700,6 +630,7 @@ def test_responses_provider_stream_ignores_negative_cache_counters() -> None:
         input_tokens=7,
     )
     output = stream.start()
+    output.extend(stream.feed("response.output_text.delta", {"delta": "visible"}))
     output.extend(
         stream.feed(
             "response.completed",
