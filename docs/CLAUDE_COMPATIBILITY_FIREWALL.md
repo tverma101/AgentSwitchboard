@@ -8,7 +8,7 @@
 > Candidate-version promotion/quarantine and the exhaustive compatibility matrix
 > below remain active design work tracked by #31.
 
-Claude Code is an external moving dependency. Harness should treat each Claude
+Claude Code is an external moving dependency. AgentSwitchboard should treat each Claude
 version like a protocol dependency that must be certified before promotion.
 Launching is not sufficient evidence: the literal executable must prove it
 routes through FCC and preserves required stream/tool/session behavior.
@@ -47,7 +47,7 @@ certification failure.
 ## Child-process containment
 
 When the installed Claude version exposes a supported process-wrapper mechanism,
-Harness should reassert the canonical FCC environment for child/background
+AgentSwitchboard should reassert the canonical FCC environment for child/background
 processes rather than maintain a divergent copy. This includes local gateway
 routing/auth, context policy, provider isolation, updater/reporting suppression
 where applicable, and loopback proxy bypass requirements.
@@ -59,7 +59,7 @@ a provider.
 
 The fail-closed settings/env routing conflict check remains part of the
 firewall. Each candidate version must prove that settings precedence still
-behaves as expected. If precedence changes, certification stops until Harness
+behaves as expected. If precedence changes, certification stops until AgentSwitchboard
 updates intentionally.
 
 ## Sanitized fingerprint
@@ -75,7 +75,7 @@ arguments, or raw session ids.
 ## Candidate promotion and quarantine
 
 A candidate becomes certified only when required canaries pass on the same
-binary and Harness revision. If it fails, preserve the last known-good
+binary and AgentSwitchboard revision. If it fails, preserve the last known-good
 certification, mark the candidate quarantined with the failing contract, do not
 weaken routing/auth/context policy, and provide an explicit rollback path.
 

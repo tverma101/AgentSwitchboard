@@ -1,6 +1,6 @@
 # Controller fallback policy harvest
 
-Harness treats same-controller retry, capability helpers, and controller fallback
+AgentSwitchboard treats same-controller retry, capability helpers, and controller fallback
 as different recovery paths. This note records the upstream concepts used by
 `application/fallback_policy.py`; no upstream router runtime is imported.
 
@@ -17,7 +17,7 @@ as different recovery paths. This note records the upstream concepts used by
   - Useful concepts: separate retry/fallback configuration, ordered fallback
     lists, context-window-specific fallback, and target eligibility metadata.
 
-The Harness implementation is a native typed policy, not a port of either
+The AgentSwitchboard implementation is a native typed policy, not a port of either
 runtime.
 
 ## Adapted policy shapes
@@ -44,7 +44,7 @@ runtime.
 ### CCR #1615 — stale cross-protocol body
 
 A fallback executor reused a request transformed for one protocol when trying a
-second protocol. Harness policy therefore requires canonical controller input
+second protocol. AgentSwitchboard policy therefore requires canonical controller input
 for every target switch. Cross-protocol switching also needs a separate
 explicit policy bit. A future executor must construct the target request from
 that canonical input; it may not replay the previous provider body.

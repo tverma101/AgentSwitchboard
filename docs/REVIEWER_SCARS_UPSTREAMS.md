@@ -10,7 +10,7 @@ resident reflection agent, vector database, or autonomous router.
 
 The review-pack and reflection ideas were compared with the Apache License 2.0
 Letta Code reflection note at [b94afce3a9e57fec042c27bc6fb43c43e27c7774](https://github.com/letta-ai/letta-code/blob/b94afce3a9e57fec042c27bc6fb43c43e27c7774/src/agent/subagents/builtin/reflection.md).
-Harness does not vendor that runtime or copy its transcript/memory behavior.
+AgentSwitchboard does not vendor that runtime or copy its transcript/memory behavior.
 
 The local adaptation keeps only these ideas:
 
@@ -24,7 +24,7 @@ The local adaptation keeps only these ideas:
 - prioritize corrections and contradictions over generic summaries;
 - review for secrets, stale content, duplication, and misplaced information.
 
-Harness deliberately rejects Letta-specific mechanics:
+AgentSwitchboard deliberately rejects Letta-specific mechanics:
 
 - no Letta agent/runtime dependency;
 - no transcript-backed lifelong memory repository;

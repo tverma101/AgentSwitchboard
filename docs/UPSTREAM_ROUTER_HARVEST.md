@@ -1,7 +1,7 @@
 # Upstream router and tool harvest plan
 
 > **Status: active implementation-source plan.** This is not a runtime dependency
-> list. Re-verify upstream license/behavior before copying code. Keep Harness's
+> list. Re-verify upstream license/behavior before copying code. Keep AgentSwitchboard's
 > Claude/OpenCode Go compatibility, provider isolation, receipts, retry safety,
 > and context policy as the owned core; harvest bounded pieces instead of
 > rebuilding mature browser/tool/router machinery.
@@ -13,9 +13,9 @@
    whether code was copied, adapted, wrapped, or only behaviorally referenced.
 3. MIT code may be adapted with required attribution/license preservation.
 4. Unclear licensing is reference-only: do not copy source.
-5. Convert relevant upstream bugs into Harness regression fixtures.
+5. Convert relevant upstream bugs into AgentSwitchboard regression fixtures.
 6. A skipped live test is UNVERIFIED, not PASS.
-7. Do not replace the working Harness transport/control plane with a third-party
+7. Do not replace the working AgentSwitchboard transport/control plane with a third-party
    router merely because that router contains useful components.
 
 ## musistudio/claude-code-router
@@ -27,7 +27,7 @@ routing predicates, explicit retry/fallback shapes, Agent Profile UX concepts,
 Fusion MCP composition, observability patterns, and regression cases from
 upstream protocol/image/tool bugs.
 
-Harness-specific rule: helpers augment the controller; they do not silently
+AgentSwitchboard-specific rule: helpers augment the controller; they do not silently
 replace the Muse conversation or escape provider policy.
 
 ## hishamkaram/claude-code-router
@@ -37,7 +37,7 @@ Repository: `https://github.com/hishamkaram/claude-code-router`
 Harvest explicit supported/unsupported/unknown capability truth, evidence
 precedence, pre-provider capability rejection, diagnostic/doctor patterns, and
 managed computer-use executor boundaries. Integrate diagnostics with existing
-Harness receipts rather than creating a second telemetry system.
+AgentSwitchboard receipts rather than creating a second telemetry system.
 
 ## LiteLLM
 
@@ -57,12 +57,12 @@ CLI/MCP support already provides semantic browser interaction, accessibility
 snapshots, forms/navigation, screenshots, persistent sessions, and Claude Code
 integration patterns.
 
-For #21, first determine whether a thin Harness wrapper around Playwright CLI or
+For #21, first determine whether a thin AgentSwitchboard wrapper around Playwright CLI or
 MCP satisfies the requirement. Prefer CLI/skills when that materially reduces
 tool/context overhead; prefer MCP for a persistent specialized browser loop.
 Only write custom CDP machinery for concrete gaps that Playwright cannot cover.
 
-Harness should add provider policy, bounded receipts, session safety, and any
+AgentSwitchboard should add provider policy, bounded receipts, session safety, and any
 missing integration glue rather than recreating browser automation.
 
 ## mac-use
@@ -74,7 +74,7 @@ Accessibility/System Events/AppleScript concepts and can provide code/prior art
 for semantic UI control. Verify license and implementation quality at the exact
 revision before copying anything.
 
-For #20, harvest/wrap suitable semantic AX primitives first. Keep Harness-owned
+For #20, harvest/wrap suitable semantic AX primitives first. Keep AgentSwitchboard-owned
 permission/safety policy, receipts, provider independence, and any missing
 ScreenCaptureKit/CGEvent/AppKit integration.
 
@@ -107,7 +107,7 @@ remaining live gaps as UNVERIFIED.
 
 ## Non-goals
 
-- replacing Harness with another router;
+- replacing AgentSwitchboard with another router;
 - importing an Electron/desktop control plane;
 - adding an autonomous routing LLM;
 - copying unclearly licensed code;

@@ -1,7 +1,7 @@
-# Harness troubleshooting
+# AgentSwitchboard troubleshooting
 
-Use the terminal evidence first. This fork does not open a browser as part of
-server or launcher startup.
+Use the terminal evidence first. AgentSwitchboard does not open a browser as
+part of server or launcher startup.
 
 ## `fccdanger` says the proxy is not reachable
 

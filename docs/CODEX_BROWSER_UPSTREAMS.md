@@ -21,7 +21,7 @@ Useful implementation already proven upstream:
 - cancels plugin elicitation rather than inventing approval;
 - has deterministic fakes for tab discovery/claim, AX actions, screenshots and plugin discovery.
 
-Harness adapts that shape into one lazy local approved helper. The helper is subordinate to the existing #30/#104 capability route and #105 egress policy. Luna remains the controller.
+AgentSwitchboard adapts that shape into one lazy local approved helper. The helper is subordinate to the existing #30/#104 capability route and #105 egress policy. Luna remains the controller.
 
 ## Transport/runtime corroboration: codex-desktop-linux
 
@@ -30,7 +30,7 @@ Harness adapts that shape into one lazy local approved helper. The helper is sub
 - License: MIT
 - Sources: `computer-use-linux/src/bin/codex-chrome-extension-host.rs`, `computer-use-linux/src/chrome_runtime.rs`
 
-This code independently implements the current Unix native-host/browser runtime shape with `UnixListener`/`UnixStream`, bounded socket paths, native-host protocol v2, runtime manifests and app-server proxy lifecycle. It is evidence that the macOS/Linux gap is not a reason to invent a second browser protocol. Harness does not vendor this runtime because the user's Codex/ChatGPT installation already owns the native host.
+This code independently implements the current Unix native-host/browser runtime shape with `UnixListener`/`UnixStream`, bounded socket paths, native-host protocol v2, runtime manifests and app-server proxy lifecycle. It is evidence that the macOS/Linux gap is not a reason to invent a second browser protocol. AgentSwitchboard does not vendor this runtime because the user's Codex/ChatGPT installation already owns the native host.
 
 ## Broader MCP bridge: codex-browser-bridge
 
@@ -38,7 +38,7 @@ This code independently implements the current Unix native-host/browser runtime 
 - Pin: `c692fb017d79d458927c6a8e350dc2d06224d46e`
 - License: MIT
 
-Useful as a protocol/tooling reference: it exposes the Codex desktop browser bridge to MCP clients and demonstrates a much larger tool surface. Harness deliberately does **not** copy all 52 operations into Luna's stable tool prefix. A small semantic helper is easier to authorize, cache and audit.
+Useful as a protocol/tooling reference: it exposes the Codex desktop browser bridge to MCP clients and demonstrates a much larger tool surface. AgentSwitchboard deliberately does **not** copy all 52 operations into Luna's stable tool prefix. A small semantic helper is easier to authorize, cache and audit.
 
 ## Deterministic browser API mock: Storybook
 
@@ -47,7 +47,7 @@ Useful as a protocol/tooling reference: it exposes the Codex desktop browser bri
 - License: MIT
 - Source: `agent-eval/lib/mcp/codex-browser-client-mock.mjs`
 
-Storybook implements the same `agent.browsers.*` shape used by Codex's in-app browser and records behavioral details such as viewport, JPEG screenshots, AX/DOM snapshots, locator deadlines, console logs and CDP capability boundaries. Harness may use the API shape/fixtures for deterministic contract tests, but must not adopt its Playwright-backed mock as a production browser runtime.
+Storybook implements the same `agent.browsers.*` shape used by Codex's in-app browser and records behavioral details such as viewport, JPEG screenshots, AX/DOM snapshots, locator deadlines, console logs and CDP capability boundaries. AgentSwitchboard may use the API shape/fixtures for deterministic contract tests, but must not adopt its Playwright-backed mock as a production browser runtime.
 
 ## Claude MCP registration reference
 

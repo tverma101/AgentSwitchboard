@@ -6,7 +6,7 @@
 > from the Anthropic stream. Remaining work is chiefly zero-Anthropic synthetic
 > Claude UX conformance and deeper exact-shape/continuation coverage (#54-#56).
 
-Harness bridges providers whose reasoning semantics are not identical. Responses
+AgentSwitchboard bridges providers whose reasoning semantics are not identical. Responses
 reasoning items, reasoning-token accounting, visible summaries, opaque
 continuation state, Anthropic `thinking` blocks, Claude UI presentation, and
 final text are separate facts and must remain separately represented.

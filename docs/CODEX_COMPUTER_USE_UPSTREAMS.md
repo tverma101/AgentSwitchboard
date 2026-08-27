@@ -1,6 +1,6 @@
 # Codex Computer Use upstream reuse
 
-Harness must reuse the signed Codex/ChatGPT Computer Use host path rather than building another macOS automation stack.
+AgentSwitchboard must reuse the signed Codex/ChatGPT Computer Use host path rather than building another macOS automation stack.
 
 ## Primary upstream: tmustier/codex-computer-use-mcp
 
@@ -22,14 +22,14 @@ Important implementation facts at this pin:
 - exposes the exact ten observed Computer Use methods: `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `select_text`, `scroll`, `drag`, `press_key`, `type_text`;
 - keeps audit records metadata-only and verifies process-tree cleanup.
 
-Harness should PORT/ADAPT the smallest Python-equivalent broker behavior and tests; do not depend on this Node package at runtime unless that proves materially simpler.
+AgentSwitchboard should PORT/ADAPT the smallest Python-equivalent broker behavior and tests; do not depend on this Node package at runtime unless that proves materially simpler.
 
 ## Secondary upstream: manaflow-ai/codex-cua
 
 - Repository: https://github.com/manaflow-ai/codex-cua
 - Source pin: `3073c1f8ae63f1747b1b8648955c95389d4c7446` (2026-07-27)
 - License: MIT
-- Single ~29.6 KB Python stdlib CLI, especially useful because Harness is Python.
+- Single ~29.6 KB Python stdlib CLI, especially useful because AgentSwitchboard is Python.
 
 Its `AppServer` class demonstrates the minimal transport:
 
@@ -47,17 +47,17 @@ It also demonstrates the critical state rule: interaction tools require a `get_a
 
 OpenAI's public `codex-rs/app-server` documents `mcpServer/tool/call` as a direct call to a configured MCP server. This is the host surface to rely on; do not reverse-engineer the private Computer Use service socket.
 
-## Harness decision
+## AgentSwitchboard decision
 
 Use the upstream pattern:
 
-`Luna/Claude Code -> fixed Harness Computer Use tools -> signed Codex app-server -> signed SkyComputerUseClient -> official Computer Use service -> macOS app`
+`Luna/Claude Code -> fixed AgentSwitchboard Computer Use tools -> signed Codex app-server -> signed SkyComputerUseClient -> official Computer Use service -> macOS app`
 
 Computer Use itself requires **zero Codex model turn**. Codex-model delegation remains a separate optional feature.
 
 ### Cache invariant
 
-The Harness-facing tool definitions must be deterministic and fixed at Claude/Luna session start. Auth status, component paths, plugin versions, app inventories, thread IDs, timestamps, and runtime diagnostics stay outside Luna's cacheable tool/system prefix. A Computer Use call appends only the new tool result.
+The AgentSwitchboard-facing tool definitions must be deterministic and fixed at Claude/Luna session start. Auth status, component paths, plugin versions, app inventories, thread IDs, timestamps, and runtime diagnostics stay outside Luna's cacheable tool/system prefix. A Computer Use call appends only the new tool result.
 
 ### Do not copy blindly
 

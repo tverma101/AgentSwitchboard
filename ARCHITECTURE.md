@@ -1,6 +1,6 @@
 # Architecture
 
-This document is a maintainer-oriented map of Free Claude Code. It explains the
+This document is a maintainer-oriented map of AgentSwitchboard. It explains the
 runtime boundaries, request flows, provider abstraction, configuration model,
 optional messaging bridge, and verification strategy.
 
@@ -15,9 +15,34 @@ the source of truth for the run that produced it.
 
 ## System Overview
 
-Free Claude Code is a local proxy for agent clients. In this personal fork, the
-supported release boundary is terminal-only: `fcc-server` starts the local
-gateway and `fcc-claude`/`fccdanger` run Claude Code through it. The proxy
+AgentSwitchboard is a provider-independent runtime, compatibility gateway, and
+local tool plane for coding agents. The current terminal release uses the
+legacy `fcc-*` compatibility entrypoints while the public product identity is
+AgentSwitchboard. `FCC` in this document therefore names the retained
+compatibility namespace, environment variables, schemas, and receipt fields;
+it is not the product brand.
+
+```text
+Coding clients
+  Claude Code | Codex | Pi | managed messaging sessions
+                    |
+                    v
+        AgentSwitchboard local gateway
+       Anthropic Messages | OpenAI Responses
+                    |
+        routing / policy / context controls
+                    |
+        provider runtime + native adapters
+                    |
+            configured model providers
+
+Local capability plane (provider-independent)
+  browser | computer use | attachments | repo/profile/account controls
+  learning/memory/skills | diagnostics | certification/smoke receipts
+```
+
+The supported release boundary is terminal-only: `fcc-server` starts the local
+gateway and `fcc-claude`/`fccdanger` run Claude Code through it. The gateway
 accepts Anthropic Messages traffic from Claude Code and Pi clients and OpenAI
 Responses traffic from Codex clients, routes requests to a configured upstream
 provider, and preserves the caller's wire protocol.

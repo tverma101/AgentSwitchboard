@@ -142,7 +142,7 @@ uv run pytest smoke/product -n 0 -s --tb=short
 
 - `FCC_ENV_FILE`: explicit dotenv path for startup/config scenarios.
 - `FCC_LIVE_SMOKE=1`: enables live smoke execution.
-- `FCC_ALLOW_NO_PROVIDER_SMOKE=1`: permits no-provider live smoke for harness work.
+- `FCC_ALLOW_NO_PROVIDER_SMOKE=1`: permits no-provider live smoke for AgentSwitchboard work.
 - `FCC_SMOKE_TARGETS`: comma-separated targets, or `all`.
 - `FCC_SMOKE_PROVIDER_MATRIX`: comma-separated provider prefixes to require.
 - `FCC_SMOKE_MODEL_<PROVIDER>`: optional per-provider smoke model override.

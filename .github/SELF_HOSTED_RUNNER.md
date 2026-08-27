@@ -1,7 +1,7 @@
-# Harness self-hosted CI runner
+# AgentSwitchboard self-hosted CI runner
 
-The main `CI` workflow uses the repository variable `HARNESS_RUNNER` for
-trusted repository work. Set it to `harness-local` to use the
+The main `CI` workflow uses the legacy repository variable `HARNESS_RUNNER` for
+trusted AgentSwitchboard repository work. Set it to `harness-local` to use the
 repository-scoped Apple Silicon runner on the designated Mac. If the variable
 is absent, the workflow uses `ubuntu-latest`.
 
@@ -23,12 +23,14 @@ resolution and virtual-environment setup across the serial matrix jobs.
 Hosted fallback remains correct without this optional cache.
 
 The local Python entrypoints set descriptive operating-system process titles via
-`setproctitle`. Activity Monitor should therefore show names such as `Harness
-Server`, `Harness Desktop`, and `Harness CI pytest [gw0]` instead of treating
-every FCC or xdist process as an anonymous Python 3.14 process. xdist workers
-remain separate processes so their CPU and memory still need to be summed when
-measuring a test job; this change labels the work and does not hide or merge
-resource usage. External Node-based clients keep their own process names.
+`setproctitle`. AgentSwitchboard process labels should identify the server,
+desktop, and CI worker instead of treating every FCC or xdist process as an
+anonymous Python 3.14 process. Existing compatibility installations may still
+expose legacy labels until the runtime/packaging migration is completed. xdist
+workers remain separate processes so their CPU and memory still need to be
+summed when measuring a test job; this change labels the work and does not hide
+or merge resource usage. External Node-based clients keep their own process
+names.
 
 On the current 4-performance-core/6-efficiency-core Apple Silicon runner, the
 pytest job sets `PYTEST_XDIST_AUTO_NUM_WORKERS=6`. This uses pytest-xdist's
@@ -56,10 +58,10 @@ The repository `tverma101/Rumple` is the minimal Codespaces host for emergency
 compute when the Mac runner is overloaded or slow. Its checked-in devcontainer
 is derived from the
 [Pwd9000-ML GitHub Actions Runner template](https://github.com/Pwd9000-ML/devcontainer-templates/tree/main/src/github-actions-runner-devcontainer)
-version `1.0.3`. It registers against `tverma101/Harness` with the
+version `1.0.3`. It registers against `tverma101/AgentSwitchboard` with the
 `harness-burst` and `rumple` labels.
 
-Run an explicit burst from a pushed Harness branch:
+Run an explicit burst from a pushed AgentSwitchboard branch:
 
 ```sh
 fcc burst --ref fix/my-branch
@@ -82,19 +84,19 @@ Configure the `GH_OWNER`, `GH_REPOSITORY`, and `GH_TOKEN` Codespaces secrets in
 Rumple before the first launch. The token is never stored in either repository.
 
 The workflow's normal push and pull-request behavior is unchanged: the
-repository's existing `HARNESS_RUNNER` setting continues to control trusted
+repository's existing legacy `HARNESS_RUNNER` setting continues to control trusted
 work, and fork pull requests remain on `ubuntu-latest`. The burst command does
 not modify that setting; only an explicit workflow dispatch can select
 `harness-burst`.
 
 ## Local runner operations
 
-The runner is registered only for `tverma101/Harness`, with the custom label
+The runner is registered only for `tverma101/AgentSwitchboard`, with the custom label
 `harness-local`. It runs as the user LaunchAgent
 `com.tverma101.harness-actions-runner` and keeps its warm workspace and
 toolchain caches outside the repository checkout.
 
-Each quality job exact-syncs and then reuses the Harness environment at:
+Each quality job exact-syncs and then reuses the AgentSwitchboard environment at:
 
 ```text
 $HOME/.cache/harness-actions/venvs/${RUNNER_OS}-${RUNNER_ARCH}-py314

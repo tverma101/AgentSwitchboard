@@ -1,6 +1,6 @@
 # Remaining-issue certification
 
-The remaining Harness backlog is intentionally consolidated onto shared evidence
+The remaining AgentSwitchboard backlog is intentionally consolidated onto shared evidence
 machinery instead of one runner per GitHub issue.
 
 ## Deterministic default
@@ -51,9 +51,9 @@ It creates and closes its own disposable local tab and records only counts,
 sizes, and hashes. It does not invoke an OpenAI/Codex model and does not persist
 tab IDs, URL/page text, or screenshot bytes.
 
-## Native-vs-Harness failure comparison
+## Native-vs-AgentSwitchboard failure comparison
 
-Normalize one native OpenCode observation and one Harness observation for the
+Normalize one native OpenCode observation and one AgentSwitchboard observation for the
 same logical scenario, then compare them with:
 
 ```bash
@@ -62,7 +62,7 @@ uv run python scripts/compare_native_harness.py native.json harness.json \
 ```
 
 The comparator is content-free. Protocol/request/prefix divergence can identify
-a Harness bridge regression, matching known upstream failures preserve upstream
+a AgentSwitchboard bridge regression, matching known upstream failures preserve upstream
 ownership, and insufficient evidence remains `unknown` rather than guessing.
 
 Cache/cost comparison remains owned by the existing

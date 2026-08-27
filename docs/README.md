@@ -1,9 +1,13 @@
-# Harness documentation
+# AgentSwitchboard documentation
 
 This directory contains current user-facing feature and operations references
-for the terminal-only personal Harness fork. The top-level [README](../README.md)
+for the terminal-only AgentSwitchboard release. The top-level [README](../README.md)
 is the install and daily-driver entry point; this index keeps the feature
 boundaries explicit so design notes are not mistaken for release guarantees.
+
+AgentSwitchboard is the current product name. The `fcc*`, `FCC_*`, and
+`free_claude_code` names that appear in commands, configuration, imports, and
+receipts are retained compatibility identifiers, not a competing product brand.
 
 ## Current documentation
 
@@ -13,7 +17,7 @@ boundaries explicit so design notes are not mistaken for release guarantees.
 | [Troubleshooting](TROUBLESHOOTING.md) | Terminal diagnostics for server, route, model, compact/resume, and auth failures | Current release-head runbook |
 | [Claude context policy](CLAUDE_CONTEXT_POLICY.md) | Client context cap, advisory global leash, hard artifact-backed governor, and compact receipts | Current; live receipts are boundary-specific |
 | [Learning, memory, and skills](CLAUDE_LEARNING.md) | Hook lifecycle, local state, safety rails, and CLI controls | Current; optional integration |
-| [Terminal-only startup](ADMIN_TERMINAL_BROWSER.md) | `fcc-server` lifecycle and the no-browser contract | Current personal-fork policy |
+| [Terminal-only startup](ADMIN_TERMINAL_BROWSER.md) | `fcc-server` lifecycle and the no-browser contract | Current AgentSwitchboard policy |
 | [Smoke and receipt guide](../smoke/README.md) | Deterministic and opt-in live validation, receipt schemas, and evidence limits | Current validation guide |
 | [Upstream regression watch](UPSTREAM_REGRESSION_WATCH.md) | Bounded provenance registry for promoted external edge cases | Current manual registry; no hot-path polling |
 | [Diagnostics](DIAGNOSTICS.md) | Terminal-only synthetic route and capability explanations | Current; zero-network diagnostic surface |
@@ -38,6 +42,9 @@ each document begins with an explicit status banner.
 The maintainer architecture map is [ARCHITECTURE.md](../ARCHITECTURE.md). It
 describes package ownership and extension boundaries, not a promise that every
 optional package surface is part of the daily-driver release.
+
+Attribution and licensing are documented in [UPSTREAM.md](../UPSTREAM.md) and
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 ## Evidence vocabulary
 

@@ -1,6 +1,6 @@
 # FCC Learning: persistent memory + automatic skills
 
-FCC Learning keeps the two useful parts of a heavier autonomous harness without running a second agent process:
+AgentSwitchboard's FCC Learning integration keeps the two useful parts of a heavier autonomous harness without running a second agent process. `FCC` here is the retained compatibility namespace, not the product name:
 
 1. remember durable user/project facts across Claude Code sessions;
 2. distill successful, reusable procedures into Claude Code `SKILL.md` files.

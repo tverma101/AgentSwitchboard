@@ -5,7 +5,7 @@ adds shared machinery for the gaps that were actually missing.
 
 ## Added
 
-- metadata-only native OpenCode vs Harness behavior/fault comparator;
+- metadata-only native OpenCode vs AgentSwitchboard behavior/fault comparator;
 - one consolidated deterministic/live certification registry and command;
 - payload-free Codex browser-plugin real-device canary using a disposable tab;
 - bounded reviewer-pack/scar core with DROP-by-default promotion and X1 worker

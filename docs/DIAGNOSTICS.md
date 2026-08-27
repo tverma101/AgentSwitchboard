@@ -35,7 +35,7 @@ fields, each stream receipt includes media and timing metadata:
 The shared `provider.response.error` event emitted by the OpenAI-compatible and
 ChatGPT/Codex provider paths carries the same `fault_domain`, `confidence`, and
 non-empty `evidence_codes` fields. A transport or upstream error without enough
-evidence remains `unknown`; the trace must not guess that the model or Harness
+evidence remains `unknown`; the trace must not guess that the model or AgentSwitchboard
 caused it.
 
 - `media_count`: number of image/document blocks in the request, including
@@ -63,12 +63,12 @@ Request-shape and
 stable-prefix hashes deliberately exclude `metadata` and the Responses
 `prompt_cache_key`: those values partition cache state or carry client
 bookkeeping, but are not logical prompt shape. This keeps session affinity from
-making an otherwise identical native/Harness envelope appear different.
+making an otherwise identical native/AgentSwitchboard envelope appear different.
 
 Responses cache affinity is conservative and metadata-only. A normalized
 opaque caller key or persistent client session header may be forwarded when it
 passes the identifier guard; prompt text, paths, timestamps, secrets, and
 request-shaped identifiers are rejected. This is a source-level invariant,
-not a native-vs-Harness economic result: no cache-key promotion or parity claim
+not a native-vs-AgentSwitchboard economic result: no cache-key promotion or parity claim
 is made without comparable live receipts containing cache read/write, uncached
 input, cost, TTFT, and retry evidence.

@@ -2,9 +2,9 @@
 
 Issue: #47. This slice adds only a manual/build-time metadata adapter and precedence primitive. It does not add network polling, model routing, provider fallback, or a second catalog runtime.
 
-## Current Harness baseline
+## Current AgentSwitchboard baseline
 
-Before this slice, Harness already had:
+Before this slice, AgentSwitchboard already had:
 
 - first-class `supported | unsupported | unknown | accepted-but-unverified` capability states;
 - provider model discovery and cache;
@@ -26,7 +26,7 @@ The remaining #47 gap was the issue's lower-priority **trusted upstream snapshot
   - `model_prices_and_context_window.json`
   - `tests/test_litellm/test_muse_spark_1_2_model_metadata.py`
 
-The schema explicitly treats capability booleans as optional catalog fields and says fields can be absent when unknown or false. Harness therefore does **not** treat a positive snapshot flag as live support proof. Positive public-catalog claims map to `accepted-but-unverified`; explicit `false` maps to `unsupported`; absent fields remain `unknown`.
+The schema explicitly treats capability booleans as optional catalog fields and says fields can be absent when unknown or false. AgentSwitchboard therefore does **not** treat a positive snapshot flag as live support proof. Positive public-catalog claims map to `accepted-but-unverified`; explicit `false` maps to `unsupported`; absent fields remain `unknown`.
 
 Mapped fields:
 
@@ -39,7 +39,7 @@ Mapped fields:
 - `max_input_tokens` -> trusted snapshot context ceiling
 - `/v1/chat/completions`, `/v1/responses`, `/v1/messages` -> explicit protocol families
 
-The current LiteLLM pinned fixture for `meta/muse-spark-1.2-contributor` is especially useful because it independently records a 1,048,576-token input window and explicit tool, parallel-tool, prompt-cache, reasoning, schema, tool-choice, vision, PDF and web-search support plus all three relevant API endpoints. Harness uses that as a deterministic fixture shape, not as permission to silently enable any paid route.
+The current LiteLLM pinned fixture for `meta/muse-spark-1.2-contributor` is especially useful because it independently records a 1,048,576-token input window and explicit tool, parallel-tool, prompt-cache, reasoning, schema, tool-choice, vision, PDF and web-search support plus all three relevant API endpoints. AgentSwitchboard uses that as a deterministic fixture shape, not as permission to silently enable any paid route.
 
 ## CCR model catalog/discovery
 
@@ -50,13 +50,13 @@ The current LiteLLM pinned fixture for `meta/muse-spark-1.2-contributor` is espe
   - `packages/core/src/agents/codex/model-catalog.ts`
   - `packages/core/src/gateway/features/model-discovery.ts`
 
-CCR is useful as a design reference for composing explicitly configured per-model metadata with a catalog entry and exposing capabilities/context to clients. Harness does not import CCR's router, gateway, model-family heuristics, or permissive boolean fallback logic. Its stricter evidence states and provider-isolation policy remain authoritative.
+CCR is useful as a design reference for composing explicitly configured per-model metadata with a catalog entry and exposing capabilities/context to clients. AgentSwitchboard does not import CCR's router, gateway, model-family heuristics, or permissive boolean fallback logic. Its stricter evidence states and provider-isolation policy remain authoritative.
 
-## Harness precedence
+## AgentSwitchboard precedence
 
 From strongest to weakest:
 
-1. `EXPLICIT_OVERRIDE` — operator/Harness override backed by a receipt;
+1. `EXPLICIT_OVERRIDE` — operator/AgentSwitchboard override backed by a receipt;
 2. `PROVIDER_DISCOVERY` — current provider model-list/discovery metadata;
 3. `TRUSTED_UPSTREAM_SNAPSHOT` — manually pinned public catalog snapshot;
 4. `MODEL_FAMILY_HINT` — narrowly maintained family hint, never provider-name inference;

@@ -7,7 +7,7 @@
 > torture, economics around the compact boundary, subagent-crossing-compact, and
 > interrupted-compaction recovery (#59-#61).
 
-Compaction is part of Harness correctness because Harness owns the client-facing
+Compaction is part of AgentSwitchboard correctness because AgentSwitchboard owns the client-facing
 context budget. A lower token count alone is not enough: the literal client must
 prove compaction fires before hard failure, preserves semantic state and routing,
 and does not create pathological cache/economic behavior.
@@ -25,13 +25,13 @@ Do not burn a 256K/1M context merely to prove auto-compact.
 
 ## Requested vs effective window
 
-Every receipt must distinguish Harness-requested context/compact values from the
+Every receipt must distinguish AgentSwitchboard-requested context/compact values from the
 Claude-observed effective values. Environment injection alone is not proof that
 the client honored the requested window.
 
 ## Receipt shape
 
-Use sanitized metadata such as Claude/Harness versions, launch surface,
+Use sanitized metadata such as Claude/AgentSwitchboard versions, launch surface,
 requested/effective windows, gateway/provider/model/protocol identity,
 session-relationship hash, turn index, context before/after compact, trigger
 observation, attempts, duplicate-tool count, timings, structural prefix/tool

@@ -13,7 +13,7 @@ uv run python scripts/certify_open_issues.py --live
 # Local Codex browser plugin canary
 uv run python scripts/smoke_codex_browser.py --family chrome
 
-# Compare normalized native and Harness observations
+# Compare normalized native and AgentSwitchboard observations
 uv run python scripts/compare_native_harness.py native.json harness.json \
   --output comparison.json
 ```

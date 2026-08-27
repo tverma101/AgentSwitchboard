@@ -8,12 +8,12 @@
 > receipt showing materially lower context growth/compaction without semantic
 > loss (#63/#64 follow-up).
 
-Harness should treat compaction as a safety valve rather than the normal result
+AgentSwitchboard should treat compaction as a safety valve rather than the normal result
 of accidental megadumps.
 
 ## Layer 1: managed global Claude policy
 
-Harness may install a clearly delimited managed block into the global Claude
+AgentSwitchboard may install a clearly delimited managed block into the global Claude
 instruction surface. It must preserve unrelated user content outside the block,
 be idempotent, create a recovery copy before first mutation, and uninstall only
 its managed block.
