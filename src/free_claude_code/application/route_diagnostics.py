@@ -14,6 +14,7 @@ from free_claude_code.application.capabilities import (
 )
 from free_claude_code.application.model_metadata import (
     CapabilityEvidenceStatus,
+    CapabilityVerification,
     ProviderModelInfo,
     ReasoningCapabilityStatus,
 )
@@ -119,6 +120,11 @@ def build_route_diagnostic(
     else:
         decision = plan.as_receipt()
 
+    verification = (
+        model_info.capability_verification
+        if model_info is not None
+        else CapabilityVerification()
+    )
     return {
         "diagnostic": "capability_route",
         "network": "none",
@@ -137,6 +143,7 @@ def build_route_diagnostic(
         "required": required.as_dict(),
         "capability_evidence": rows,
         "effective_capabilities": evidence_summary,
+        "verification": verification.as_dict(),
         "policy": {
             "mode": mode.value,
             "controller_failover": False,

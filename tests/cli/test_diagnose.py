@@ -8,6 +8,8 @@ from free_claude_code.application.capabilities import (
 from free_claude_code.application.model_metadata import (
     CapabilityEvidence,
     CapabilityEvidenceStatus,
+    CapabilityVerification,
+    CapabilityVerificationStatus,
     ProviderModelInfo,
 )
 from free_claude_code.cli.diagnose import build_route_diagnostic
@@ -135,6 +137,54 @@ def test_route_diagnostic_uses_cached_model_evidence_without_provider_io() -> No
             "vision_input": "supported",
         },
     }
+
+
+def test_skipped_live_verification_stays_non_evidence() -> None:
+    payload = build_route_diagnostic(
+        _settings(),
+        shapes=("vision",),
+        model_info=ProviderModelInfo(
+            "muse-spark-1.2-contributor",
+            capability_verification=CapabilityVerification(
+                statuses=(("vision_input", CapabilityVerificationStatus.SKIPPED),),
+                evidence_source="live_probe",
+                observed_at="2026-08-24T20:00:00Z",
+                evidence_version="probe-1",
+                evidence_protocol="responses",
+            ),
+        ),
+    )
+
+    assert payload["capability_evidence"][-1]["state"] == "unknown"
+    assert payload["decision"]["decision"] == "rejected"
+    assert payload["verification"] == {
+        "statuses": {"vision_input": "skipped"},
+        "positive_evidence": [],
+        "evidence_source": "live_probe",
+        "observed_at": "2026-08-24T20:00:00Z",
+        "evidence_version": "probe-1",
+        "evidence_protocol": "responses",
+    }
+
+
+def test_verification_receipt_distinguishes_pass_fail_and_unverified() -> None:
+    verification = CapabilityVerification(
+        statuses=(
+            ("vision_input", CapabilityVerificationStatus.PASS),
+            ("native_tools", CapabilityVerificationStatus.FAIL),
+        ),
+        evidence_source="live_probe",
+    )
+
+    assert verification.status_for("vision_input") is CapabilityVerificationStatus.PASS
+    assert verification.status_for("native_tools") is CapabilityVerificationStatus.FAIL
+    assert (
+        verification.status_for("structured_output")
+        is CapabilityVerificationStatus.UNVERIFIED
+    )
+    assert verification.is_positive_evidence("vision_input") is True
+    assert verification.is_positive_evidence("native_tools") is False
+    assert verification.as_dict()["positive_evidence"] == ["vision_input"]
 
 
 def test_route_diagnostic_surfaces_an_allowlisted_helper_plan() -> None:
