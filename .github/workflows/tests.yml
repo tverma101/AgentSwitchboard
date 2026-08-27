@@ -16,6 +16,15 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
+    inputs:
+      runner_label:
+        description: Optional explicit burst runner; normal CI always uses GitHub-hosted Ubuntu
+        required: false
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - harness-burst
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,7 +33,7 @@ concurrency:
 jobs:
   no-suppressions-or-legacy-annotations:
     name: Ban suppressions and legacy annotations
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -45,7 +54,7 @@ jobs:
 
   quality:
     name: ${{ matrix.id }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
