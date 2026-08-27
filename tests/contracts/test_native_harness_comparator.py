@@ -1,7 +1,5 @@
 """Deterministic tests for the metadata-only native/Harness comparator."""
 
-from __future__ import annotations
-
 import pytest
 
 from free_claude_code.core.fault_attribution import FaultConfidence, FaultDomain
@@ -80,7 +78,9 @@ def test_native_success_preserves_existing_harness_fault_attribution() -> None:
     }
 
 
-def test_request_shape_divergence_attributes_bridge_without_guessing_model_fault() -> None:
+def test_request_shape_divergence_attributes_bridge_without_guessing_model_fault() -> (
+    None
+):
     receipt = compare_paths(
         _observation("native"),
         _observation(

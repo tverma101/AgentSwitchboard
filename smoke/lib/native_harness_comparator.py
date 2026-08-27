@@ -5,8 +5,6 @@ wire payloads. It is shared evidence machinery for the remaining OpenCode Go,
 fault-attribution, and certification issues; it is not another provider/router.
 """
 
-from __future__ import annotations
-
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -314,7 +312,9 @@ def _observation_receipt(value: PathObservation) -> dict[str, Any]:
 def _reject_content_bearing_fields(value: object) -> None:
     if isinstance(value, dict):
         forbidden = sorted(
-            key for key in value if isinstance(key, str) and key in _FORBIDDEN_RECEIPT_KEYS
+            key
+            for key in value
+            if isinstance(key, str) and key in _FORBIDDEN_RECEIPT_KEYS
         )
         if forbidden:
             raise ValueError(

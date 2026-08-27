@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Run the bounded local Codex browser-plugin device canary."""
 
-from __future__ import annotations
-
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from free_claude_code.runtime.codex_browser_helper import CodexBrowserHelperAdapter
-from smoke.lib.codex_browser_device import run_browser_device_smoke
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from free_claude_code.runtime.codex_browser_helper import (  # noqa: E402
+    CodexBrowserHelperAdapter,
+)
+from smoke.lib.codex_browser_device import run_browser_device_smoke  # noqa: E402
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -1,7 +1,5 @@
 """Metadata-only real-device canary for the installed Codex browser plugin."""
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import threading
@@ -22,7 +20,7 @@ def run_browser_device_smoke(
     adapter: BrowserAdapter,
     *,
     family: str,
-    url: str = "data:text/html,<title>FCC Browser Smoke</title><main>FCC browser smoke</main>",
+    url: str = "https://example.com/",
 ) -> dict[str, Any]:
     """Create a disposable tab, inspect it, screenshot it, and close it.
 

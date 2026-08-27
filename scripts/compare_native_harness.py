@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Compare normalized native OpenCode and Harness observations."""
 
-from __future__ import annotations
-
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from smoke.lib.native_harness_comparator import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from smoke.lib.native_harness_comparator import (  # noqa: E402
     compare_paths,
     load_observation,
     write_comparison,

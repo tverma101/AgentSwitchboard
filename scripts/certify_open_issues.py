@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Run shared deterministic/live certification steps for remaining issues."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -11,7 +9,11 @@ import sys
 import time
 from pathlib import Path
 
-from smoke.lib.open_issue_certification import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from smoke.lib.open_issue_certification import (  # noqa: E402
     CERTIFICATION_STEPS,
     CertificationStep,
 )
@@ -49,7 +51,9 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _selected_steps(issues: set[int] | None, *, include_live: bool) -> list[CertificationStep]:
+def _selected_steps(
+    issues: set[int] | None, *, include_live: bool
+) -> list[CertificationStep]:
     return [
         step
         for step in CERTIFICATION_STEPS
@@ -119,8 +123,7 @@ def main() -> int:
         print(json.dumps([_plan(step) for step in selected], indent=2, sort_keys=True))
         return 0
 
-    root = Path(__file__).resolve().parents[1]
-    results = [_run_step(step, root=root) for step in selected]
+    results = [_run_step(step, root=REPO_ROOT) for step in selected]
     receipt = {
         "schema": "fcc.open-issue-certification.v1",
         "live_included": bool(args.live),

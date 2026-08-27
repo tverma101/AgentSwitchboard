@@ -5,8 +5,6 @@ It prevents every issue from growing its own runner and keeps live/provider/devi
 claims explicitly separate from deterministic evidence.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Literal
 

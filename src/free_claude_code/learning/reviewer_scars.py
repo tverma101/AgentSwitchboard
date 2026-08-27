@@ -6,16 +6,15 @@ credentials. Conservative reflection/deduplication concepts are adapted from
 Letta Code's Apache-2.0 reflection agent; see docs/REVIEWER_SCARS_UPSTREAMS.md.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
 import re
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from free_claude_code.learning.config import profile_home
 
@@ -183,18 +182,26 @@ class SubagentExitTicket:
     next_action: str = "-"
 
     def compact(self) -> str:
+        blocker = _safe_field(self.blocker, "blocker")
+        cave = _safe_field(self.cave, "cave")
+        next_action = _safe_field(self.next_action, "next_action")
+        _validate_evidence(self.evidence)
         evidence = ",".join(self.evidence) if self.evidence else "-"
         value = (
             f"X1|st={self.status.value}|impl={int(self.implemented)}|"
-            f"verify={self.verification.value}|blk={self.blocker}|cave={self.cave}|"
-            f"learn={int(self.learn_candidate)}|ev={evidence}|next={self.next_action}"
+            f"verify={self.verification.value}|blk={blocker}|cave={cave}|"
+            f"learn={int(self.learn_candidate)}|ev={evidence}|next={next_action}"
         )
-        _validate_compact_text(value, "exit ticket", MAX_EXIT_TICKET_BYTES, allow_pipe=True)
+        _validate_compact_text(
+            value, "exit ticket", MAX_EXIT_TICKET_BYTES, allow_pipe=True
+        )
         return value
 
     @classmethod
     def parse(cls, value: str) -> SubagentExitTicket:
-        _validate_compact_text(value, "exit ticket", MAX_EXIT_TICKET_BYTES, allow_pipe=True)
+        _validate_compact_text(
+            value, "exit ticket", MAX_EXIT_TICKET_BYTES, allow_pipe=True
+        )
         parts = value.split("|")
         if not parts or parts[0] != "X1":
             raise ReviewerScarError("exit ticket must start with X1")
@@ -231,14 +238,16 @@ def select_reviewer_packs(fingerprint: TaskFingerprint) -> tuple[ReviewerPack, .
     risks = {_normalized_signal(value) for value in fingerprint.risks}
     selected: set[ReviewerPack] = set()
 
-    if operations.intersection({"benchmark", "performance", "optimize"}) or risks.intersection(
+    if operations.intersection(
+        {"benchmark", "performance", "optimize"}
+    ) or risks.intersection(
         {"cost", "large-context", "repeated-work", "token-pressure"}
     ):
         selected.add(ReviewerPack.EFFICIENCY)
 
-    if scopes.intersection({"macos", "browser", "provider", "github", "ci", "native"}) or operations.intersection(
-        {"performance", "compatibility", "integration"}
-    ):
+    if scopes.intersection(
+        {"macos", "browser", "provider", "github", "ci", "native"}
+    ) or operations.intersection({"performance", "compatibility", "integration"}):
         selected.add(ReviewerPack.EDGE_CASES)
 
     if operations.intersection(
@@ -246,9 +255,9 @@ def select_reviewer_packs(fingerprint: TaskFingerprint) -> tuple[ReviewerPack, .
     ) or risks.intersection({"false-completion", "staged-vs-merged"}):
         selected.add(ReviewerPack.IMPLEMENTATION_TRUTH)
 
-    if operations.intersection({"new-helper", "new-runtime", "cleanup", "new-router"}) or risks.intersection(
-        {"duplicate-code", "duplicate-runtime"}
-    ):
+    if operations.intersection(
+        {"new-helper", "new-runtime", "cleanup", "new-router"}
+    ) or risks.intersection({"duplicate-code", "duplicate-runtime"}):
         selected.add(ReviewerPack.REDUNDANCY)
 
     return tuple(pack for pack in _PACK_ORDER if pack in selected)
@@ -441,7 +450,7 @@ class ScarRegistry:
 
     def _write(self, records: tuple[ScarRecord, ...]) -> None:
         self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if self._path.exists() and self._path.is_symlink():
+        if self._path.is_symlink():
             raise ReviewerScarError("reviewer scar registry must not be a symlink")
         payload = {
             "schema": SCAR_SCHEMA,
@@ -470,10 +479,8 @@ class ScarRegistry:
         finally:
             if descriptor is not None:
                 os.close(descriptor)
-            try:
+            with suppress(FileNotFoundError):
                 temporary.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def _scar_id(
@@ -521,10 +528,14 @@ def _validate_compact_text(
 
 
 def _validate_evidence(evidence: tuple[str, ...] | list[str]) -> None:
+    if not isinstance(evidence, tuple | list):
+        raise ReviewerScarError("reviewer scar evidence must be an array")
     if len(evidence) > MAX_EVIDENCE_REFS:
         raise ReviewerScarError("too many reviewer scar evidence references")
     for item in evidence:
         _validate_compact_text(item, "evidence", 256)
+        if "," in item:
+            raise ReviewerScarError("evidence must not contain commas")
 
 
 def _normalized_signal(value: str) -> str:
@@ -549,6 +560,7 @@ def _record_mapping(record: ScarRecord) -> dict[str, Any]:
 def _record_from_mapping(value: object) -> ScarRecord:
     if not isinstance(value, dict):
         raise ReviewerScarError("reviewer scar record must be an object")
+    record_data = cast(dict[str, Any], value)
     required = {
         "scar_id",
         "pack",
@@ -561,14 +573,14 @@ def _record_from_mapping(value: object) -> ScarRecord:
         "evidence",
         "history",
     }
-    if set(value) != required:
+    if set(record_data) != required:
         raise ReviewerScarError("reviewer scar record fields are invalid")
-    scar_id = _safe_field(str(value["scar_id"]), "scar_id")
-    scope = _safe_field(str(value["scope"]), "scope")
-    condition = _safe_field(str(value["condition"]), "condition")
-    rule = _safe_field(str(value["rule"]), "rule")
-    evidence_raw = value["evidence"]
-    history_raw = value["history"]
+    scar_id = _safe_field(record_data["scar_id"], "scar_id")
+    scope = _safe_field(record_data["scope"], "scope")
+    condition = _safe_field(record_data["condition"], "condition")
+    rule = _safe_field(record_data["rule"], "rule")
+    evidence_raw = record_data["evidence"]
+    history_raw = record_data["history"]
     if not isinstance(evidence_raw, list) or not all(
         isinstance(item, str) for item in evidence_raw
     ):
@@ -581,14 +593,14 @@ def _record_from_mapping(value: object) -> ScarRecord:
     history = tuple(ScarState(item) for item in history_raw)
     record = ScarRecord(
         scar_id=scar_id,
-        pack=ReviewerPack(value["pack"]),
-        kind=ScarKind(value["kind"]),
+        pack=ReviewerPack(record_data["pack"]),
+        kind=ScarKind(record_data["kind"]),
         scope=scope,
         condition=condition,
         rule=rule,
-        state=ScarState(value["state"]),
-        prevention=PreventionClass(value["prevention"]),
-        evidence=tuple(evidence_raw),
+        state=ScarState(record_data["state"]),
+        prevention=PreventionClass(record_data["prevention"]),
+        evidence=tuple(cast(list[str], evidence_raw)),
         history=history,
     )
     expected = _scar_id(

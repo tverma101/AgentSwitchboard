@@ -1,7 +1,5 @@
 """Deterministic contracts for the real-device browser canary wrapper."""
 
-from __future__ import annotations
-
 import base64
 import threading
 from collections.abc import Mapping
