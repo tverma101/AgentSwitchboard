@@ -37,7 +37,7 @@ jobs:
       - name: Format only the new account files
         shell: bash
         run: |
-          python - <<'PY'
+          uv run --no-sync python - <<'PY'
           from pathlib import Path
 
           path = Path("src/free_claude_code/cli/codex_accounts.py")
