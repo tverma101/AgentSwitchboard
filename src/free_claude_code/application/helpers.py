@@ -303,7 +303,7 @@ class ApprovedHelperExecutor:
                 raise HelperIndeterminateError(
                     f"{reason}: {helper.helper_id}",
                     receipt,
-                )
+                ) from None
             receipt = _receipt(
                 helper,
                 operation,
@@ -314,7 +314,7 @@ class ApprovedHelperExecutor:
             raise HelperTimeoutError(
                 f"read-only helper timed out and cancelled: {helper.helper_id}",
                 receipt,
-            )
+            ) from None
 
         duration_ms = _duration_ms(started)
         if not succeeded:

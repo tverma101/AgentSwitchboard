@@ -79,7 +79,9 @@ def test_registry_is_explicit_deterministic_and_freezable() -> None:
 
 def test_existing_capability_router_selects_registered_helper() -> None:
     registry = ApprovedHelperRegistry()
-    registry.register(_computer_helper(lambda operation, arguments, cancel: {"ok": True}))
+    registry.register(
+        _computer_helper(lambda operation, arguments, cancel: {"ok": True})
+    )
     registry.freeze()
 
     router = CapabilityRouter(
@@ -121,7 +123,9 @@ def test_existing_capability_router_selects_registered_helper() -> None:
 
 def test_execute_planned_rejects_helper_not_selected_by_router() -> None:
     registry = ApprovedHelperRegistry()
-    registry.register(_computer_helper(lambda operation, arguments, cancel: {"ok": True}))
+    registry.register(
+        _computer_helper(lambda operation, arguments, cancel: {"ok": True})
+    )
     registry.freeze()
     router = CapabilityRouter()
     plan = router.plan(
