@@ -38,6 +38,19 @@ def test_ci_workflow_routes_only_trusted_pull_requests_to_self_hosted_runner() -
     assert "hw.perflevel0.physicalcpu" in workflow
 
 
+def test_ci_processes_are_labeled_for_local_observability() -> None:
+    conftest = (_repo_root() / "tests" / "conftest.py").read_text(encoding="utf-8")
+    identity = (
+        _repo_root() / "src" / "free_claude_code" / "core" / "process_identity.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'set_process_identity("CI pytest"' in conftest
+    assert "setproctitle.setproctitle(title)" in identity
+    assert '"setproctitle>=1.3.7"' in (_repo_root() / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_issue_validator_remains_on_hosted_runner() -> None:
     workflow = (
         _repo_root() / ".github" / "workflows" / "validate-bug-report-version.yml"

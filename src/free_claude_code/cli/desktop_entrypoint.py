@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from free_claude_code.cli.desktop_assets import export_app_icon
+from free_claude_code.core.process_identity import set_process_identity
 
 
 def launch(argv: Sequence[str] | None = None) -> None:
@@ -21,6 +22,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         print("FCC Desktop is supported on Windows and macOS.", file=sys.stderr)
         raise SystemExit(1)
 
+    set_process_identity("Desktop")
     from free_claude_code.cli.desktop_tray import launch as launch_tray
 
     launch_tray()

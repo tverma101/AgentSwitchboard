@@ -14,6 +14,7 @@ from free_claude_code.cli.process_registry import (
     register_pid,
     unregister_pid,
 )
+from free_claude_code.core.process_identity import set_process_identity
 
 PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
@@ -71,6 +72,7 @@ def run_client_process(
 ) -> None:
     """Run a client CLI command and mirror its exit code."""
 
+    set_process_identity(f"{display_name} launcher")
     process: subprocess.Popen[bytes] | None = None
     try:
         if cwd is None:

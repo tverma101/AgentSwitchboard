@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The local release head is version
-`4.54.0`; examples below describe this checkout, not every feature proposed in
+`4.55.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. Live smoke receipts retain the package version that
 was installed when each receipt was captured; read the receipt's own metadata
 before treating it as evidence for a later release head.
@@ -102,6 +102,12 @@ not change the terminal-only browser policy.
 
 To print the installed Free Claude Code version without starting the server,
 run `fcc-server --version`.
+
+Long-lived FCC commands publish descriptive process titles on macOS. Activity
+Monitor can therefore identify `Harness Server`, `Harness Desktop`, and the
+client launcher that owns a local session instead of showing only the embedded
+Python interpreter name. The title is observability metadata; child clients
+and parallel test workers remain separately measurable processes.
 
 Startup never launches a desktop browser or a terminal-browser child. The server
 reports its local control endpoint for explicit local clients:

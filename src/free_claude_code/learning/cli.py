@@ -19,6 +19,7 @@ from free_claude_code.core.claude_compatibility import (
     default_process_wrapper_path,
     inspect_claude_compatibility,
 )
+from free_claude_code.core.process_identity import set_process_identity
 
 from .bundle import BundleError, export_from_store, import_bundle, inspect_bundle
 from .config import (
@@ -339,6 +340,7 @@ def _context_artifact_root() -> str:
 
 
 def main() -> None:
+    set_process_identity("Learning")
     args = _parser().parse_args()
     if args.command == "install":
         changed = install_hooks()

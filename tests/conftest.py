@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.process_identity import set_process_identity
 from tests.providers.support import immediate_admission
 
 # Set mock environment BEFORE any imports that use Settings
@@ -19,6 +20,7 @@ os.environ["PTB_TIMEDELTA"] = "1"
 os.environ["ANTHROPIC_AUTH_TOKEN"] = ""
 
 Settings.model_config = {**Settings.model_config, "env_file": None}
+set_process_identity("CI pytest", os.environ.get("PYTEST_XDIST_WORKER"))
 
 
 @pytest.fixture(autouse=True)
