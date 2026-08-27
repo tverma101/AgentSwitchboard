@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
-      - name: Apply pinned Harlequin app-base wiring
+      - name: Apply pinned Harlequin wiring and auth completion copy
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -43,6 +43,16 @@ jobs:
               "table.coordinate_to_cell_key(table.cursor_coordinate)",
           )
           path.write_text(text)
+
+          login = Path("src/free_claude_code/providers/openai_codex/login.py")
+          login_text = login.read_text()
+          login_text = login_text.replace(
+              '                    "Connected",\n'
+              '                    "OpenAI is connected to Free Claude Code. You can close this tab.",',
+              '                    "Authorization received",\n'
+              '                    "CodeSwitchyard is finishing sign-in. Return to the terminal for final connection status.",',
+          )
+          login.write_text(login_text)
           PY
       - name: Lock and normalize transplanted TUI
         run: |
@@ -54,6 +64,7 @@ jobs:
             src/free_claude_code/cli/entrypoints.py \
             src/free_claude_code/cli/harlequin_app_base.py \
             src/free_claude_code/cli/harlequin_theme.py \
+            src/free_claude_code/providers/openai_codex/login.py \
             tests/cli/test_control_tui.py
           uv run ruff check --fix \
             src/free_claude_code/cli/control_tui.py \
@@ -61,6 +72,7 @@ jobs:
             src/free_claude_code/cli/entrypoints.py \
             src/free_claude_code/cli/harlequin_app_base.py \
             src/free_claude_code/cli/harlequin_theme.py \
+            src/free_claude_code/providers/openai_codex/login.py \
             tests/cli/test_control_tui.py
           uv run ty check \
             src/free_claude_code/cli/control_tui.py \
@@ -68,8 +80,9 @@ jobs:
             src/free_claude_code/cli/entrypoints.py \
             src/free_claude_code/cli/harlequin_app_base.py \
             src/free_claude_code/cli/harlequin_theme.py \
+            src/free_claude_code/providers/openai_codex/login.py \
             tests/cli/test_control_tui.py
-          uv run pytest -q tests/cli/test_control_tui.py
+          uv run pytest -q tests/cli/test_control_tui.py tests/providers/test_openai_codex_auth.py
       - name: Commit normalized branch
         run: |
           if git diff --quiet; then
@@ -83,6 +96,7 @@ jobs:
             src/free_claude_code/cli/entrypoints.py \
             src/free_claude_code/cli/harlequin_app_base.py \
             src/free_claude_code/cli/harlequin_theme.py \
+            src/free_claude_code/providers/openai_codex/login.py \
             tests/cli/test_control_tui.py
           git commit -m "chore: normalize transplanted Textual control center"
           git push
