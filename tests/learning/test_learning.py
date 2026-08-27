@@ -85,6 +85,16 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(
     assert any(
         "free_claude_code.learning.stop_hook" in command for command in stop_commands
     )
+    assert any(
+        "hook subagent-start" in hook["command"]
+        for group in payload["hooks"]["SubagentStart"]
+        for hook in group["hooks"]
+    )
+    assert any(
+        "hook subagent-stop" in hook["command"]
+        for group in payload["hooks"]["SubagentStop"]
+        for hook in group["hooks"]
+    )
     assert (tmp_path / "settings.json.fcc-learning.bak").exists()
     assert (tmp_path / "skills").is_dir()
 
@@ -98,6 +108,8 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(
     assert stop_commands == ["printf existing"]
     assert "SessionStart" not in restored["hooks"]
     assert "UserPromptSubmit" not in restored["hooks"]
+    assert "SubagentStart" not in restored["hooks"]
+    assert "SubagentStop" not in restored["hooks"]
 
 
 def test_apply_learning_result_rejects_low_confidence_and_writes_global_skill(

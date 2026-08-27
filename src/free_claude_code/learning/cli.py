@@ -39,6 +39,9 @@ from .context_policy import (
     uninstall_context_policy,
 )
 from .hooks import claude_config_dir, install_hooks, run_hook, uninstall_hooks
+from .reviewer_config import ReviewerPackSettings
+from .reviewer_flow import reviewer_status
+from .reviewer_scars import ReviewerPack, ReviewerScarError, ScarRegistry, ScarState
 from .stop_hook import drain_queue
 from .store import LearningStore, learning_home, project_identity
 
@@ -161,6 +164,37 @@ def _parser() -> argparse.ArgumentParser:
     skill_rollback.add_argument("skill_key")
     skill_rollback.add_argument("revision", type=int)
 
+    reviewer = subcommands.add_parser(
+        "reviewer", help="inspect reviewer packs and compact scar state"
+    )
+    reviewer_commands = reviewer.add_subparsers(dest="reviewer_command", required=True)
+    reviewer_list = reviewer_commands.add_parser("list")
+    _profile(reviewer_list)
+    reviewer_enable = reviewer_commands.add_parser(
+        "enable", help="force one reviewer pack on for this profile"
+    )
+    _profile(reviewer_enable)
+    reviewer_enable.add_argument(
+        "pack", choices=tuple(pack.value for pack in ReviewerPack)
+    )
+    reviewer_disable = reviewer_commands.add_parser(
+        "disable", help="turn one reviewer pack off for this profile"
+    )
+    _profile(reviewer_disable)
+    reviewer_disable.add_argument(
+        "pack", choices=tuple(pack.value for pack in ReviewerPack)
+    )
+    reviewer_forget = reviewer_commands.add_parser(
+        "forget", help="mark one scar stale without deleting its audit record"
+    )
+    _profile(reviewer_forget)
+    reviewer_forget.add_argument("scar_id")
+    reviewer_supersede = reviewer_commands.add_parser(
+        "supersede", help="mark one scar superseded without deleting its audit record"
+    )
+    _profile(reviewer_supersede)
+    reviewer_supersede.add_argument("scar_id")
+
     bundle = subcommands.add_parser(
         "bundle", help="export, inspect, or import portable learning state"
     )
@@ -221,7 +255,10 @@ def _parser() -> argparse.ArgumentParser:
     queue_drain.add_argument("--limit", type=int, default=2)
 
     hook = subcommands.add_parser("hook", help=argparse.SUPPRESS)
-    hook.add_argument("event", choices=("session-start", "user-prompt"))
+    hook.add_argument(
+        "event",
+        choices=("session-start", "user-prompt", "subagent-start", "subagent-stop"),
+    )
     _profile(hook)
     return parser
 
@@ -323,6 +360,28 @@ def _profile_command(args: argparse.Namespace) -> dict[str, object]:
     raise LearningProfileError("unknown profile command")
 
 
+def _reviewer_command(args: argparse.Namespace) -> dict[str, object]:
+    if args.reviewer_command == "list":
+        return reviewer_status(profile=args.profile)
+    if args.reviewer_command in {"enable", "disable"}:
+        pack = ReviewerPack(args.pack)
+        overrides = ReviewerPackSettings(args.profile).set_override(
+            pack, args.reviewer_command == "enable"
+        )
+        return {
+            "pack": pack.value,
+            "enabled": args.reviewer_command == "enable",
+            "overrides": {
+                item.value: value for item, value in sorted(overrides.items())
+            },
+        }
+    state = (
+        ScarState.STALE if args.reviewer_command == "forget" else ScarState.SUPERSEDED
+    )
+    record = ScarRegistry(args.profile).update_state(args.scar_id, state)
+    return {"updated": record.as_dict()}
+
+
 def _context_artifact_root() -> str:
     configured = os.environ.get("FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR", "").strip()
     if not configured:
@@ -407,6 +466,14 @@ def main() -> None:
         try:
             result = _profile_command(args)
         except LearningProfileError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+
+    if args.command == "reviewer":
+        try:
+            result = _reviewer_command(args)
+        except (LearningProfileError, ReviewerScarError) as exc:
             raise SystemExit(str(exc)) from exc
         print(json.dumps(result, indent=2, sort_keys=True))
         return

@@ -16,7 +16,9 @@ ALLOWED_PACKAGE_DEPENDENCIES: dict[str, set[str]] = {
     "application": {"config", "core", "usage"},
     "messaging": {"core"},
     "providers": {"application", "config", "core"},
-    "api": {"application", "config", "core", "usage"},
+    # Loopback Admin owns the local reviewer control surface in addition to
+    # the runtime/config adapters.
+    "api": {"application", "config", "core", "learning", "usage"},
     # The terminal route diagnostic is an application composition adapter;
     # it performs no provider I/O and relies on application-owned policy.
     "cli": {"application", "config", "core", "learning"},

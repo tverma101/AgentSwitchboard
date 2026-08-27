@@ -311,6 +311,21 @@ def test_admin_static_no_longer_fetches_global_status_header():
     assert "modelBadge" not in script
 
 
+def test_admin_static_exposes_reviewer_controls():
+    html = Path("src/free_claude_code/api/admin_static/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="view-reviewer"' in html
+    assert 'id: "reviewer"' in script
+    assert 'api("/admin/api/reviewer")' in script
+    assert "/admin/api/reviewer/packs/" in script
+    assert "/admin/api/reviewer/scars/" in script
+
+
 def test_admin_static_hides_managed_source_label():
     script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
         encoding="utf-8"

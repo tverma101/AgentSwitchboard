@@ -50,6 +50,13 @@ const VIEW_GROUPS = [
     containerId: null,
   },
   {
+    id: "reviewer",
+    label: "Reviewers",
+    title: "Reviewers",
+    sections: [],
+    containerId: null,
+  },
+  {
     id: "messaging",
     label: "Messaging",
     title: "Messaging",
@@ -123,6 +130,7 @@ async function load() {
   await refreshConnectedAccounts();
   await hydrateModelOptions();
   await loadUsage();
+  await loadReviewer();
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
@@ -1396,6 +1404,113 @@ async function loadUsage(days = state.usageDays) {
   }
 }
 
+async function loadReviewer() {
+  try {
+    renderReviewer(await api("/admin/api/reviewer"));
+  } catch (error) {
+    byId("reviewerPackGrid").textContent = `Could not load reviewer state: ${error.message}`;
+    byId("reviewerScarGrid").replaceChildren();
+  }
+}
+
+function renderReviewer(status) {
+  const packGrid = byId("reviewerPackGrid");
+  const scarGrid = byId("reviewerScarGrid");
+  const empty = byId("reviewerEmptyState");
+  const profileLabel = byId("reviewerProfileLabel");
+  packGrid.replaceChildren();
+  scarGrid.replaceChildren();
+  profileLabel.textContent = `Profile: ${status.profile || "default"}`;
+
+  (status.packs || []).forEach((pack) => {
+    const card = document.createElement("article");
+    card.className = "reviewer-pack-card";
+    const title = document.createElement("strong");
+    title.textContent = pack.pack;
+    const mode = document.createElement("span");
+    mode.className = `status-pill ${pack.mode === "disabled" ? "neutral" : "ok"}`;
+    mode.textContent = pack.mode;
+    const actions = document.createElement("div");
+    actions.className = "reviewer-actions";
+    actions.append(
+      reviewerActionButton("Enable", () => setReviewerPack(pack.pack, true), pack.mode === "enabled"),
+      reviewerActionButton("Disable", () => setReviewerPack(pack.pack, false), pack.mode === "disabled"),
+    );
+    card.append(title, mode, actions);
+    packGrid.appendChild(card);
+  });
+
+  const scars = status.scars || [];
+  empty.hidden = scars.length !== 0;
+  scars.forEach((scar) => {
+    const card = document.createElement("article");
+    card.className = "reviewer-scar-card";
+    const heading = document.createElement("div");
+    heading.className = "reviewer-scar-heading";
+    const title = document.createElement("strong");
+    title.textContent = `${scar.kind} · ${scar.scope}`;
+    const state = document.createElement("span");
+    state.className = `status-pill ${scarStateClass(scar.state)}`;
+    state.textContent = scar.state;
+    heading.append(title, state);
+    const details = document.createElement("small");
+    details.textContent = `${scar.scar_id} · ${scar.condition} · ${scar.rule}`;
+    const actions = document.createElement("div");
+    actions.className = "reviewer-actions";
+    const active = ["OBSERVED", "REPRODUCED", "VERIFIED", "UPSTREAM_BUG", "MITIGATED"].includes(scar.state);
+    actions.append(
+      reviewerActionButton("Forget", () => updateReviewerScar(scar.scar_id, "forget"), !active),
+      reviewerActionButton("Supersede", () => updateReviewerScar(scar.scar_id, "supersede"), !active),
+    );
+    card.append(heading, details, actions);
+    scarGrid.appendChild(card);
+  });
+}
+
+function reviewerActionButton(label, action, disabled = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary-button";
+  button.textContent = label;
+  button.disabled = disabled;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await action();
+    } catch (error) {
+      showMessage(error.message, "error");
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+function scarStateClass(state) {
+  if (["VERIFIED", "MITIGATED", "UPSTREAM_BUG"].includes(state)) return "ok";
+  if (["STALE", "SUPERSEDED", "DISPROVEN"].includes(state)) return "neutral";
+  return "warn";
+}
+
+async function setReviewerPack(pack, enabled) {
+  await api(`/admin/api/reviewer/packs/${encodeURIComponent(pack)}`, {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+  await loadReviewer();
+  showMessage(`${pack}: ${enabled ? "enabled" : "disabled"}`, "ok");
+}
+
+async function updateReviewerScar(scarId, action) {
+  const label = action === "forget" ? "stale" : "superseded";
+  if (!window.confirm(`Mark this scar ${label}? Its audit record will remain.`)) return;
+  await api(`/admin/api/reviewer/scars/${encodeURIComponent(scarId)}/${action}`, {
+    method: "POST",
+    body: "{}",
+  });
+  await loadReviewer();
+  showMessage(`Scar marked ${label}`, "ok");
+}
+
 function showMessage(message, kind = "") {
   const area = byId("messageArea");
   area.textContent = message;
@@ -1405,6 +1520,7 @@ function showMessage(message, kind = "") {
 byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 byId("usageRefreshButton").addEventListener("click", () => loadUsage());
+byId("reviewerRefreshButton").addEventListener("click", () => loadReviewer());
 byId("customProviderAddButton").addEventListener("click", () => showCustomProviderEditor());
 byId("customProviderCancelButton").addEventListener("click", hideCustomProviderEditor);
 byId("customProviderForm").addEventListener("submit", saveCustomProvider);

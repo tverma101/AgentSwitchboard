@@ -145,6 +145,22 @@ class ScarRecord:
     evidence: tuple[str, ...]
     history: tuple[ScarState, ...] = ()
 
+    def as_dict(self) -> dict[str, object]:
+        """Return safe metadata for local CLI/Admin presentation."""
+
+        return {
+            "scar_id": self.scar_id,
+            "pack": self.pack.value,
+            "kind": self.kind.value,
+            "scope": self.scope,
+            "condition": self.condition,
+            "rule": self.rule,
+            "state": self.state.value,
+            "prevention": self.prevention.value,
+            "evidence": list(self.evidence),
+            "history": [state.value for state in self.history],
+        }
+
     def compact(self) -> str:
         """Return stable machine-oriented shorthand without opaque private syntax."""
 
