@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from free_claude_code.application.capabilities import CapabilityRoutingMode
 from free_claude_code.application.connected_accounts import (
@@ -44,6 +44,21 @@ class AdminConfigPayload(BaseModel):
     """Partial config update submitted by the admin UI."""
 
     values: dict[str, Any] = Field(default_factory=dict)
+
+
+class CustomProviderPayload(BaseModel):
+    """Safe, narrow descriptor submitted by the local Admin surface."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = None
+    display_name: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    proxy: str | None = None
+    local: bool | None = None
+    models: list[str] | None = None
+    enabled: bool | None = None
 
 
 class AdminRouteDiagnosticPayload(BaseModel):
@@ -196,6 +211,60 @@ async def test_provider(
     return await services.admin.test_provider(provider_id)
 
 
+@router.get("/admin/api/custom-providers")
+async def custom_provider_status(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return _no_store({"providers": services.admin.custom_provider_status()})
+
+
+@router.post("/admin/api/custom-providers")
+async def add_custom_provider(
+    payload: CustomProviderPayload,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    result = await services.admin.apply_custom_provider(
+        payload.model_dump(exclude_unset=True)
+    )
+    _schedule_admin_restart(result, background_tasks, services)
+    return _no_store(result)
+
+
+@router.put("/admin/api/custom-providers/{provider_id}")
+async def update_custom_provider(
+    provider_id: str,
+    payload: CustomProviderPayload,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    result = await services.admin.apply_custom_provider(
+        payload.model_dump(exclude_unset=True),
+        existing_provider_id=provider_id,
+    )
+    _schedule_admin_restart(result, background_tasks, services)
+    return _no_store(result)
+
+
+@router.delete("/admin/api/custom-providers/{provider_id}")
+async def remove_custom_provider(
+    provider_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    result = await services.admin.remove_custom_provider(provider_id)
+    _schedule_admin_restart(result, background_tasks, services)
+    return _no_store(result)
+
+
 @router.get("/admin/api/providers/{provider_id}/auth")
 async def connected_account_status(
     provider_id: str,
@@ -325,6 +394,16 @@ def _model_options(
 
 def _filtered_values(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if key in FIELD_BY_KEY}
+
+
+def _schedule_admin_restart(
+    result: dict[str, Any],
+    background_tasks: BackgroundTasks,
+    services: ApiServices,
+) -> None:
+    restart = result.get("restart")
+    if isinstance(restart, dict) and restart.get("automatic"):
+        background_tasks.add_task(services.admin.request_restart)
 
 
 def _local_provider_url(provider_id: str, values: dict[str, str]) -> str:

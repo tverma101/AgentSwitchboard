@@ -7,6 +7,10 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from .custom_providers import (
+    CUSTOM_PROVIDERS_ENV,
+    parse_custom_provider_json,
+)
 from .env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
     env_file_override,
@@ -176,6 +180,13 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+
+    # ==================== User-defined OpenAI-compatible providers ====================
+    # This JSON is validated into a launch-scoped registry before provider
+    # construction. It is intentionally not merged into the built-in catalog.
+    custom_providers_json: str = Field(
+        default="", validation_alias=CUSTOM_PROVIDERS_ENV
+    )
 
     # ==================== Context-pressure governor ====================
     context_governor_enabled: bool = Field(
@@ -495,11 +506,35 @@ class Settings(BaseSettings):
                 f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
                 f"Format: provider_type/model/name"
             )
-        provider = v.split("/", 1)[0]
-        if provider not in SUPPORTED_PROVIDER_IDS:
-            supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
-            raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
         return v
+
+    @model_validator(mode="after")
+    def validate_configured_provider_ids(self) -> Settings:
+        """Validate built-in and user-defined provider ids in one snapshot."""
+        try:
+            custom_providers = parse_custom_provider_json(self.custom_providers_json)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        supported = (
+            *SUPPORTED_PROVIDER_IDS,
+            *(item.provider_id for item in custom_providers if item.enabled),
+        )
+        for model_ref in (
+            self.model,
+            self.model_fable,
+            self.model_opus,
+            self.model_sonnet,
+            self.model_haiku,
+        ):
+            if model_ref is None:
+                continue
+            provider = model_ref.split("/", 1)[0]
+            if provider not in supported:
+                supported_text = ", ".join(f"'{item}'" for item in supported)
+                raise ValueError(
+                    f"Invalid provider: '{provider}'. Supported: {supported_text}"
+                )
+        return self
 
     @model_validator(mode="after")
     def check_nvidia_nim_api_key(self) -> Settings:

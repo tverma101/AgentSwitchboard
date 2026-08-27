@@ -3,6 +3,10 @@
 from collections.abc import Mapping
 from typing import Any
 
+from free_claude_code.config.custom_providers import (
+    CUSTOM_PROVIDERS_ENV,
+    parse_custom_provider_json,
+)
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
@@ -75,6 +79,40 @@ def provider_config_status(
                     else "Missing configuration"
                 ),
                 "configuration": configuration,
+            }
+        )
+    raw = str(state.get(CUSTOM_PROVIDERS_ENV, {}).get("value", ""))
+    try:
+        custom_descriptors = parse_custom_provider_json(raw)
+    except ValueError:
+        statuses.append(
+            {
+                "provider_id": "custom",
+                "display_name": "Custom providers",
+                "kind": "custom_registry",
+                "status": "invalid_config",
+                "label": "Invalid configuration",
+                "custom": True,
+            }
+        )
+        return statuses
+    for descriptor in custom_descriptors:
+        if not descriptor.enabled:
+            status = "disabled"
+            label = "Disabled"
+        elif descriptor.local or descriptor.api_key:
+            status = "configured"
+            label = "Configured"
+        else:
+            status = "missing_key"
+            label = "Missing key"
+        statuses.append(
+            descriptor.public_dict()
+            | {
+                "kind": "local" if descriptor.local else "remote",
+                "status": status,
+                "label": label,
+                "custom": True,
             }
         )
     return statuses
