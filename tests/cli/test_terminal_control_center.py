@@ -144,6 +144,30 @@ def test_home_redraw_uses_local_snapshot_without_admin_io(
     assert "[M] Models" in output
 
 
+def test_home_redraw_labels_fcc_and_codex_accounts_independently(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    with (
+        patch.object(
+            terminal_control,
+            "fcc_provider_account_summary",
+            return_value="fcc@example.com",
+        ),
+        patch.object(
+            terminal_control.codex_accounts,
+            "active_account_summary",
+            return_value="codex@example.com (profile work)",
+        ),
+    ):
+        terminal_control._print_home(_settings(), supervisor=None)
+
+    output = capsys.readouterr().out
+    assert "FCC Account  fcc@example.com" in output
+    assert "Codex Tools  codex@example.com (profile work)" in output
+
+
 def test_provider_secret_edit_does_not_echo_value() -> None:
     from free_claude_code.cli import terminal_control
 

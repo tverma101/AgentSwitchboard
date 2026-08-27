@@ -23,6 +23,10 @@ from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.helpers import ApprovedHelperRegistry
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import StopResult
+from free_claude_code.application.tool_accounts import (
+    CodexToolAccountError,
+    CodexToolAccountsPort,
+)
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
     commit_prepared_admin_update,
@@ -123,6 +127,7 @@ class ApplicationRuntime:
         transcriber: Transcriber | None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+        codex_tool_accounts: CodexToolAccountsPort | None = None,
         approved_helper_registry: ApprovedHelperRegistry | None = None,
         helper_cleanup: Callable[[], None] | None = None,
     ) -> None:
@@ -130,6 +135,7 @@ class ApplicationRuntime:
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
+        self._codex_tool_accounts = codex_tool_accounts
         self._approved_helper_registry = approved_helper_registry
         self._helper_cleanup = helper_cleanup
         self._helper_closed = False
@@ -382,6 +388,57 @@ class ApplicationRuntime:
         )
         self._connected_account_revisions[provider_id] = status.revision
         return status
+
+    async def codex_tool_accounts_status(self) -> dict[str, Any]:
+        """Return local Codex tool-account state without exposing credentials."""
+
+        if self._codex_tool_accounts is None:
+            return {
+                "available": False,
+                "state": "unavailable",
+                "accounts": [],
+                "message": "Codex tool account management is unavailable in this runtime.",
+            }
+        return await asyncio.to_thread(self._codex_tool_accounts.status)
+
+    async def select_codex_tool_account(self, profile: str) -> dict[str, Any]:
+        """Switch the installed Codex helper account locally."""
+
+        return await self._run_codex_tool_account_operation(
+            lambda manager: manager.select(profile)
+        )
+
+    async def refresh_codex_tool_account_usage(self, profile: str) -> dict[str, Any]:
+        """Refresh one installed Codex helper account's metadata-only usage."""
+
+        return await self._run_codex_tool_account_operation(
+            lambda manager: manager.refresh_usage(profile)
+        )
+
+    async def refresh_all_codex_tool_account_usage(self) -> dict[str, Any]:
+        """Refresh all installed Codex helper account usage snapshots."""
+
+        return await self._run_codex_tool_account_operation(
+            lambda manager: manager.refresh_all_usage()
+        )
+
+    async def forget_codex_tool_account(self, profile: str) -> dict[str, Any]:
+        """Forget one local Codex helper snapshot without upstream logout."""
+
+        return await self._run_codex_tool_account_operation(
+            lambda manager: manager.forget(profile)
+        )
+
+    async def _run_codex_tool_account_operation(
+        self,
+        operation: Callable[[CodexToolAccountsPort], dict[str, Any]],
+    ) -> dict[str, Any]:
+        manager = self._codex_tool_accounts
+        if manager is None:
+            raise CodexToolAccountError(
+                "Codex tool account management is unavailable in this runtime."
+            )
+        return await asyncio.to_thread(operation, manager)
 
     async def request_restart(self) -> None:
         callback = self._restart_callback

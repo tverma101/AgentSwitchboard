@@ -1,4 +1,4 @@
-"""Manage multiple ChatGPT-authenticated Codex subscriptions safely.
+"""Manage multiple installed Codex tool accounts safely.
 
 The live Codex credential remains ``$CODEX_HOME/auth.json``. Saved profiles use
 ``$CODEX_HOME/accounts/profiles/<name>/auth.json`` so they are compatible with
@@ -6,6 +6,10 @@ the public MIT ``Fasand/codex-auth`` profile layout. Switching never invokes
 Codex login/logout. Adding an account stashes the live auth file before the
 official login flow, preventing a second login from revoking the first saved
 account's refresh grant.
+
+This store is intentionally independent from FCC's OpenAI provider credentials
+in ``~/.fcc/auth/openai.json``. The two account selectors must never copy or
+replace credentials in the other store.
 """
 
 import base64
@@ -52,6 +56,17 @@ class CodexAccount:
     active: bool
     plan: str | None
     usage: Mapping[str, Any] | None
+
+    def public_dict(self) -> dict[str, Any]:
+        """Return the display/API projection without ids or credential data."""
+
+        return {
+            "profile": self.profile,
+            "email": self.email,
+            "active": self.active,
+            "plan": self.plan,
+            "usage": _public_usage(self.usage),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +154,37 @@ def list_accounts(*, home: Path | None = None) -> tuple[CodexAccount, ...]:
     return tuple(
         sorted(accounts, key=lambda item: (not item.active, item.profile.casefold()))
     )
+
+
+def active_account(*, home: Path | None = None) -> CodexAccount | None:
+    """Read the active local account without importing or writing a profile."""
+
+    root = home or codex_home()
+    with _locked(root):
+        identity = _try_identity(auth_path(root))
+        if identity is None:
+            return None
+        profile = _profile_for_account(root, identity.account_id) or _read_marker(root)
+        profile = profile or "active"
+        usage = _read_json(profile_usage_path(profile, root))
+    return CodexAccount(
+        profile=profile,
+        account_id=identity.account_id,
+        email=identity.email,
+        active=True,
+        plan=_string(usage, "plan_type"),
+        usage=usage,
+    )
+
+
+def active_account_summary(*, home: Path | None = None) -> str:
+    """Return a concise local-only label for the active Codex tool account."""
+
+    account = active_account(home=home)
+    if account is None:
+        return "not connected"
+    identity = account.email or account.profile
+    return f"{identity} (profile {account.profile})"
 
 
 def select_account(profile: str, *, home: Path | None = None) -> CodexAccount:
@@ -678,9 +724,58 @@ def _usage_lines(
     )
 
 
+def _public_usage(usage: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Keep the Admin projection limited to the normalized usage schema."""
+
+    if not usage:
+        return None
+    result: dict[str, Any] = {
+        key: usage[key]
+        for key in ("version", "fetched_at", "approximate", "plan_type")
+        if key in usage
+    }
+    windows = usage.get("windows")
+    if isinstance(windows, list):
+        result["windows"] = [
+            {
+                key: item[key]
+                for key in (
+                    "id",
+                    "label",
+                    "used_percent",
+                    "remaining_percent",
+                    "window_seconds",
+                    "reset_at",
+                )
+                if key in item
+            }
+            for item in windows
+            if isinstance(item, Mapping)
+        ]
+    additional = usage.get("additional_limits")
+    if isinstance(additional, list):
+        result["additional_limits"] = [
+            {
+                key: item[key]
+                for key in ("name", "used_percent", "remaining_percent")
+                if key in item
+            }
+            for item in additional
+            if isinstance(item, Mapping)
+        ]
+    credits = usage.get("credits")
+    if isinstance(credits, Mapping):
+        result["credits"] = {
+            key: credits[key]
+            for key in ("balance", "has_credits", "unlimited")
+            if key in credits
+        }
+    return result
+
+
 def _print_accounts(accounts: Sequence[CodexAccount]) -> None:
     if not accounts:
-        print("No saved ChatGPT/Codex subscriptions.")
+        print("No saved Codex tool accounts.")
         return
     for account in accounts:
         marker = ">" if account.active else " "
@@ -694,7 +789,7 @@ def _print_accounts(accounts: Sequence[CodexAccount]) -> None:
 
 def _choose_account(accounts: Sequence[CodexAccount]) -> CodexAccount | None:
     if not accounts:
-        print("No saved ChatGPT/Codex subscriptions.")
+        print("No saved Codex tool accounts.")
         return None
     selected = choose_item(
         [
@@ -711,7 +806,7 @@ def _choose_account(accounts: Sequence[CodexAccount]) -> CodexAccount | None:
             )
             for account in accounts
         ],
-        title="ChatGPT / Codex subscriptions",
+        title="Codex tool accounts",
         footer="type filter · ↑↓ move · enter select · esc cancel",
     )
     if selected is None:
@@ -731,9 +826,9 @@ def _interactive() -> int:
         try:
             accounts = list_accounts()
         except CodexAccountError as exc:
-            print(f"ChatGPT accounts unavailable: {exc}")
+            print(f"Codex tool accounts unavailable: {exc}")
             accounts = ()
-        print("\nChatGPT / Codex subscriptions\n-----------------------------")
+        print("\nCodex Tool Accounts\n-------------------")
         _print_accounts(accounts)
         print(
             "[S] Select  [A] Add/sign up  [D] Device add  [R] Refresh  [F] Forget  [Q] Quit"
@@ -762,7 +857,7 @@ def _interactive() -> int:
                 continue
             if not profile:
                 continue
-            print("Official Codex login can sign in or create a new ChatGPT account.")
+            print("Official Codex login can sign in or create a new tool account.")
             try:
                 account = add_account(profile, device_auth=action in {"d", "device"})
             except CodexAccountError as exc:
@@ -819,7 +914,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise CodexAccountError(
                     "Usage: fcc accounts add <profile> [--device-auth]"
                 )
-            print("Official Codex login can sign in or create a new ChatGPT account.")
+            print("Official Codex login can sign in or create a new tool account.")
             account = add_account(names[0], device_auth=device)
             print(
                 f"Added and selected {account.profile} ({account.email or account.account_id})."
@@ -831,7 +926,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif command in {"help", "--help", "-h"}:
             print(
                 "Usage: fcc accounts [list|refresh|switch|add|forget]\n"
-                "  add <profile> [--device-auth] uses official ChatGPT sign-in/signup"
+                "  add <profile> [--device-auth] uses the official Codex sign-in flow"
             )
         else:
             raise CodexAccountError(f"Invalid accounts command: {' '.join(args)}")
