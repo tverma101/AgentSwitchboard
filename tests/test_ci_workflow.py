@@ -34,6 +34,8 @@ def test_ci_workflow_routes_only_trusted_pull_requests_to_self_hosted_runner() -
         in workflow
     )
     assert 'UV_PROJECT_ENVIRONMENT="$environment_path"' in workflow
+    assert "PYTEST_XDIST_AUTO_NUM_WORKERS=6" in workflow
+    assert "hw.perflevel0.physicalcpu" in workflow
 
 
 def test_issue_validator_remains_on_hosted_runner() -> None:

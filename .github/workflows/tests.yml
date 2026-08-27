@@ -94,9 +94,26 @@ jobs:
         run: |
           environment_root="$HOME/.cache/harness-actions/venvs"
           environment_path="$environment_root/${RUNNER_OS}-${RUNNER_ARCH}-py314"
+          mkdir -p "$environment_root"
           echo "UV_PROJECT_ENVIRONMENT=$environment_path" >> "$GITHUB_ENV"
           export UV_PROJECT_ENVIRONMENT="$environment_path"
           uv sync --locked
+
+      - name: Tune pytest for the Apple Silicon runner
+        if: matrix.id == 'pytest'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ] && [ "$RUNNER_ARCH" = "ARM64" ]; then
+            performance_cores="$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || true)"
+            if [ "$performance_cores" = "4" ]; then
+              # This M4 class host is 4P+6E/16 GB. Six xdist workers beat
+              # xdist's ten-worker physical-core default for this suite.
+              echo "PYTEST_XDIST_AUTO_NUM_WORKERS=6" >> "$GITHUB_ENV"
+              echo "Using six xdist workers for a 4P+6E Apple Silicon host."
+              exit 0
+            fi
+          fi
+          echo "PYTEST_XDIST_AUTO_NUM_WORKERS=auto" >> "$GITHUB_ENV"
 
       - name: Run
         run: ${{ matrix.run }}
