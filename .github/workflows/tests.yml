@@ -16,16 +16,6 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
-    inputs:
-      runner_label:
-        description: Emergency runner label when the Mac runner is overloaded
-        required: false
-        type: choice
-        default: ubuntu-latest
-        options:
-          - ubuntu-latest
-          - harness-burst
-          - harness-local
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,8 +24,7 @@ concurrency:
 jobs:
   no-suppressions-or-legacy-annotations:
     name: Ban suppressions and legacy annotations
-    # Never execute fork-controlled code on the persistent self-hosted runner.
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -56,8 +45,7 @@ jobs:
 
   quality:
     name: ${{ matrix.id }}
-    # Never execute fork-controlled code on the persistent self-hosted runner.
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -84,36 +72,11 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.11.16"
-          # The persistent self-hosted runner keeps uv's filesystem cache.
-          # Do not archive it in setup-uv's post-job hook and block the only runner.
           enable-cache: false
           cache-python: false
 
-      - name: Reuse warm Harness environment
-        shell: bash
-        run: |
-          environment_root="$HOME/.cache/harness-actions/venvs"
-          environment_path="$environment_root/${RUNNER_OS}-${RUNNER_ARCH}-py314"
-          mkdir -p "$environment_root"
-          echo "UV_PROJECT_ENVIRONMENT=$environment_path" >> "$GITHUB_ENV"
-          export UV_PROJECT_ENVIRONMENT="$environment_path"
-          uv sync --locked
-
-      - name: Tune pytest for the Apple Silicon runner
-        if: matrix.id == 'pytest'
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ] && [ "$RUNNER_ARCH" = "ARM64" ]; then
-            performance_cores="$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || true)"
-            if [ "$performance_cores" = "4" ]; then
-              # This M4 class host is 4P+6E/16 GB. Six xdist workers beat
-              # xdist's ten-worker physical-core default for this suite.
-              echo "PYTEST_XDIST_AUTO_NUM_WORKERS=6" >> "$GITHUB_ENV"
-              echo "Using six xdist workers for a 4P+6E Apple Silicon host."
-              exit 0
-            fi
-          fi
-          echo "PYTEST_XDIST_AUTO_NUM_WORKERS=auto" >> "$GITHUB_ENV"
+      - name: Prepare project environment
+        run: uv sync --locked
 
       - name: Run
         run: ${{ matrix.run }}
