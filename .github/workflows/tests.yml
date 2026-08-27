@@ -24,7 +24,8 @@ concurrency:
 jobs:
   no-suppressions-or-legacy-annotations:
     name: Ban suppressions and legacy annotations
-    runs-on: ubuntu-latest
+    # Never execute fork-controlled code on the persistent self-hosted runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -45,7 +46,8 @@ jobs:
 
   quality:
     name: ${{ matrix.id }}
-    runs-on: ubuntu-latest
+    # Never execute fork-controlled code on the persistent self-hosted runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.HARNESS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -72,8 +74,10 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.11.16"
-          enable-cache: true
-          cache-python: true
+          # The persistent self-hosted runner keeps uv's filesystem cache.
+          # Do not archive it in setup-uv's post-job hook and block the only runner.
+          enable-cache: false
+          cache-python: false
 
       - name: Run
         run: ${{ matrix.run }}
