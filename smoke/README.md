@@ -78,10 +78,12 @@ FCC_LIVE_SMOKE=1 FCC_SMOKE_TARGETS=cli uv run pytest \
   smoke/product/test_claude_synthetic_thinking_product_live.py -n 0 -s --tb=short
 ```
 
-The checked-in fixture matrix covers visible thinking, redacted thinking,
-interleaved thinking, late/malformed signatures, additive deltas, and a tool
-continuation. The installed-client canary runs the safe visible, redacted, and
-tool-roundtrip cases; expected client rendering/rejection is recorded in
+The checked-in fixture matrix covers visible summaries and thinking, empty and
+usage-only responses, text-only unsupported reasoning, redacted thinking,
+interleaved thinking, late/malformed signatures, additive deltas, and plain,
+thinking, interleaved, or opaque-state tool continuations. The installed-client
+canary runs the client-safe summary, empty, unsupported, usage-only, redacted,
+and tool-roundtrip cases; expected client rendering/rejection is recorded in
 `.smoke-results/` rather than treated as Muse/provider evidence.
 
 Heavy/side-effectful targets are opt-in:
@@ -199,9 +201,19 @@ underlying client surface is certified unless its status is `passed`.
 
 The metadata-only [media conformance corpus](fixtures/media-conformance-v1.json)
 enumerates the supported image/tool-result protocol boundaries, deterministic
-rejection cases, retry identity, and native/provider route pairs. It contains
-no image bytes or prompt payloads. The corpus is a contract inventory; live
-vision and computer-use round trips remain explicitly separate acceptance gates.
+rejection cases, retry identity, and native/provider route pairs. Each case has
+a golden media count and ordered media-type list; the corpus also requires
+metadata-only `media_count`/`media_type_hash` receipts, `tool_use_id`
+association, and at-most-once retry side effects. It contains no image bytes or
+prompt payloads. Validate the contract with
+`uv run pytest -n 0 tests/contracts/test_media_conformance.py`. The corpus is a
+contract inventory; live vision and computer-use round trips remain explicitly
+separate acceptance gates.
+
+The [media conformance receipt](receipts/media-conformance-2026-08-26.json)
+records the focused current-source contract run: 17 tests passed across the
+local protocol adapters with deterministic in-memory images and no provider
+contact. It does not certify a live vision or screenshot round trip.
 
 ## OpenCode Go transport benchmark
 
@@ -280,9 +292,11 @@ first post-compact, mature post-compact, and resume-after-compact turns only.
 The deterministic semantic gate in
 [`smoke/lib/compaction_continuity.py`](lib/compaction_continuity.py) records
 provider/model/protocol, system/tool and message-shape hashes, tool/result ids,
-session relationship, reasoning-state type/hash, media type/count, memory/skill
-ids, committed tool ids, and attempts. It rejects prompt, image, tool-result,
-and reasoning payload fields before a receipt can be written.
+session relationship, sequential/parallel tool-call batches, call-to-result
+bindings, reasoning-state type/hash, media disposition/type/count,
+memory/skill ids, committed tool ids, resume-state hashes, and attempts. It
+rejects prompt, image, tool-result, reasoning payload, and unknown state fields
+before a receipt can be written; unsupported media dispositions fail explicitly.
 The checked-in [synthetic continuity receipt](receipts/compaction-continuity-synthetic.json)
 is a schema/regression fixture, not live provider evidence.
 The checked-in

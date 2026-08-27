@@ -4,7 +4,7 @@ Adapter factories live in :mod:`providers.runtime.factory`; this module stays fr
 provider implementation imports (see contract tests).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 # Default upstream base URLs are owned here with the provider catalog.
@@ -69,7 +69,8 @@ class ProviderDescriptor:
     credential_env: str | None = None
     credential_url: str | None = None
     credential_attr: str | None = None
-    static_credential: str | None = None
+    static_credential: str | None = field(default=None, repr=False)
+    static_proxy: str = field(default="", repr=False)
     default_base_url: str | None = None
     base_url_attr: str | None = None
     proxy_attr: str | None = None

@@ -13,7 +13,8 @@ class ProviderModelCache:
         self,
         available_provider_ids: Iterable[str] = SUPPORTED_PROVIDER_IDS,
     ) -> None:
-        self._available_provider_ids = frozenset(available_provider_ids)
+        self._provider_order = tuple(dict.fromkeys(available_provider_ids))
+        self._available_provider_ids = frozenset(self._provider_order)
         self._model_infos_by_provider: dict[str, dict[str, ProviderModelInfo]] = {}
 
     def cache_model_infos(
@@ -29,7 +30,8 @@ class ProviderModelCache:
 
     def set_available_providers(self, provider_ids: Iterable[str]) -> None:
         """Replace the provider scope and discard entries outside it."""
-        self._available_provider_ids = frozenset(provider_ids)
+        self._provider_order = tuple(dict.fromkeys(provider_ids))
+        self._available_provider_ids = frozenset(self._provider_order)
         self._model_infos_by_provider = {
             provider_id: infos
             for provider_id, infos in self._model_infos_by_provider.items()
@@ -40,6 +42,8 @@ class ProviderModelCache:
         """Make one dynamically authenticated provider cacheable."""
 
         self._available_provider_ids = self._available_provider_ids | {provider_id}
+        if provider_id not in self._provider_order:
+            self._provider_order = (*self._provider_order, provider_id)
 
     def remove_provider(self, provider_id: str) -> None:
         """Evict one provider and stop accepting its discovered metadata."""
@@ -76,7 +80,7 @@ class ProviderModelCache:
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         """Return cached provider models with user-selectable prefixed ids."""
         infos: list[ProviderModelInfo] = []
-        for provider_id in SUPPORTED_PROVIDER_IDS:
+        for provider_id in self._provider_order:
             provider_infos = self._model_infos_by_provider.get(provider_id, {})
             infos.extend(
                 ProviderModelInfo(
@@ -86,6 +90,7 @@ class ProviderModelCache:
                     accepted_image_types=info.accepted_image_types,
                     reasoning=info.reasoning,
                     capability_evidence=info.capability_evidence,
+                    capability_verification=info.capability_verification,
                 )
                 for info in sorted(
                     provider_infos.values(), key=lambda item: item.model_id

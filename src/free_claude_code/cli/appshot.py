@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .appshot_helpers import copy_appshot_path, inspect_appshot, open_appshot
+from .macos_screenshot import MacOSScreenRecordingPermissionError
 from .visuals import (
     capture_and_enqueue_appshot,
     pending_appshots,
@@ -101,6 +102,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             root=args.queue,
             session_source="explicit" if args.session_id else "environment",
         )
+    except MacOSScreenRecordingPermissionError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from None
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Appshot failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

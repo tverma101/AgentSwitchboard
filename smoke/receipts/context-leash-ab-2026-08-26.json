@@ -1,0 +1,81 @@
+{
+  "schema": "fcc.context-leash-ab.v1",
+  "receipt": "literal-claude-loopback",
+  "captured_at": "2026-08-26T10:08:47Z",
+  "source_commit": "f9e5088",
+  "source": "local_literal_claude_to_fcc_to_synthetic_anthropic_sse",
+  "external_provider_contacted": false,
+  "client": {
+    "binary": "claude",
+    "version": "2.1.228"
+  },
+  "workload": {
+    "command": "cat synthetic-fixture.txt",
+    "rows": 50000,
+    "bytes": 2300028,
+    "client_visible_cap_observed": true
+  },
+  "governor_limit_bytes": 2048,
+  "advisory_comparison": {
+    "policy_only_vs_ungoverned_delta_bytes": 2,
+    "tolerance_bytes": 256
+  },
+  "observed_reduction": {
+    "tool_result_ratio": 0.166463,
+    "context_ratio": 0.009277
+  },
+  "scenarios": [
+    {
+      "name": "ungoverned",
+      "policy_installed": false,
+      "policy_version": null,
+      "governor_enabled": false,
+      "request_count": 2,
+      "request_bytes": [40026, 42791],
+      "request_tokens_estimate": [10006, 10697],
+      "context_bytes": 42791,
+      "context_tokens_estimate": 10697,
+      "tool_result_bytes": 2455,
+      "tool_result_lines": 50,
+      "compaction_count": 0,
+      "follow_up_slice_count": 0,
+      "task_success": true,
+      "semantic_loss": false
+    },
+    {
+      "name": "policy_only",
+      "policy_installed": true,
+      "policy_version": "1",
+      "governor_enabled": false,
+      "request_count": 2,
+      "request_bytes": [40029, 42796],
+      "request_tokens_estimate": [10007, 10699],
+      "context_bytes": 42796,
+      "context_tokens_estimate": 10699,
+      "tool_result_bytes": 2457,
+      "tool_result_lines": 50,
+      "compaction_count": 0,
+      "follow_up_slice_count": 0,
+      "task_success": true,
+      "semantic_loss": false
+    },
+    {
+      "name": "policy_plus_governor",
+      "policy_installed": true,
+      "policy_version": "1",
+      "governor_enabled": true,
+      "request_count": 2,
+      "request_bytes": [40056, 42399],
+      "request_tokens_estimate": [10014, 10599],
+      "context_bytes": 42399,
+      "context_tokens_estimate": 10599,
+      "tool_result_bytes": 2048,
+      "tool_result_lines": 35,
+      "compaction_count": 0,
+      "follow_up_slice_count": 0,
+      "task_success": true,
+      "semantic_loss": false
+    }
+  ],
+  "interpretation": "FCC redirection was observed locally. Claude's own Bash result cap limited the visible input before FCC received it, so this receipt is not real-provider or large-result model-effectiveness evidence."
+}
