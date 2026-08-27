@@ -6,6 +6,8 @@ const state = {
   modelLabels: {},
   modelComboboxes: new Set(),
   authPollers: new Map(),
+  customProviders: [],
+  customProviderEditingId: null,
   activeView: "providers",
   usageDays: 30,
 };
@@ -101,6 +103,7 @@ async function load() {
   state.fields = new Map(config.fields.map((field) => [field.key, field]));
   renderNav();
   renderProviders(config.provider_status);
+  await loadCustomProviders();
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
   await refreshConnectedAccounts();
@@ -168,7 +171,7 @@ function renderProviders(providerStatus) {
     (provider) => provider.kind === "connected_account",
   );
   byId("connectedAccountsSection").hidden = connected.length === 0;
-  providerStatus.forEach((provider) => {
+  providerStatus.filter((provider) => !provider.custom).forEach((provider) => {
     if (provider.kind === "connected_account") {
       connectedGrid.appendChild(renderConnectedAccountCard(provider));
       return;
@@ -202,6 +205,163 @@ function renderProviders(providerStatus) {
     card.append(title, meta, button);
     grid.appendChild(card);
   });
+}
+
+function renderCustomProviders() {
+  const grid = byId("customProviderGrid");
+  const empty = byId("customProviderEmptyState");
+  grid.innerHTML = "";
+  empty.hidden = state.customProviders.length > 0;
+  state.customProviders.forEach((provider) => {
+    const card = document.createElement("article");
+    card.className = "provider-card";
+    card.dataset.provider = provider.provider_id;
+
+    const title = document.createElement("div");
+    title.className = "provider-title";
+    const name = document.createElement("strong");
+    name.textContent = provider.display_name || provider.provider_id;
+    const pill = document.createElement("span");
+    pill.className = `status-pill ${statusClass(provider.status)}`;
+    pill.textContent = provider.label || provider.status;
+    title.append(name, pill);
+
+    const meta = document.createElement("div");
+    meta.className = "provider-meta";
+    const modelCount = (provider.model_ids || []).length;
+    meta.textContent = `${provider.base_url} · ${modelCount} explicit model${modelCount === 1 ? "" : "s"}${provider.api_key_configured ? " · key set" : " · no key"}`;
+
+    const actions = document.createElement("div");
+    actions.className = "provider-actions";
+    actions.appendChild(
+      authButton("Test", (button) => testProvider(provider.provider_id, button)),
+    );
+    actions.appendChild(
+      authButton("Edit", () => showCustomProviderEditor(provider), "secondary-button"),
+    );
+    actions.appendChild(
+      authButton(
+        provider.enabled ? "Disable" : "Enable",
+        () => toggleCustomProvider(provider),
+        "secondary-button",
+      ),
+    );
+    actions.appendChild(
+      authButton("Remove", () => removeCustomProvider(provider), "secondary-button"),
+    );
+    card.append(title, meta, actions);
+    grid.appendChild(card);
+  });
+}
+
+async function loadCustomProviders() {
+  try {
+    const result = await api("/admin/api/custom-providers");
+    state.customProviders = result.providers || [];
+  } catch (error) {
+    state.customProviders = [];
+    showMessage(error.message, true);
+  }
+  renderCustomProviders();
+}
+
+function showCustomProviderEditor(provider = null) {
+  const form = byId("customProviderForm");
+  state.customProviderEditingId = provider?.provider_id || null;
+  byId("customProviderFormTitle").textContent = provider
+    ? `Edit ${provider.display_name || provider.provider_id}`
+    : "Add custom provider";
+  byId("customProviderId").value = provider?.provider_id || "";
+  byId("customProviderId").disabled = Boolean(provider);
+  byId("customProviderName").value = provider?.display_name || "";
+  byId("customProviderBaseUrl").value = provider?.base_url || "";
+  byId("customProviderApiKey").value = "";
+  byId("customProviderApiKey").placeholder = provider?.api_key_configured
+    ? "Configured - enter a new value to replace"
+    : "Required for remote endpoints";
+  byId("customProviderProxy").value = "";
+  byId("customProviderModels").value = (provider?.model_ids || []).join(", ");
+  byId("customProviderLocal").checked = Boolean(provider?.local);
+  form.hidden = false;
+  byId("customProviderName").focus();
+}
+
+function hideCustomProviderEditor() {
+  state.customProviderEditingId = null;
+  byId("customProviderForm").hidden = true;
+}
+
+async function saveCustomProvider(event) {
+  event.preventDefault();
+  try {
+    const providerId = byId("customProviderId").value.trim();
+    const payload = {
+      id: providerId,
+      display_name: byId("customProviderName").value.trim(),
+      base_url: byId("customProviderBaseUrl").value.trim(),
+      proxy: byId("customProviderProxy").value.trim(),
+      local: byId("customProviderLocal").checked,
+      models: byId("customProviderModels").value
+        .split(",")
+        .map((model) => model.trim())
+        .filter(Boolean),
+    };
+    const key = byId("customProviderApiKey").value;
+    if (key) payload.api_key = key;
+    const editingId = state.customProviderEditingId;
+    const path = editingId
+      ? `/admin/api/custom-providers/${encodeURIComponent(editingId)}`
+      : "/admin/api/custom-providers";
+    const result = await api(path, {
+      method: editingId ? "PUT" : "POST",
+      body: JSON.stringify(payload),
+    });
+    if (!result.applied) {
+      showMessage((result.errors || ["Could not save provider"]).join("; "), true);
+      return;
+    }
+    hideCustomProviderEditor();
+    await loadCustomProviders();
+    await hydrateModelOptions();
+    showMessage("Custom provider saved. Restart fcc-server to use it.", "ok");
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+}
+
+async function toggleCustomProvider(provider) {
+  try {
+    const result = await api(`/admin/api/custom-providers/${encodeURIComponent(provider.provider_id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled: !provider.enabled }),
+    });
+    if (!result.applied) {
+      showMessage((result.errors || ["Could not update provider"]).join("; "), true);
+      return;
+    }
+    await loadCustomProviders();
+    showMessage("Custom provider state saved. Restart fcc-server to use it.", "ok");
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+}
+
+async function removeCustomProvider(provider) {
+  if (!window.confirm(`Remove custom provider ${provider.display_name || provider.provider_id}?`)) return;
+  try {
+    const result = await api(`/admin/api/custom-providers/${encodeURIComponent(provider.provider_id)}`, {
+      method: "DELETE",
+    });
+    if (!result.applied) {
+      showMessage((result.errors || ["Could not remove provider"]).join("; "), true);
+      return;
+    }
+    await loadCustomProviders();
+    await hydrateModelOptions();
+    showMessage("Custom provider removed. Restart fcc-server to use the updated registry.", "ok");
+  } catch (error) {
+    showMessage(error.message, true);
+  }
 }
 
 function renderConnectedAccountCard(provider, status = provider) {
@@ -1092,6 +1252,9 @@ function showMessage(message, kind = "") {
 byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 byId("usageRefreshButton").addEventListener("click", () => loadUsage());
+byId("customProviderAddButton").addEventListener("click", () => showCustomProviderEditor());
+byId("customProviderCancelButton").addEventListener("click", hideCustomProviderEditor);
+byId("customProviderForm").addEventListener("submit", saveCustomProvider);
 document.querySelectorAll("[data-usage-days]").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll("[data-usage-days]").forEach((candidate) => {

@@ -70,6 +70,46 @@ provider; it is useful for a private gateway or a zero-cost local synthetic
 fixture. The strict provider policy still attributes the request to
 `opencode_go` and does not enable another provider family.
 
+## Custom OpenAI-compatible providers
+
+The local Admin surface can manage up to eight user-defined OpenAI Chat
+Completions endpoints. Open `/admin` only when you explicitly need it, or use
+the loopback-only endpoints under `/admin/api/custom-providers`. Changes are
+validated and persisted in `CUSTOM_PROVIDERS_JSON`, then require an
+`fcc-server` restart so one runtime generation sees one frozen provider
+registry.
+
+Each descriptor contains only the supported fields below:
+
+```json
+{
+  "providers": [
+    {
+      "id": "local_gateway",
+      "display_name": "Local gateway",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "local": true,
+      "models": ["my-model"],
+      "enabled": true
+    }
+  ]
+}
+```
+
+Remote endpoints must use HTTPS and an API key. Loopback HTTP endpoints may
+omit the key, but must be explicitly marked `local: true`; the local/private
+classification is checked against the URL rather than trusted from the label.
+Optional proxies accept only HTTP(S), SOCKS5, or SOCKS5H URLs. Embedded URL
+credentials, query/fragment components, arbitrary headers, plugins, and
+transformers are rejected. Explicit `models` are used as a bounded fallback
+when model discovery is unavailable.
+
+Keys and proxy URLs are write-only from the Admin API: status responses expose
+only whether they are configured. Custom provider setup does not authorize
+spend, bypass egress policy, or create a second provider engine. The runtime
+uses the existing OpenAI Chat adapter, model cache, routing, and receipts;
+receipts contain provider/model metadata rather than credentials.
+
 ## Context and reasoning
 
 - `FCC_CLAUDE_CONTEXT_TOKENS` defaults to `256000` and accepts `32000` through
