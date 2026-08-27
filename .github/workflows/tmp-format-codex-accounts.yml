@@ -37,10 +37,34 @@ jobs:
       - name: Format only the new account files
         shell: bash
         run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/free_claude_code/cli/codex_accounts.py")
+          text = path.read_text()
+          old = '''    if isinstance(additional, list):
+              for item in additional:
+                  if isinstance(item, Mapping) and item.get("remaining_percent") is not None:
+                      lines.append(
+                          f"{item.get('name', 'additional')} {prefix}{_percent(item['remaining_percent'])} left"
+                      )
+          '''
+          new = '''    if isinstance(additional, list):
+              lines.extend(
+                  f"{item.get('name', 'additional')} {prefix}{_percent(item['remaining_percent'])} left"
+                  for item in additional
+                  if isinstance(item, Mapping)
+                  and item.get("remaining_percent") is not None
+              )
+          '''
+          if old not in text:
+              raise SystemExit("expected additional-limit display block not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
           uv run --no-sync ruff format \
             src/free_claude_code/cli/codex_accounts.py \
             tests/cli/test_codex_accounts.py
-          uv run --no-sync ruff check --fix \
+          uv run --no-sync ruff check \
             src/free_claude_code/cli/codex_accounts.py \
             tests/cli/test_codex_accounts.py
 
