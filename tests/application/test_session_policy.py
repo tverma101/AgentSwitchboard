@@ -15,7 +15,10 @@ from free_claude_code.application.capabilities import (
 )
 from free_claude_code.application.helpers import ApprovedHelper, ApprovedHelperRegistry
 from free_claude_code.application.session_policy import build_session_execution_policy
-from free_claude_code.core.provider_policy import ProviderPolicyError, ProviderPolicyMode
+from free_claude_code.core.provider_policy import (
+    ProviderPolicyError,
+    ProviderPolicyMode,
+)
 
 
 def _helper(
@@ -100,8 +103,10 @@ def test_explicit_local_computer_helper_shares_one_guard_with_executor() -> None
     assert receipt["allowed_helpers"] == ["codex-computer-use"]
     egress = receipt["egress"]
     assert isinstance(egress, dict)
-    assert egress["counts"] == {"local": 1}
-    assert "openai" not in egress["counts"]
+    counts = egress.get("counts")
+    assert isinstance(counts, dict)
+    assert counts == {"local": 1}
+    assert "openai" not in counts
 
 
 def test_helper_binary_or_credentials_do_not_authorize_unlisted_helper() -> None:

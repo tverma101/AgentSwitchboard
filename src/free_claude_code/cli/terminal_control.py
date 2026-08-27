@@ -23,13 +23,13 @@ from free_claude_code.cli.local_admin import (
     connected_account_status,
     disconnect_connected_account,
     get_admin_config,
+    get_admin_status,
     get_local_provider_status,
     get_models,
     get_usage,
     route_diagnostic,
     start_connected_account_login,
     test_provider,
-    get_admin_status,
 )
 from free_claude_code.config.paths import managed_env_path, server_log_path
 from free_claude_code.config.provider_catalog import (

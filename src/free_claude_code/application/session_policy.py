@@ -89,10 +89,11 @@ def build_session_execution_policy(
             )
         remote_provider_families.add(family)
 
-    if remote_provider_families and provider_mode is not ProviderPolicyMode.ALLOW_LISTED:
-        raise ValueError(
-            "remote helpers require provider policy mode allow-listed"
-        )
+    if (
+        remote_provider_families
+        and provider_mode is not ProviderPolicyMode.ALLOW_LISTED
+    ):
+        raise ValueError("remote helpers require provider policy mode allow-listed")
 
     forbidden_families = set(_DEFAULT_FORBIDDEN_PROVIDER_FAMILIES)
     if paid_fallback and provider_mode is ProviderPolicyMode.ALLOW_LISTED:
