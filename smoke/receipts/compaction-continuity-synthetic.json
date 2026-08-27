@@ -5,13 +5,18 @@
   "passed": true,
   "invariants": {
     "routing_preserved": true,
+    "session_relationship_preserved": true,
     "system_tool_schema_preserved": true,
     "message_shape_preserved": true,
     "tool_call_ids_preserved": true,
     "tool_result_ids_preserved": true,
+    "tool_call_batches_preserved": true,
+    "tool_result_bindings_preserved": true,
+    "tool_identity_shape_valid": true,
     "committed_tools_not_replayed": true,
     "reasoning_state_preserved": true,
     "media_preserved": true,
+    "resume_state_preserved": true,
     "learning_memory_not_duplicated": true,
     "skills_not_duplicated": true,
     "retry_amplification_bounded": true
@@ -26,14 +31,18 @@
     "message_shape_hash": "message-shape",
     "tool_call_ids": ["call-1", "call-2"],
     "tool_result_ids": ["result-1", "result-2"],
+    "tool_call_batches": [["call-1", "call-2"]],
+    "tool_result_bindings": [["call-1", "result-1"], ["call-2", "result-2"]],
     "reasoning_state_type": "opaque",
     "reasoning_state_hash": "reasoning-hash",
     "media_count": 1,
     "media_type_hash": "image/png",
+    "media_disposition": "preserved",
     "learning_memory_ids": ["memory-1"],
     "skill_ids": ["skill-1"],
     "committed_tool_ids": ["call-1"],
-    "retry_attempts": 1
+    "retry_attempts": 1,
+    "resume_state_hash": "resume-state-hash"
   },
   "after": {
     "provider": "opencode_go",
@@ -45,13 +54,17 @@
     "message_shape_hash": "message-shape",
     "tool_call_ids": ["call-1", "call-2"],
     "tool_result_ids": ["result-1", "result-2"],
+    "tool_call_batches": [["call-1", "call-2"]],
+    "tool_result_bindings": [["call-1", "result-1"], ["call-2", "result-2"]],
     "reasoning_state_type": "opaque",
     "reasoning_state_hash": "reasoning-hash",
     "media_count": 1,
     "media_type_hash": "image/png",
+    "media_disposition": "preserved",
     "learning_memory_ids": ["memory-1"],
     "skill_ids": ["skill-1"],
     "committed_tool_ids": ["call-1"],
-    "retry_attempts": 1
+    "retry_attempts": 1,
+    "resume_state_hash": "resume-state-hash"
   }
 }
