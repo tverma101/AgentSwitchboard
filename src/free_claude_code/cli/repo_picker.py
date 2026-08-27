@@ -75,13 +75,16 @@ def cache_path() -> Path:
 
 
 def _run_git(path: Path, *args: str) -> str:
-    completed = subprocess.run(
-        ["git", "-C", str(path), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=2,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return ""
     if completed.returncode != 0:
         return ""
     return completed.stdout.strip()

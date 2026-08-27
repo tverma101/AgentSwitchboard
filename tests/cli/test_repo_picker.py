@@ -37,6 +37,21 @@ def test_github_remote_recognizes_https_ssh_and_scp_forms() -> None:
 
 
 @pytest.mark.parametrize(
+    "failure",
+    [OSError("git is unavailable"), subprocess.TimeoutExpired(["git"], 2)],
+)
+def test_git_probe_failures_are_treated_as_missing_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: Exception
+) -> None:
+    def fail_run(*_args: object, **_kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(repo_picker.subprocess, "run", fail_run)
+
+    assert repo_picker._run_git(tmp_path, "status") == ""
+
+
+@pytest.mark.parametrize(
     ("url", "expected"),
     [
         ("https://github.com/acme/repo.git", "acme/repo"),
