@@ -3,8 +3,6 @@
 import getpass
 import json
 import os
-import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -12,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
+from free_claude_code.application.account_identity import fcc_provider_account_summary
 from free_claude_code.application.connected_accounts import ConnectedAccountLoginMode
 from free_claude_code.cli.claude_env import context_cap_tokens
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
@@ -83,9 +82,7 @@ from .repo_picker import (
 from .selection import SelectionItem, choose_item
 
 CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
-CODEX_STATUS_TIMEOUT_SECONDS = 5.0
 LOG_PREVIEW_LINES = 30
-_CODEX_API_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
 
 
 class ControlClientLauncher(Protocol):
@@ -252,6 +249,11 @@ def _print_home(
     displayed_model = settings.model if model is None else model
     displayed_profile = configured_profile() if profile is None else profile
     displayed_repo = repo.display_path if repo is not None else Path.cwd().name
+    fcc_account = fcc_provider_account_summary()
+    try:
+        codex_account = codex_accounts.active_account_summary()
+    except codex_accounts.CodexAccountError:
+        codex_account = "needs attention"
     print()
     print("FCC Harness")
     print("-----------")
@@ -259,12 +261,14 @@ def _print_home(
     print(f"Repo      {displayed_repo}")
     print(f"Model     {displayed_model}")
     print(f"Profile   {displayed_profile} (next launch)")
+    print(f"FCC Account  {fcc_account}")
+    print(f"Codex Tools  {codex_account}")
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
     print()
     print("[Enter/C] Claude   [D] Danger   [A] Accounts [O] Repos")
     print("[F] Profiles       [P] Providers [M] Models   [U] Usage")
     print("[V] Reviewers      [N] Diagnose  [Y] Policy")
-    print("[X] Connect        [S] Settings [L] Logs")
+    print("[X] Codex tools    [S] Settings [L] Logs")
     print("[R] Restart        [Q] Quit")
 
 
@@ -1585,61 +1589,12 @@ def _render_log_line(line: str) -> str:
     return f"{timestamp:>8} {level:<8} {message}".rstrip()
 
 
-def _codex_subscription_environment() -> dict[str, str]:
-    """Build a Codex child env that cannot silently prefer API-key auth."""
-
-    environment = dict(os.environ)
-    for key in _CODEX_API_ENV_KEYS:
-        environment.pop(key, None)
-    return environment
-
-
-def _codex_chatgpt_connected(executable: str) -> bool:
-    """Return whether Codex reports an active ChatGPT sign-in."""
-
-    try:
-        result = subprocess.run(
-            [executable, "login", "status"],
-            env=_codex_subscription_environment(),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=CODEX_STATUS_TIMEOUT_SECONDS,
-        )
-    except OSError, subprocess.TimeoutExpired:
-        return False
-    output = f"{result.stdout}\n{result.stderr}".casefold()
-    return result.returncode == 0 and "logged in using chatgpt" in output
-
-
 def _connect_codex() -> None:
-    """Explicitly connect the installed Codex CLI with ChatGPT subscription auth."""
+    """Explain the separate Codex tool-account surface without launching OAuth."""
 
-    executable = shutil.which("codex")
-    if executable is None:
-        print("Codex CLI was not found on PATH. Install/open Codex, then retry.")
-        return
-    if _codex_chatgpt_connected(executable):
-        print("Codex is already connected using ChatGPT.")
-        return
-
-    print("Starting Codex ChatGPT sign-in; Harness will not use an API key.")
-    try:
-        result = subprocess.run(
-            [executable, "login"],
-            env=_codex_subscription_environment(),
-            check=False,
-        )
-    except OSError as exc:
-        print(f"Could not start Codex login: {type(exc).__name__}.")
-        return
-    if result.returncode != 0:
-        print(f"Codex login exited with status {result.returncode}.")
-        return
-    if _codex_chatgpt_connected(executable):
-        print("Codex connected using ChatGPT subscription auth.")
-    else:
-        print("Codex login finished, but ChatGPT connection was not confirmed.")
+    print("Codex Tool Accounts are separate from the FCC Provider Account.")
+    print("Use [A] Accounts or run `fcc accounts` to list and switch local profiles.")
+    print("To add one, run `fcc accounts add <profile>` in a terminal.")
 
 
 def _wait_for_proxy(

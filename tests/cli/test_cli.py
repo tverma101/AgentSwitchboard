@@ -150,6 +150,12 @@ class TestCLIParser:
 class TestManagedClaudeSession:
     """Test ManagedClaudeSession."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_installed_claude_compatibility(self):
+        """Keep managed-session unit tests independent of the host Claude install."""
+        with patch("free_claude_code.cli.managed.session.enforce_claude_compatibility"):
+            yield
+
     def test_session_init(self):
         """Test ManagedClaudeSession initialization."""
         from free_claude_code.cli.managed.session import ManagedClaudeSession

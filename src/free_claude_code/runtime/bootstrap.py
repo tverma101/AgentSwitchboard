@@ -33,6 +33,7 @@ from free_claude_code.usage import UsageStore
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
 from .codex_catalog import CodexModelCatalogPublisher
+from .codex_tool_accounts import CodexToolAccountsRuntime
 from .provider_manager import ProviderRuntimeManager
 
 
@@ -66,6 +67,7 @@ def build_asgi_app(
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
+        codex_tool_accounts=CodexToolAccountsRuntime(),
         approved_helper_registry=helper_registry,
         helper_cleanup=helper_adapter.close,
     )

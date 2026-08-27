@@ -20,6 +20,7 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.application.route_diagnostics import build_route_diagnostic
+from free_claude_code.application.tool_accounts import CodexToolAccountError
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
@@ -341,6 +342,80 @@ async def disconnect_connected_account(
     _require_connected_account_provider(provider_id)
     status = await services.admin.disconnect_connected_account(provider_id)
     return _no_store(status.as_dict())
+
+
+@router.get("/admin/api/tool-accounts")
+async def codex_tool_accounts_status(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Return the installed Codex/helper account surface without credentials."""
+
+    require_loopback_admin(request)
+    return _no_store(await services.admin.codex_tool_accounts_status())
+
+
+@router.post("/admin/api/tool-accounts/usage")
+async def refresh_all_codex_tool_account_usage(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Refresh all Codex tool-account usage snapshots explicitly."""
+
+    require_loopback_admin(request)
+    try:
+        result = await services.admin.refresh_all_codex_tool_account_usage()
+    except CodexToolAccountError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _no_store(result)
+
+
+@router.post("/admin/api/tool-accounts/{profile}/select")
+async def select_codex_tool_account(
+    profile: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Select a local Codex tool account without invoking OAuth."""
+
+    require_loopback_admin(request)
+    try:
+        result = await services.admin.select_codex_tool_account(profile)
+    except CodexToolAccountError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _no_store(result)
+
+
+@router.post("/admin/api/tool-accounts/{profile}/usage")
+async def refresh_codex_tool_account_usage(
+    profile: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Refresh one local Codex tool account's metadata-only usage."""
+
+    require_loopback_admin(request)
+    try:
+        result = await services.admin.refresh_codex_tool_account_usage(profile)
+    except CodexToolAccountError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _no_store(result)
+
+
+@router.delete("/admin/api/tool-accounts/{profile}")
+async def forget_codex_tool_account(
+    profile: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Forget a local Codex tool snapshot without upstream logout."""
+
+    require_loopback_admin(request)
+    try:
+        result = await services.admin.forget_codex_tool_account(profile)
+    except CodexToolAccountError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _no_store(result)
 
 
 @router.get("/admin/api/models")

@@ -18,17 +18,19 @@ non-TTY invocation for the prior blocking server-only behavior.
 The control center keeps the surface intentionally small: Enter/C launches
 `fcc-claude`, D launches `fccdanger`, O selects a locally discovered repository,
 F selects or manages the next-launch learning profile (including explicit
-bundle preview/transfer), P opens provider/account status and explicit
-configuration, testing, local reachability, or connected-account login
-actions, and lets the user add, edit, test, enable/disable, or remove custom
-providers through the canonical Admin API. M lists cached models and opens the
-shared filterable picker for an explicit model change, U shows local usage, X
-runs metadata-only route diagnostics, S edits Model and Reasoning Policy
-through the canonical loopback Admin API, L previews/filters the existing
-structured server log, R restarts only an FCC supervisor owned by this
-terminal, and Q exits. Locked Admin fields remain read-only. Repository and
-profile selection are local-only; they are passed to the child launch and do
-not change a live server/session namespace.
+bundle preview/transfer), P opens provider status and explicit configuration,
+testing, local reachability, or FCC connected-account login actions, and lets
+the user add, edit, test, enable/disable, or remove custom providers through
+the canonical Admin API. A opens the independent Codex Tool Accounts command
+surface; X prints the same separation and the safe `fcc accounts` commands
+without launching OAuth. M lists cached models and opens the shared filterable
+picker for an explicit model change, U shows local usage, N runs metadata-only
+route diagnostics, S edits Model and Reasoning Policy through the canonical
+loopback Admin API, L previews/filters the existing structured server log, R
+restarts only an FCC supervisor owned by this terminal, and Q exits. Locked
+Admin fields remain read-only. Repository and profile selection are local-only;
+they are passed to the child launch and do not change a live server/session
+namespace.
 
 The home screen is deliberately local-only: it uses the startup settings
 snapshot and supervisor state and does not request Admin/provider data on every
@@ -50,10 +52,11 @@ object and does not make an Admin request. Explicit settings edits still use
 the local Admin API; after a successful edit, the terminal invalidates its
 settings cache before the next redraw.
 
-Codex ChatGPT subscription profiles are managed separately with `fcc accounts`.
-That command lists, switches, refreshes, adds, and forgets private local auth
-snapshots without logging out an upstream account; selections apply only to
-new Codex/helper sessions.
+FCC's provider account and Codex Tool Accounts are separate. The FCC provider
+uses `~/.fcc/auth/openai.json`; `fcc accounts` uses `$CODEX_HOME/auth.json` and
+`$CODEX_HOME/accounts/profiles`. The command lists, switches, refreshes, adds,
+and forgets private local Codex auth snapshots without logging out an upstream
+account; selections apply only to new Codex/helper sessions.
 
 From the terminal control-center home, press `A` (or enter `accounts` or
 `subscriptions`) to open that same account surface; `P` remains the provider

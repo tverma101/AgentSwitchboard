@@ -25,11 +25,11 @@ fcc-server
 The command opens the terminal control center. Press Enter/C for `fcc-claude`,
 D for `fccdanger`, O to select a cached/local repository, or F to select/manage
 the profile used by the next launch. F also exposes explicit selective bundle
-preview/export/import. P opens provider/account actions; its custom-provider
+preview/export/import. P opens provider status and FCC account actions; its custom-provider
 path supports add, edit, test, enable/disable, and remove through the
 canonical Admin API. M shows models and opens a shared filterable picker for
 an explicit model change, U shows local usage, N runs route diagnostics, X
-connects Codex, S edits the supported Model and Reasoning Policy fields, L
+explains the independent Codex Tool Account surface, S edits the supported Model and Reasoning Policy fields, L
 previews/filters the structured server log, R restarts only a server owned by
 this terminal, and Q exits. If FCC is already healthy, the control center
 attaches without claiming its lifecycle. Use `fcc-server --headless` for a
@@ -131,11 +131,16 @@ spend, bypass egress policy, or create a second provider engine. The runtime
 uses the existing OpenAI Chat adapter, model cache, routing, and receipts;
 receipts contain provider/model metadata rather than credentials.
 
-## Codex subscription account profiles
+## Independent FCC and Codex account stores
 
-The independent `fcc accounts` command manages multiple ChatGPT subscription
-profiles for the installed Codex CLI without changing FCC's separate OpenAI
-provider OAuth state:
+FCC exposes two deliberately independent account surfaces. The FCC OpenAI/Codex
+provider owns `~/.fcc/auth/openai.json`; installed Codex, Computer Use, and
+Browser helpers own `$CODEX_HOME/auth.json` and saved snapshots under
+`$CODEX_HOME/accounts/profiles`. Logging in or switching one surface never
+copies credentials to, logs out of, or replaces the other surface.
+
+The `fcc accounts` command manages the Codex Tool Accounts without changing
+FCC's provider OAuth state:
 
 ```bash
 fcc accounts list
@@ -146,14 +151,18 @@ fcc accounts forget <profile>
 ```
 
 `add` runs the official Codex sign-in/sign-up flow; add `--device-auth` for
-device authorization. FCC removes API-key environment variables before
-starting that login. The manager snapshots the live `$CODEX_HOME/auth.json`
-under `$CODEX_HOME/accounts/profiles/<profile>/auth.json` with private file
+device authorization. API-key environment variables are removed from that
+child login environment, and the live `$CODEX_HOME/auth.json` is stashed while
+the official flow runs. The manager snapshots the resulting auth under
+`$CODEX_HOME/accounts/profiles/<profile>/auth.json` with private file
 permissions, keeps normalized credential-free usage data, and uses backend
 reported rate-limit durations for labels. Forgetting removes only a local
 snapshot and refuses to remove the currently active account; no upstream
 logout or token revocation is performed. Switching is local and applies to
-new Codex/helper sessions after the documented restart boundary.
+new Codex/helper sessions after the documented restart boundary. The Admin
+Accounts view exposes the same status, switch, usage, and forget operations;
+interactive account addition remains an explicit terminal command so a browser
+request cannot silently start or replace a login.
 
 ## Context and reasoning
 

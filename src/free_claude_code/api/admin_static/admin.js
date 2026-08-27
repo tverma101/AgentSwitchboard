@@ -9,6 +9,7 @@ const state = {
   authPollers: new Map(),
   customProviders: [],
   customProviderEditingId: null,
+  toolAccounts: null,
   activeView: "providers",
   usageDays: 30,
   selectedModelField: "MODEL",
@@ -41,6 +42,13 @@ const VIEW_GROUPS = [
     title: "Model Config",
     sections: ["models", "reasoning", "web_tools"],
     containerId: "modelConfigSections",
+  },
+  {
+    id: "accounts",
+    label: "Accounts",
+    title: "Accounts",
+    sections: [],
+    containerId: null,
   },
   {
     id: "usage",
@@ -128,6 +136,7 @@ async function load() {
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
   await refreshConnectedAccounts();
+  await refreshToolAccounts();
   await hydrateModelOptions();
   await loadUsage();
   await loadReviewer();
@@ -186,47 +195,41 @@ function setActiveView(viewId, { scroll = false } = {}) {
 
 function renderProviders(providerStatus) {
   const grid = byId("providerGrid");
-  const connectedGrid = byId("connectedAccountGrid");
   grid.innerHTML = "";
-  connectedGrid.innerHTML = "";
-  const connected = providerStatus.filter(
-    (provider) => provider.kind === "connected_account",
-  );
-  byId("connectedAccountsSection").hidden = connected.length === 0;
-  providerStatus.filter((provider) => !provider.custom).forEach((provider) => {
-    if (provider.kind === "connected_account") {
-      connectedGrid.appendChild(renderConnectedAccountCard(provider));
-      return;
-    }
-    const card = document.createElement("article");
-    card.className = "provider-card";
-    card.dataset.provider = provider.provider_id;
+  providerStatus
+    .filter(
+      (provider) => !provider.custom && provider.kind !== "connected_account",
+    )
+    .forEach((provider) => {
+      const card = document.createElement("article");
+      card.className = "provider-card";
+      card.dataset.provider = provider.provider_id;
 
-    const title = document.createElement("div");
-    title.className = "provider-title";
-    title.innerHTML = `<strong>${provider.display_name || provider.provider_id}</strong>`;
+      const title = document.createElement("div");
+      title.className = "provider-title";
+      title.innerHTML = `<strong>${provider.display_name || provider.provider_id}</strong>`;
 
-    const pill = document.createElement("span");
-    pill.className = `status-pill ${statusClass(provider.status)}`;
-    pill.textContent = provider.label;
-    title.appendChild(pill);
+      const pill = document.createElement("span");
+      pill.className = `status-pill ${statusClass(provider.status)}`;
+      pill.textContent = provider.label;
+      title.appendChild(pill);
 
-    const meta = document.createElement("div");
-    meta.className = "provider-meta";
-    meta.textContent =
-      provider.kind === "local"
-        ? provider.base_url || "No local URL configured"
-        : provider.configuration;
+      const meta = document.createElement("div");
+      meta.className = "provider-meta";
+      meta.textContent =
+        provider.kind === "local"
+          ? provider.base_url || "No local URL configured"
+          : provider.configuration;
 
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "test-button";
-    button.textContent = provider.kind === "local" ? "Test" : "Refresh models";
-    button.addEventListener("click", () => testProvider(provider.provider_id, button));
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "test-button";
+      button.textContent = provider.kind === "local" ? "Test" : "Refresh models";
+      button.addEventListener("click", () => testProvider(provider.provider_id, button));
 
-    card.append(title, meta, button);
-    grid.appendChild(card);
-  });
+      card.append(title, meta, button);
+      grid.appendChild(card);
+    });
 }
 
 function renderCustomProviders() {
@@ -391,11 +394,12 @@ function renderConnectedAccountCard(provider, status = provider) {
   card.className = "provider-card";
   card.dataset.provider = provider.provider_id;
   card.dataset.connectedAccount = "true";
+  card.dataset.accountSurface = "fcc-provider";
 
   const title = document.createElement("div");
   title.className = "provider-title";
   const name = document.createElement("strong");
-  name.textContent = provider.display_name || provider.provider_id;
+  name.textContent = "FCC Provider Account";
   const pill = document.createElement("span");
   pill.className = `status-pill ${statusClass(status.state || status.status)}`;
   pill.textContent = connectedAccountLabel(status);
@@ -424,12 +428,12 @@ function connectedAccountLabel(status) {
 
 function connectedAccountMeta(status) {
   if (status.connected) {
-    const identity = status.email || "ChatGPT subscription connected";
+    const identity = status.email || "Account connected";
     const models = Number.isInteger(status.model_count)
       ? `${status.model_count} model${status.model_count === 1 ? "" : "s"} available. `
       : "";
     const error = status.message ? `${status.message} ` : "";
-    return `${identity}. ${models}${error}Restart your agent to refresh its model picker.`;
+    return `${identity}. ${models}${error}Stored only in ~/.fcc/auth/openai.json. Restart your agent to refresh its model picker.`;
   }
   if (status.mode === "device" && status.user_code) {
     return `Enter code ${status.user_code} at ${status.verification_url}`;
@@ -437,7 +441,7 @@ function connectedAccountMeta(status) {
   if (status.state === "connecting") {
     return "Finish signing in, then return to this page.";
   }
-  return status.message || "Connect a ChatGPT account to discover subscription models.";
+  return status.message || "Sign in to FCC's OpenAI provider account. This does not sign in or switch Codex tool accounts.";
 }
 
 function populateConnectedAccountActions(provider, status, actions) {
@@ -478,7 +482,7 @@ function populateConnectedAccountActions(provider, status, actions) {
     return;
   }
   actions.appendChild(
-    authButton("Connect", (button) => startConnectedAccountLogin(providerId, "browser", button)),
+    authButton("Sign in", (button) => startConnectedAccountLogin(providerId, "browser", button)),
     authButton(
       "Use device code",
       (button) => startConnectedAccountLogin(providerId, "device", button),
@@ -500,8 +504,13 @@ async function refreshConnectedAccounts() {
   const providers = (state.config?.provider_status || []).filter(
     (provider) => provider.kind === "connected_account",
   );
+  const grid = byId("connectedAccountGrid");
   await Promise.all(
     providers.map(async (provider) => {
+      const current = [...grid.querySelectorAll("[data-connected-account]")].find(
+        (card) => card.dataset.provider === provider.provider_id,
+      );
+      if (!current) grid.appendChild(renderConnectedAccountCard(provider));
       try {
         const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
         updateConnectedAccountCard(provider, status);
@@ -514,6 +523,183 @@ async function refreshConnectedAccounts() {
         });
       }
     }),
+  );
+}
+
+async function refreshToolAccounts() {
+  try {
+    const result = await api("/admin/api/tool-accounts");
+    state.toolAccounts = result;
+    renderToolAccounts(result);
+  } catch (error) {
+    state.toolAccounts = null;
+    renderToolAccounts({
+      available: false,
+      state: "error",
+      accounts: [],
+      message: error.message,
+    });
+  }
+}
+
+function renderToolAccounts(result) {
+  const grid = byId("codexToolAccountGrid");
+  const empty = byId("codexToolAccountEmptyState");
+  const notice = byId("codexToolAccountNotice");
+  grid.innerHTML = "";
+  const accounts = Array.isArray(result?.accounts) ? result.accounts : [];
+  const ready = result?.available === true && result?.state === "ready";
+  notice.textContent = result?.message || (
+    ready
+      ? "Independent from FCC Provider Account. Switching affects only new Codex/helper sessions."
+      : "Codex tool account management is unavailable in this runtime."
+  );
+  notice.className = `account-notice ${ready ? "" : "error"}`.trim();
+  empty.hidden = accounts.length > 0;
+  if (!ready && !accounts.length) {
+    empty.textContent = "Codex tool account storage needs attention.";
+  } else {
+    empty.innerHTML = "No Codex tool accounts are saved. Add one from a terminal with <code>fcc accounts add &lt;profile&gt;</code>.";
+  }
+  accounts.forEach((account) => grid.appendChild(renderToolAccountCard(account)));
+}
+
+function renderToolAccountCard(account) {
+  const card = document.createElement("article");
+  card.className = "provider-card tool-account-card";
+  card.dataset.toolAccount = "true";
+  card.dataset.profile = account.profile || "";
+
+  const title = document.createElement("div");
+  title.className = "provider-title";
+  const name = document.createElement("strong");
+  name.textContent = account.email || account.profile || "Unnamed account";
+  const pill = document.createElement("span");
+  pill.className = `status-pill ${account.active ? "ok" : "neutral"}`;
+  pill.textContent = account.active ? "Active" : "Saved";
+  title.append(name, pill);
+
+  const meta = document.createElement("div");
+  meta.className = "provider-meta account-meta";
+  const details = [`profile ${account.profile || "unknown"}`, account.plan || "plan unknown"];
+  details.push(...toolAccountUsageLines(account.usage));
+  meta.textContent = details.join(" · ");
+
+  const actions = document.createElement("div");
+  actions.className = "provider-actions";
+  if (!account.active && account.profile) {
+    actions.appendChild(
+      authButton("Switch", (button) => selectToolAccount(account.profile, button)),
+    );
+  }
+  if (account.profile) {
+    actions.appendChild(
+      authButton(
+        "Usage",
+        (button) => refreshToolAccountUsage(account.profile, button),
+        "secondary-button",
+      ),
+    );
+  }
+  if (!account.active && account.profile) {
+    actions.appendChild(
+      authButton(
+        "Forget",
+        () => forgetToolAccount(account.profile),
+        "secondary-button",
+      ),
+    );
+  }
+  card.append(title, meta, actions);
+  return card;
+}
+
+function toolAccountUsageLines(usage) {
+  if (!usage || !Array.isArray(usage.windows)) return ["usage not refreshed"];
+  const lines = usage.windows
+    .filter((window) => window && window.remaining_percent !== null)
+    .map((window) => `${window.label || "limit"} ${Math.round(window.remaining_percent)}% left`);
+  return lines.length ? lines.slice(0, 2) : ["usage unavailable"];
+}
+
+async function selectToolAccount(profile, button) {
+  button.disabled = true;
+  try {
+    await api(`/admin/api/tool-accounts/${encodeURIComponent(profile)}/select`, {
+      method: "POST",
+      body: "{}",
+    });
+    await refreshToolAccounts();
+    showMessage("Codex tool account switched. Start a new Codex/helper session to use it.", "ok");
+  } catch (error) {
+    showMessage(error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function refreshToolAccountUsage(profile, button) {
+  button.disabled = true;
+  try {
+    await api(`/admin/api/tool-accounts/${encodeURIComponent(profile)}/usage`, {
+      method: "POST",
+      body: "{}",
+    });
+    await refreshToolAccounts();
+    showMessage("Codex tool-account usage refreshed.", "ok");
+  } catch (error) {
+    showMessage(error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function refreshAllToolAccountUsage() {
+  const button = byId("codexToolAccountUsageButton");
+  button.disabled = true;
+  try {
+    const result = await api("/admin/api/tool-accounts/usage", {
+      method: "POST",
+      body: "{}",
+    });
+    state.toolAccounts = result;
+    renderToolAccounts(result);
+    const errors = Object.entries(result.refresh_errors || {})
+      .filter(([, message]) => message)
+      .map(([profile, message]) => `${profile}: ${message}`);
+    showMessage(
+      errors.length ? `Some usage refreshes failed: ${errors.join("; ")}` : "Codex tool-account usage refreshed.",
+      errors.length ? "error" : "ok",
+    );
+  } catch (error) {
+    showMessage(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function forgetToolAccount(profile) {
+  if (!window.confirm("Forget this Codex tool account snapshot? This does not log out or revoke it.")) return;
+  try {
+    await api(`/admin/api/tool-accounts/${encodeURIComponent(profile)}`, {
+      method: "DELETE",
+    });
+    await refreshToolAccounts();
+    showMessage("Local Codex tool-account snapshot forgotten.", "ok");
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+}
+
+function showToolAccountAddInstructions() {
+  const profile = window.prompt("Profile name for the new Codex tool account:");
+  if (profile === null) return;
+  const normalized = profile.trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(normalized)) {
+    showMessage("Profile names may contain only letters, numbers, dot, underscore, and hyphen.", "error");
+    return;
+  }
+  showMessage(
+    `Run in a terminal: fcc accounts add ${normalized}. The official Codex sign-in will update only the Codex tool store.`,
+    "ok",
   );
 }
 
@@ -1520,6 +1706,8 @@ function showMessage(message, kind = "") {
 byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 byId("usageRefreshButton").addEventListener("click", () => loadUsage());
+byId("codexToolAccountAddButton").addEventListener("click", showToolAccountAddInstructions);
+byId("codexToolAccountUsageButton").addEventListener("click", refreshAllToolAccountUsage);
 byId("reviewerRefreshButton").addEventListener("click", () => loadReviewer());
 byId("customProviderAddButton").addEventListener("click", () => showCustomProviderEditor());
 byId("customProviderCancelButton").addEventListener("click", hideCustomProviderEditor);
