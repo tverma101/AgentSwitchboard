@@ -17,6 +17,7 @@ boundaries explicit so design notes are not mistaken for release guarantees.
 | [Smoke and receipt guide](../smoke/README.md) | Deterministic and opt-in live validation, receipt schemas, and evidence limits | Current validation guide |
 | [Upstream regression watch](UPSTREAM_REGRESSION_WATCH.md) | Bounded provenance registry for promoted external edge cases | Current manual registry; no hot-path polling |
 | [Diagnostics](DIAGNOSTICS.md) | Terminal-only synthetic route and capability explanations | Current; zero-network diagnostic surface |
+| [Terminal visual UX](TERMINAL_VISUAL_UX.md) | Bounded image attachment cards, previews, and local source handling | Current; local presentation only |
 
 ## Active design and conformance contracts
 
