@@ -7,6 +7,10 @@ from free_claude_code.application.errors import (
     ApplicationUnavailableError,
     UnknownProviderError,
 )
+from free_claude_code.config.custom_providers import (
+    ProviderRegistry,
+    provider_registry_for_settings,
+)
 from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
@@ -15,6 +19,7 @@ from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
+    create_custom_openai_chat_provider,
     create_openai_chat_provider,
 )
 
@@ -211,11 +216,13 @@ def create_provider(
     settings: Settings,
     *,
     injected_factories: Mapping[str, ProviderFactory] | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> BaseProvider:
     """Create a provider instance for a supported provider id."""
-    descriptor = PROVIDER_CATALOG.get(provider_id)
+    registry = registry or provider_registry_for_settings(settings)
+    descriptor = registry.catalog.get(provider_id)
     if descriptor is None:
-        raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
+        raise UnknownProviderError.for_provider(provider_id, registry.catalog)
 
     config = build_provider_config(descriptor, settings)
     admission = ProviderAdmissionController(
@@ -232,4 +239,12 @@ def create_provider(
     factory = factory or _SPECIAL_PROVIDER_FACTORIES.get(provider_id)
     if factory is not None:
         return factory(config, settings, admission)
+    custom = registry.custom.get(provider_id)
+    if custom is not None:
+        return create_custom_openai_chat_provider(
+            provider_id,
+            config,
+            admission,
+            fallback_model_ids=custom.model_ids,
+        )
     return create_openai_chat_provider(provider_id, config, admission)

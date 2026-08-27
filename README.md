@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The local release head is version
-`4.30.26`; examples below describe this checkout, not every feature proposed in
+`4.31.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. Live smoke receipts retain the package version that
 was installed when each receipt was captured; read the receipt's own metadata
 before treating it as evidence for a later release head.
@@ -434,8 +434,8 @@ capability detection is available to the wrapper without emitting escape codes
 to unsupported terminals. `fcc-appshot` exposes a demand-only macOS
 focused-window capture helper backed by
 `free_claude_code.cli.visuals.capture_focused_window`; it requires the user to
-grant Screen Recording/Accessibility permissions and never sends a model request
-itself.
+grant Screen Recording permission and never sends a model request itself.
+Accessibility permission is not required for this capture path.
 
 For an explicit session-scoped capture, use `fcc-appshot --session-id <id>` (or
 set `FCC_CLAUDE_SESSION_ID`). The helper writes the PNG and a metadata-only

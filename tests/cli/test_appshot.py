@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from free_claude_code.cli import appshot
+from free_claude_code.cli.macos_screenshot import MacOSScreenRecordingPermissionError
 
 
 def test_appshot_cli_uses_explicit_session_and_prints_local_receipt(
@@ -37,6 +40,31 @@ def test_appshot_cli_can_list_pending_session_receipts(tmp_path: Path, capsys) -
         "session-1-a.json",
         "session-1-b.json",
     ]
+
+
+def test_appshot_cli_prints_one_clean_screen_recording_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    message = (
+        "Screen Recording permission is required for Terminal. Enable it in System "
+        "Settings > Privacy & Security > Screen & System Audio Recording, then quit "
+        "and reopen Terminal once."
+    )
+
+    def fail_capture(**_: object):
+        raise MacOSScreenRecordingPermissionError(message)
+
+    monkeypatch.setattr(appshot, "capture_and_enqueue_appshot", fail_capture)
+
+    with pytest.raises(SystemExit) as exc_info:
+        appshot.main(["--session-id", "session-1", "--no-preview"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert captured.out == ""
+    assert captured.err == f"{message}\n"
+    assert "RuntimeError" not in captured.err
 
 
 def _attachment(session_id: str, image: Path):

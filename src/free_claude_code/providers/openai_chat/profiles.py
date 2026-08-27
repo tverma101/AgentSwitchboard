@@ -140,6 +140,14 @@ def _policy(
     )
 
 
+def custom_openai_chat_profile(provider_name: str) -> OpenAIChatProfile:
+    """Build the intentionally narrow profile used by custom endpoints."""
+    return OpenAIChatProfile(
+        _policy(provider_name, ReasoningReplayMode.THINK_TAGS),
+        NO_REASONING,
+    )
+
+
 OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
     "azure_openai": OpenAIChatProfile(
         _policy(
