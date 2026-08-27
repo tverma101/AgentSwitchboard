@@ -45,12 +45,12 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
 
     # Keep the server composition root off metadata-only command paths.
     from free_claude_code.cli import commands
-    from free_claude_code.cli.launchers.common import preflight_proxy
-    from free_claude_code.cli.terminal_control import (
+    from free_claude_code.cli.control_tui_entry import (
         run_attached_control_center,
         run_owned_control_center,
-        terminal_control_available,
     )
+    from free_claude_code.cli.launchers.common import preflight_proxy
+    from free_claude_code.cli.terminal_control import terminal_control_available
     from free_claude_code.config.server_urls import local_proxy_root_url
 
     settings = commands.load_server_settings()
@@ -112,12 +112,12 @@ def _parse_server_options(args: Sequence[str]) -> bool | None:
         raise SystemExit(2)
     if "--help" in args or "-h" in args:
         print(
-            "Start the local Free Claude Code proxy.\n\n"
+            "Start the local CodeSwitchyard proxy.\n\n"
             f"Usage: {_SERVER_USAGE}\n\n"
-            "Interactive terminals open the FCC terminal control center.\n"
+            "Interactive terminals open the CodeSwitchyard Textual control center.\n"
             "--headless keeps the blocking server-only behavior.\n"
             "--terminal and --no-browser remain explicit no-op compatibility flags.\n"
-            "FCC never launches a browser automatically."
+            "Authentication browsers open only after an explicit login action."
         )
         raise SystemExit(0)
 
