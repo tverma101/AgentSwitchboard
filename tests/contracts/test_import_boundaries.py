@@ -44,6 +44,20 @@ IMPORT_EXCEPTIONS: dict[tuple[str, str], str] = {
         "Owner: installed server command. "
         "Reason: the command delegates construction to the process composition root."
     ),
+    (
+        "free_claude_code.cli.codex_computer_use_mcp",
+        "free_claude_code.runtime.codex_computer_use",
+    ): (
+        "Owner: explicit Claude MCP process entry point. "
+        "Reason: this fixed stdio surface composes the runtime-owned native tool contract."
+    ),
+    (
+        "free_claude_code.cli.codex_computer_use_mcp",
+        "free_claude_code.runtime.codex_computer_use_helper",
+    ): (
+        "Owner: explicit Claude MCP process entry point. "
+        "Reason: this fixed stdio surface owns the runtime adapter lifecycle boundary."
+    ),
 }
 
 FACADE_ONLY_BOUNDARIES = {
