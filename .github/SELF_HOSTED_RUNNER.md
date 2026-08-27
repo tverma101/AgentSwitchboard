@@ -27,6 +27,43 @@ The issue-triggered version validator intentionally remains on
 `ubuntu-latest`; it processes untrusted issue content and should not execute on
 the persistent Mac runner.
 
+## Emergency Codespaces burst runner
+
+The repository `tverma101/Rumple` is the minimal Codespaces host for emergency
+compute when the Mac runner is overloaded or slow. Its checked-in devcontainer
+is derived from the
+[Pwd9000-ML GitHub Actions Runner template](https://github.com/Pwd9000-ML/devcontainer-templates/tree/main/src/github-actions-runner-devcontainer)
+version `1.0.3`. It registers against `tverma101/Harness` with the
+`harness-burst` and `rumple` labels.
+
+Run an explicit burst from a pushed Harness branch:
+
+```sh
+fcc burst --ref fix/my-branch
+```
+
+If a burst needs to be stopped independently, run:
+
+```sh
+fcc burst stop
+```
+
+The command reuses or creates a Rumple Codespace, defaults to GitHub's
+`basicLinux32gb` machine (2 cores, 8 GB RAM), waits for the runner, dispatches
+the `CI` workflow with `harness-burst`, watches every matrix job, and stops the
+Codespace even when the run fails. It uses GitHub's Codespaces REST start API
+because some installed GitHub CLI versions do not provide `gh codespace
+start`.
+
+Configure the `GH_OWNER`, `GH_REPOSITORY`, and `GH_TOKEN` Codespaces secrets in
+Rumple before the first launch. The token is never stored in either repository.
+
+The workflow's normal push and pull-request behavior is unchanged: the
+repository's existing `HARNESS_RUNNER` setting continues to control trusted
+work, and fork pull requests remain on `ubuntu-latest`. The burst command does
+not modify that setting; only an explicit workflow dispatch can select
+`harness-burst`.
+
 ## Local runner operations
 
 The runner is registered only for `tverma101/Harness`, with the custom label

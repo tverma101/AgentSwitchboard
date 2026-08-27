@@ -260,6 +260,24 @@ completes a Bash marker through FCC/OpenCode Go/Muse. The earlier
 is retained as historical failed-probe evidence. The complete
 PASS/UNVERIFIED/SKIPPED map is in the
 [Claude compatibility matrix](smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
+### Emergency Harness CI on Codespaces
+
+The optional `fcc burst` command adds emergency compute when the Mac runner is
+overloaded or slow. It runs Harness's CI workflow on a temporary runner hosted
+by the minimal private repository `tverma101/Rumple`:
+
+```bash
+fcc burst --ref fix/my-branch
+```
+
+It reuses or creates the Rumple Codespace, defaults to GitHub's
+`basicLinux32gb` machine (2 cores), waits for the `harness-burst` runner,
+dispatches CI, watches the run, and stops the Codespace afterward. The branch
+must already be pushed because GitHub Actions runs against the remote ref.
+Configure the `GH_OWNER`, `GH_REPOSITORY`, and `GH_TOKEN` Codespaces secrets
+described in the [Rumple setup](https://github.com/tverma101/Rumple) first.
+Use `fcc burst stop` to stop the selected Rumple Codespace on demand. This
+path does not change the normal `HARNESS_RUNNER` routing.
 
 ### Inspect usage and model labels
 
