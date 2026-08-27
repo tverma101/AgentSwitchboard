@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import DataTable, OptionList
 
+from free_claude_code.application.connected_accounts import ConnectedAccountLoginMode
 from free_claude_code.cli.control_tui import ControlCenterApp
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
@@ -165,9 +166,7 @@ async def test_browser_login_waits_for_real_connected_state() -> None:
     ):
         async with app.run_test() as pilot:
             app.selected_provider = "openai"
-            await app._start_fcc_login(
-                app.__class__.__dict__["_start_fcc_login"].__globals__["ConnectedAccountLoginMode"].BROWSER
-            )
+            await app._start_fcc_login(ConnectedAccountLoginMode.BROWSER)
             await pilot.pause()
             browser_open.assert_called_once_with("https://example.test/login")
             assert app._oauth_provider == "openai"
