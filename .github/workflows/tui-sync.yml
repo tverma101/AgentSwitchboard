@@ -4,6 +4,10 @@ on:
   push:
     branches: [codex/textual-control-center]
 
+concurrency:
+  group: tui-branch-sync
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -15,13 +19,57 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
-      - name: Lock and format transplanted TUI
+      - name: Apply pinned Harlequin app-base wiring
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/free_claude_code/cli/control_tui.py")
+          text = path.read_text()
+          text = text.replace(
+              "from textual.app import App, ComposeResult",
+              "from textual.app import ComposeResult",
+          )
+          marker = "from . import codex_accounts\n"
+          insertion = "from . import codex_accounts\nfrom .harlequin_app_base import HarlequinAppBase\n"
+          if "from .harlequin_app_base import HarlequinAppBase" not in text:
+              text = text.replace(marker, insertion)
+          text = text.replace(
+              "class ControlCenterApp(App[ControlResult | None]):",
+              "class ControlCenterApp(HarlequinAppBase):",
+          )
+          text = text.replace(
+              "table.coordinate_to_cell_key((table.cursor_row, 0))",
+              "table.coordinate_to_cell_key(table.cursor_coordinate)",
+          )
+          path.write_text(text)
+          PY
+      - name: Lock and normalize transplanted TUI
         run: |
           uv lock
           uv sync --locked --dev
-          uv run ruff format src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
-          uv run ruff check --fix src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
-          uv run ty check src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
+          uv run ruff format \
+            src/free_claude_code/cli/control_tui.py \
+            src/free_claude_code/cli/control_tui_entry.py \
+            src/free_claude_code/cli/entrypoints.py \
+            src/free_claude_code/cli/harlequin_app_base.py \
+            src/free_claude_code/cli/harlequin_theme.py \
+            tests/cli/test_control_tui.py
+          uv run ruff check --fix \
+            src/free_claude_code/cli/control_tui.py \
+            src/free_claude_code/cli/control_tui_entry.py \
+            src/free_claude_code/cli/entrypoints.py \
+            src/free_claude_code/cli/harlequin_app_base.py \
+            src/free_claude_code/cli/harlequin_theme.py \
+            tests/cli/test_control_tui.py
+          uv run ty check \
+            src/free_claude_code/cli/control_tui.py \
+            src/free_claude_code/cli/control_tui_entry.py \
+            src/free_claude_code/cli/entrypoints.py \
+            src/free_claude_code/cli/harlequin_app_base.py \
+            src/free_claude_code/cli/harlequin_theme.py \
+            tests/cli/test_control_tui.py
+          uv run pytest -q tests/cli/test_control_tui.py
       - name: Commit normalized branch
         run: |
           if git diff --quiet; then
@@ -29,6 +77,12 @@ jobs:
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add uv.lock src/free_claude_code/cli/control_tui.py src/free_claude_code/cli/control_tui_entry.py src/free_claude_code/cli/entrypoints.py
+          git add uv.lock \
+            src/free_claude_code/cli/control_tui.py \
+            src/free_claude_code/cli/control_tui_entry.py \
+            src/free_claude_code/cli/entrypoints.py \
+            src/free_claude_code/cli/harlequin_app_base.py \
+            src/free_claude_code/cli/harlequin_theme.py \
+            tests/cli/test_control_tui.py
           git commit -m "chore: normalize transplanted Textual control center"
           git push
