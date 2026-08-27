@@ -77,6 +77,15 @@ slice count, task success, and semantic loss.
 The leash is successful only when context growth/compaction frequency fall
 materially without reducing correctness.
 
+The checked-in
+[literal-Claude loopback A/B receipt](../smoke/receipts/context-leash-ab-2026-08-26.json)
+proves the local FCC governor's redirection boundary with the installed Claude
+2.1.228 client: policy-only and ungoverned runs remain materially equivalent,
+while policy plus governor reduces the visible tool result and preserves the
+synthetic completion marker. Claude's Bash tool capped the 2.3 MB fixture to
+about 2.5 KB before FCC received it, so this receipt does not claim real-provider
+or large-result model effectiveness; those remain separate acceptance gates.
+
 ## Relationship to compaction
 
 The leash does not replace auto-compaction. It reduces avoidable pressure and
