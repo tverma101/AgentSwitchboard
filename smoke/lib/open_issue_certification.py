@@ -84,8 +84,8 @@ CERTIFICATION_STEPS: tuple[CertificationStep, ...] = (
         ),
     ),
     CertificationStep(
-        step_id="terminal-profile-provider-contracts",
-        issues=(98, 102),
+        step_id="terminal-provider-policy-contracts",
+        issues=(102,),
         evidence="deterministic",
         argv=(
             "python",
@@ -99,8 +99,26 @@ CERTIFICATION_STEPS: tuple[CertificationStep, ...] = (
             "-q",
         ),
         description=(
-            "Recheck the terminal front door, Codex connected-account boundary, "
-            "and session-wide helper/provider isolation."
+            "Recheck the terminal/Codex connected-account boundary and session-wide "
+            "helper/provider isolation used by the native-tool path."
+        ),
+    ),
+    CertificationStep(
+        step_id="reviewer-scar-core",
+        issues=(122,),
+        evidence="deterministic",
+        argv=(
+            "python",
+            "-m",
+            "pytest",
+            "-n",
+            "0",
+            "tests/learning/test_reviewer_scars.py",
+            "-q",
+        ),
+        description=(
+            "Validate reviewer-pack selection, DROP-by-default scar promotion, profile "
+            "isolation, bounded context slices, dedupe/state history, and X1 tickets."
         ),
     ),
     CertificationStep(
@@ -139,7 +157,7 @@ CERTIFICATION_STEPS: tuple[CertificationStep, ...] = (
     ),
     CertificationStep(
         step_id="literal-claude-cli",
-        issues=(31, 55, 59, 61, 63, 98, 102),
+        issues=(31, 55, 59, 61, 63, 102),
         evidence="live",
         argv=(
             "python",
@@ -152,7 +170,6 @@ CERTIFICATION_STEPS: tuple[CertificationStep, ...] = (
             "--tb=short",
         ),
         environment=(("FCC_LIVE_SMOKE", "1"), ("FCC_SMOKE_TARGETS", "cli")),
-        required_environment=("FCC_SMOKE_CLAUDE_BIN",),
         description=(
             "Run the existing literal-Claude product matrix through FCC. Individual "
             "opt-in subagent/compaction cases remain controlled by their documented "
