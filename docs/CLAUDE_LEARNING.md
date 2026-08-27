@@ -9,20 +9,19 @@ It is integrated into `fcc-claude` and uses Claude Code lifecycle hooks. There i
 
 ## Lifecycle
 
-When `fcc-claude` starts successfully, FCC idempotently merges five hooks into the active Claude Code `settings.json` while preserving unrelated settings/hooks:
+When `fcc-claude` starts successfully, FCC idempotently merges seven hooks into the active Claude Code `settings.json` while preserving unrelated settings/hooks:
 
 - **SessionStart**: inject recent global + current-project memory and request a skill reload.
 - **UserPromptSubmit**: save the current prompt and inject the most relevant memories using deterministic token overlap + recency scoring.
-- **SubagentStart**: fingerprint the delegated task and inject only the selected compact reviewer-scar slice plus the bounded exit-ticket contract.
+- **PreToolUse(Agent)**: fingerprint the actual delegated Agent task, select the smallest relevant reviewer packs, and append only the bounded scar slice plus X1/A1 learning contract to that Agent prompt. It does not auto-approve the tool.
+- **PostToolUse(Agent)**: for a completed foreground Agent, validate its X1 result plus optional A1 scar candidate, return the compact result to the parent, and automatically persist only a candidate that passes the existing counterfactual gate. Background launches store only a short-lived metadata-only task plan.
+- **SubagentStart**: retain a small fallback reviewer/exit-ticket contract for direct subagent lifecycle events; task-specific Agent selection is owned by PreToolUse where the real delegated prompt exists.
 - **SubagentStop**: validate one X1 exit ticket from the worker's final message and return the sanitized machine-dense result to the parent without rereading the subagent transcript.
 - **Stop** *(async)*: redact and enqueue the last user prompt plus Claude's final assistant message, then start one bounded worker to ask FCC's Haiku route for a conservative learning decision.
 
 The Stop hook is asynchronous so the learning pass does not hold up the interactive Claude Code response. The queue is SQLite-backed, deterministic, idempotent, retry-limited, and reclaimed after a crashed worker. A later SessionStart starts another bounded worker for stale work. There is no resident learner daemon; each worker exits after a small number of rows.
 
-Reviewer hooks are advisory and non-critical. A missing or malformed X1 ticket is
-reported to the parent as `UNVERIFIED`; it does not persist the worker message or
-silently promote a scar. An explicitly supplied candidate must still pass the
-existing counterfactual admission gate before a caller persists it.
+Reviewer hooks are advisory and non-critical. A missing or malformed X1 ticket, a missing/malformed A1 candidate, `learn=0`, failed work, an unselected reviewer pack, mismatched task scope/evidence, or weak verification all default to **DROP**. Foreground Agent results are learned at PostToolUse; background Agent launches keep only hashed session/agent identity plus task fingerprint/pack metadata until SubagentStop. Neither path stores the subagent transcript. A1 may persist only when its pack is task-selected, its condition/rule/evidence bind exactly to X1, and the existing counterfactual admission gate accepts the prevented-pain claim.
 
 ## Storage
 
@@ -33,6 +32,7 @@ Local state lives under:
 ~/.fcc/learning/profiles/<profile>/learning.db
 ~/.fcc/learning/reviewer-scars.json
 ~/.fcc/learning/reviewer-packs.json
+~/.fcc/learning/reviewer-pending.json  # short-lived background Agent metadata only
 ```
 
 The first path is the backward-compatible `default` profile. Named profiles
