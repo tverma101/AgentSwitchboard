@@ -4,15 +4,29 @@ const state = {
   localStatus: new Map(),
   modelOptions: [],
   modelLabels: {},
+  modelEvidence: {},
   modelComboboxes: new Set(),
   authPollers: new Map(),
   customProviders: [],
   customProviderEditingId: null,
   activeView: "providers",
   usageDays: 30,
+  selectedModelField: "MODEL",
 };
 
 const MASKED_SECRET = "********";
+const MODEL_EVIDENCE_LABELS = {
+  text_input: "Text input",
+  text_output: "Text output",
+  native_tools: "Native tools",
+  parallel_tools: "Parallel tools",
+  named_tool_choice: "Named tool choice",
+  reasoning_effort: "Reasoning effort",
+  structured_output: "Structured output",
+  vision_input: "Vision input",
+  image_tool_results: "Image tool results",
+  screenshot_vision: "Screenshot vision",
+};
 const VIEW_GROUPS = [
   {
     id: "providers",
@@ -691,6 +705,15 @@ function renderField(field) {
   input.disabled = field.locked;
   input.addEventListener("input", updateDirtyState);
   input.addEventListener("change", updateDirtyState);
+  if (field.type === "model" || field.type === "optional_model") {
+    const updateEvidence = () => {
+      state.selectedModelField = field.key;
+      renderModelEvidence();
+    };
+    input.addEventListener("focus", updateEvidence);
+    input.addEventListener("input", updateEvidence);
+    input.addEventListener("change", updateEvidence);
+  }
   if (field.type === "optional_model") {
     input.addEventListener("blur", () => {
       if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
@@ -1086,7 +1109,11 @@ async function loadModelOptions(refresh = false) {
   const result = await api("/admin/api/models" + (refresh ? "/refresh" : ""), {
     method: refresh ? "POST" : "GET",
   });
-  setModelOptions(result.models, result.model_labels || {});
+  setModelOptions(
+    result.models,
+    result.model_labels || {},
+    result.model_evidence || {},
+  );
   return result;
 }
 
@@ -1121,14 +1148,140 @@ function providerDisplayName(providerId) {
   return provider?.display_name || providerId;
 }
 
-function setModelOptions(models, labels = {}) {
+function setModelOptions(models, labels = {}, evidence = null) {
   state.modelLabels = { ...state.modelLabels, ...labels };
+  if (evidence) state.modelEvidence = evidence;
   state.modelOptions = Array.from(
     new Set(models.filter((model) => typeof model === "string" && model.trim())),
   ).sort((left, right) => left.localeCompare(right));
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen) combobox.render(combobox.query);
   });
+  renderModelEvidence();
+}
+
+function renderModelEvidence() {
+  const panel = byId("modelEvidencePanel");
+  const modelLabel = byId("modelEvidenceModel");
+  const summary = byId("modelEvidenceSummary");
+  const meta = byId("modelEvidenceMeta");
+  const grid = byId("modelEvidenceGrid");
+  if (!panel || !modelLabel || !summary || !meta || !grid) return;
+
+  const modelInputs = Array.from(
+    document.querySelectorAll(
+      'input[data-field-type="model"], input[data-field-type="optional_model"]',
+    ),
+  );
+  const selectedInput =
+    modelInputs.find((input) => input.dataset.key === state.selectedModelField) ||
+    modelInputs.find((input) => input.dataset.key === "MODEL") ||
+    modelInputs[0];
+  const selectedValue = selectedInput?.value.trim() || "";
+  const inheritsDefault = selectedValue.toLowerCase() === "none";
+  const defaultInput = modelInputs.find((input) => input.dataset.key === "MODEL");
+  const modelId = inheritsDefault
+    ? defaultInput?.value.trim() || ""
+    : selectedValue;
+  const evidence = state.modelEvidence[modelId];
+
+  modelLabel.textContent = inheritsDefault
+    ? `Uses ${modelId || "the default model"}`
+    : modelId || "No model selected";
+  meta.replaceChildren();
+  grid.replaceChildren();
+
+  if (!modelId) {
+    summary.textContent = "Choose a model to inspect its capability evidence.";
+    return;
+  }
+
+  if (!evidence) {
+    summary.textContent =
+      "No cached evidence is available. This model remains unknown until discovery or an explicit receipt.";
+    appendEvidenceMeta(meta, {
+      evidence_source: "unknown",
+      observed_at: null,
+      evidence_version: null,
+      evidence_protocol: null,
+    });
+    appendUnknownCapabilityRows(grid);
+    return;
+  }
+
+  const claims = Object.values(evidence.capabilities || {});
+  const unverified = claims.filter(
+    (claim) => claim.state === "accepted-but-unverified",
+  ).length;
+  summary.textContent = unverified
+    ? `${unverified} claim${unverified === 1 ? " is" : "s are"} accepted but unverified; live support is not implied.`
+    : "Claims are shown with their current state and provenance.";
+  appendEvidenceMeta(meta, evidence);
+
+  Object.entries(MODEL_EVIDENCE_LABELS).forEach(([capability, label]) => {
+    appendCapabilityRow(
+      grid,
+      label,
+      evidence.capabilities?.[capability] || {
+        state: "unknown",
+        confidence: "unknown",
+        source: "unknown",
+      },
+    );
+  });
+}
+
+function appendEvidenceMeta(meta, evidence) {
+  const values = [
+    ["Source", evidence.evidence_source || "unknown"],
+    ["Observed", evidence.observed_at || "not recorded"],
+    ["Version", evidence.evidence_version || "not recorded"],
+    ["Protocol", evidence.evidence_protocol || "not recorded"],
+  ];
+  values.forEach(([label, value]) => {
+    const item = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = `${label}:`;
+    item.append(name, ` ${value}`);
+    meta.appendChild(item);
+  });
+}
+
+function appendUnknownCapabilityRows(grid) {
+  Object.entries(MODEL_EVIDENCE_LABELS).forEach(([capability, label]) => {
+    appendCapabilityRow(grid, label, {
+      state: "unknown",
+      confidence: "unknown",
+      source: "unknown",
+    });
+  });
+}
+
+function appendCapabilityRow(grid, label, claim) {
+  const row = document.createElement("div");
+  row.className = "model-evidence-row";
+  const name = document.createElement("strong");
+  name.textContent = label;
+  const pill = document.createElement("span");
+  pill.className = `status-pill ${evidenceStatusClass(claim.state)}`;
+  pill.textContent = evidenceStatusLabel(claim.state);
+  const detail = document.createElement("small");
+  detail.textContent = `${claim.confidence || "unknown"} · ${claim.source || "unknown"}`;
+  row.append(name, pill, detail);
+  grid.appendChild(row);
+}
+
+function evidenceStatusClass(status) {
+  if (status === "supported") return "ok";
+  if (status === "unsupported") return "error";
+  if (status === "accepted-but-unverified") return "warn";
+  return "neutral";
+}
+
+function evidenceStatusLabel(status) {
+  if (status === "accepted-but-unverified") return "Unverified";
+  if (status === "unknown") return "Unknown";
+  return status ? status[0].toUpperCase() + status.slice(1) : "Unknown";
 }
 
 function formatTokens(value) {

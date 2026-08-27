@@ -12,6 +12,8 @@ from free_claude_code.application.connected_accounts import (
     ConnectedAccountStatus,
 )
 from free_claude_code.application.model_metadata import (
+    CapabilityEvidence,
+    CapabilityEvidenceStatus,
     ProviderModelInfo,
     ProviderModelRefreshResult,
 )
@@ -508,18 +510,73 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
     response = _local_client(app).get("/admin/api/models")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "models": [
-            "nvidia_nim/configured-model",
-            "open_router/anthropic/configured-opus",
-            "open_router/meta/llama-3.3",
-        ],
-        "model_labels": {
-            "nvidia_nim/configured-model": "NVIDIA NIM · Configured Model",
-            "open_router/anthropic/configured-opus": "OpenRouter · Configured Opus",
-            "open_router/meta/llama-3.3": "OpenRouter · Llama 3.3",
+    body = response.json()
+    assert body["models"] == [
+        "nvidia_nim/configured-model",
+        "open_router/anthropic/configured-opus",
+        "open_router/meta/llama-3.3",
+    ]
+    assert body["model_labels"] == {
+        "nvidia_nim/configured-model": "NVIDIA NIM · Configured Model",
+        "open_router/anthropic/configured-opus": "OpenRouter · Configured Opus",
+        "open_router/meta/llama-3.3": "OpenRouter · Llama 3.3",
+    }
+    assert body["failed_providers"] == []
+    assert body["model_evidence"]["nvidia_nim/configured-model"]["capabilities"][
+        "vision_input"
+    ] == {
+        "state": "unknown",
+        "confidence": "unknown",
+        "source": "unknown",
+    }
+
+
+def test_admin_models_expose_capability_evidence_provenance() -> None:
+    settings = Settings()
+    settings.model = "open_router/vision-model"
+    settings.open_router_api_key = "open-router-key"
+    app = create_test_app(settings)
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "vision-model",
+                supports_vision=True,
+                capability_evidence=CapabilityEvidence(
+                    statuses=(
+                        (
+                            "native_tools",
+                            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+                        ),
+                    ),
+                    evidence_source="provider_metadata",
+                    observed_at="2026-08-26T12:00:00Z",
+                    evidence_version="catalog-2",
+                    evidence_protocol="responses",
+                ),
+            )
         },
-        "failed_providers": [],
+    )
+
+    evidence = (
+        _local_client(app)
+        .get("/admin/api/models")
+        .json()["model_evidence"]["open_router/vision-model"]
+    )
+
+    assert evidence["evidence_source"] == "provider_metadata"
+    assert evidence["observed_at"] == "2026-08-26T12:00:00Z"
+    assert evidence["evidence_version"] == "catalog-2"
+    assert evidence["evidence_protocol"] == "responses"
+    assert evidence["capabilities"]["native_tools"] == {
+        "state": "accepted-but-unverified",
+        "confidence": "unverified",
+        "source": "provider_metadata",
+    }
+    assert evidence["capabilities"]["vision_input"] == {
+        "state": "supported",
+        "confidence": "confirmed",
+        "source": "provider_metadata",
     }
 
 
@@ -575,14 +632,16 @@ def test_admin_model_refresh_returns_the_updated_canonical_catalog():
     response = _local_client(app).post("/admin/api/models/refresh")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "models": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"],
-        "model_labels": {
-            "deepseek/deepseek-chat": "DeepSeek · DeepSeek Chat",
-            "deepseek/deepseek-reasoner": "DeepSeek · DeepSeek Reasoner",
-        },
-        "failed_providers": [],
+    body = response.json()
+    assert body["models"] == [
+        "deepseek/deepseek-chat",
+        "deepseek/deepseek-reasoner",
+    ]
+    assert body["model_labels"] == {
+        "deepseek/deepseek-chat": "DeepSeek · DeepSeek Chat",
+        "deepseek/deepseek-reasoner": "DeepSeek · DeepSeek Reasoner",
     }
+    assert body["failed_providers"] == []
     runtime.refresh_models.assert_awaited_once_with()
 
 
@@ -601,13 +660,12 @@ def test_admin_model_refresh_reports_partial_provider_failures():
     response = _local_client(app).post("/admin/api/models/refresh")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "models": ["deepseek/deepseek-chat"],
-        "model_labels": {
-            "deepseek/deepseek-chat": "DeepSeek · DeepSeek Chat",
-        },
-        "failed_providers": ["open_router"],
+    body = response.json()
+    assert body["models"] == ["deepseek/deepseek-chat"]
+    assert body["model_labels"] == {
+        "deepseek/deepseek-chat": "DeepSeek · DeepSeek Chat",
     }
+    assert body["failed_providers"] == ["open_router"]
 
 
 def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_path):
