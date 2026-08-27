@@ -1,0 +1,34 @@
+name: Reviewer formatter diff
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    runs-on: harness-local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: 0.11.16
+          enable-cache: false
+      - name: Reuse warm Harness environment
+        shell: bash
+        run: |
+          environment_root="$HOME/.cache/harness-actions/venvs"
+          environment_path="$environment_root/${RUNNER_OS}-${RUNNER_ARCH}-py314"
+          mkdir -p "$environment_root"
+          echo "UV_PROJECT_ENVIRONMENT=$environment_path" >> "$GITHUB_ENV"
+          export UV_PROJECT_ENVIRONMENT="$environment_path"
+          uv sync --locked
+      - name: Show exact Ruff formatter diff
+        shell: bash
+        run: |
+          uv run --no-sync ruff format --diff \
+            src/free_claude_code/learning/auto_reviewer.py \
+            src/free_claude_code/learning/hooks.py \
+            tests/learning/test_auto_reviewer.py
