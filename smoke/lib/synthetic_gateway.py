@@ -13,13 +13,21 @@ class SyntheticThinkingFixture(StrEnum):
     """Thinking and continuation shapes served by the local fixture."""
 
     TEXT = "text"
+    VISIBLE_SUMMARY = "visible_summary"
     VISIBLE_THINKING = "visible_thinking"
+    EMPTY_THINKING = "empty_thinking"
+    EMPTY_THINKING_SIGNATURE = "empty_thinking_signature"
     REDACTED_THINKING = "redacted_thinking"
     INTERLEAVED_THINKING = "interleaved_thinking"
     LATE_SIGNATURE = "late_signature"
     MALFORMED_SIGNATURE = "malformed_signature"
     UNKNOWN_DELTA = "unknown_delta"
+    UNSUPPORTED_THINKING = "unsupported_thinking"
+    USAGE_ONLY = "usage_only"
     TOOL_ROUNDTRIP = "tool_roundtrip"
+    THINKING_TOOL_ROUNDTRIP = "thinking_tool_roundtrip"
+    INTERLEAVED_TOOL_ROUNDTRIP = "interleaved_tool_roundtrip"
+    OPAQUE_TOOL_ROUNDTRIP = "opaque_tool_roundtrip"
 
 
 @dataclass(slots=True)
@@ -130,11 +138,27 @@ class SyntheticAnthropicGateway:
         """Return one deterministic SSE fixture without inspecting prompt text."""
 
         if (
-            self.fixture is SyntheticThinkingFixture.TOOL_ROUNDTRIP
+            self.fixture
+            in {
+                SyntheticThinkingFixture.TOOL_ROUNDTRIP,
+                SyntheticThinkingFixture.THINKING_TOOL_ROUNDTRIP,
+                SyntheticThinkingFixture.INTERLEAVED_TOOL_ROUNDTRIP,
+                SyntheticThinkingFixture.OPAQUE_TOOL_ROUNDTRIP,
+            }
             and request_index == 1
             and not _contains_tool_result(request)
         ):
+            if self.fixture is SyntheticThinkingFixture.OPAQUE_TOOL_ROUNDTRIP:
+                return _opaque_tool_use_events()
+            if self.fixture is SyntheticThinkingFixture.THINKING_TOOL_ROUNDTRIP:
+                return _thinking_tool_use_events()
+            if self.fixture is SyntheticThinkingFixture.INTERLEAVED_TOOL_ROUNDTRIP:
+                return _interleaved_tool_use_events()
             return _tool_use_events()
+        if self.fixture is SyntheticThinkingFixture.EMPTY_THINKING:
+            return _empty_thinking_events()
+        if self.fixture is SyntheticThinkingFixture.EMPTY_THINKING_SIGNATURE:
+            return _empty_thinking_events(signature="synthetic-opaque-signature")
         if self.fixture is SyntheticThinkingFixture.REDACTED_THINKING:
             return _redacted_thinking_events()
         if self.fixture is SyntheticThinkingFixture.INTERLEAVED_THINKING:
@@ -145,11 +169,26 @@ class SyntheticAnthropicGateway:
             return _thinking_text_events(signature="")
         if self.fixture is SyntheticThinkingFixture.UNKNOWN_DELTA:
             return _thinking_text_events(unknown_delta=True)
+        if self.fixture is SyntheticThinkingFixture.VISIBLE_SUMMARY:
+            return _thinking_text_events(
+                thinking="synthetic visible summary",
+                text="SYNTHETIC_SUMMARY_OK",
+            )
         if self.fixture is SyntheticThinkingFixture.VISIBLE_THINKING:
             return _thinking_text_events()
+        if self.fixture is SyntheticThinkingFixture.UNSUPPORTED_THINKING:
+            return _text_events("SYNTHETIC_UNSUPPORTED_THINKING_OK")
+        if self.fixture is SyntheticThinkingFixture.USAGE_ONLY:
+            return _usage_only_events()
         return _text_events(
             "SYNTHETIC_TOOL_CONTINUATION"
-            if self.fixture is SyntheticThinkingFixture.TOOL_ROUNDTRIP
+            if self.fixture
+            in {
+                SyntheticThinkingFixture.TOOL_ROUNDTRIP,
+                SyntheticThinkingFixture.THINKING_TOOL_ROUNDTRIP,
+                SyntheticThinkingFixture.INTERLEAVED_TOOL_ROUNDTRIP,
+                SyntheticThinkingFixture.OPAQUE_TOOL_ROUNDTRIP,
+            }
             else "SYNTHETIC_TEXT"
         )
 
@@ -227,40 +266,42 @@ def _text_events(text: str) -> tuple[str, ...]:
     )
 
 
-def _thinking_text_events(
-    *, signature: str | None = None, unknown_delta: bool = False
+def _thinking_block_events(
+    index: int,
+    thinking: str,
+    *,
+    emit_delta: bool = True,
+    signature: str | None = None,
+    unknown_delta: bool = False,
 ) -> tuple[str, ...]:
-    events: list[str] = [_message_start()]
-    events.extend(
-        (
-            _event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "thinking", "thinking": ""},
-                },
-            ),
+    events = [
+        _event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        )
+    ]
+    if emit_delta:
+        events.append(
             _event(
                 "content_block_delta",
                 {
                     "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {
-                        "type": "thinking_delta",
-                        "thinking": "synthetic thought",
-                    },
+                    "index": index,
+                    "delta": {"type": "thinking_delta", "thinking": thinking},
                 },
-            ),
+            )
         )
-    )
     if signature is not None:
         events.append(
             _event(
                 "content_block_delta",
                 {
                     "type": "content_block_delta",
-                    "index": 0,
+                    "index": index,
                     "delta": {"type": "signature_delta", "signature": signature},
                 },
             )
@@ -271,35 +312,113 @@ def _thinking_text_events(
                 "content_block_delta",
                 {
                     "type": "content_block_delta",
-                    "index": 0,
+                    "index": index,
                     "delta": {"type": "synthetic_additive_delta", "value": "ignored"},
                 },
             )
         )
-    events.extend(
-        (
-            _event("content_block_stop", {"type": "content_block_stop", "index": 0}),
-            _event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 1,
-                    "content_block": {"type": "text", "text": ""},
-                },
-            ),
-            _event(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 1,
-                    "delta": {"type": "text_delta", "text": "SYNTHETIC_THINKING_OK"},
-                },
-            ),
-            _event("content_block_stop", {"type": "content_block_stop", "index": 1}),
-            *_message_end(),
-        )
+    events.append(
+        _event("content_block_stop", {"type": "content_block_stop", "index": index})
     )
     return tuple(events)
+
+
+def _text_block_events(index: int, text: str) -> tuple[str, ...]:
+    return (
+        _event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        _event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "text_delta", "text": text},
+            },
+        ),
+        _event("content_block_stop", {"type": "content_block_stop", "index": index}),
+    )
+
+
+def _tool_use_block_events(index: int) -> tuple[str, ...]:
+    return (
+        _event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_synthetic_read",
+                    "name": "Read",
+                    "input": {},
+                },
+            },
+        ),
+        _event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": '{"file_path":"synthetic-fixture.txt"}',
+                },
+            },
+        ),
+        _event("content_block_stop", {"type": "content_block_stop", "index": index}),
+    )
+
+
+def _thinking_text_events(
+    *,
+    thinking: str = "synthetic thought",
+    text: str = "SYNTHETIC_THINKING_OK",
+    signature: str | None = None,
+    unknown_delta: bool = False,
+) -> tuple[str, ...]:
+    events = [_message_start()]
+    events.extend(
+        _thinking_block_events(
+            0,
+            thinking,
+            emit_delta=bool(thinking),
+            signature=signature,
+            unknown_delta=unknown_delta,
+        )
+    )
+    events.extend(_text_block_events(1, text))
+    events.extend(_message_end())
+    return tuple(events)
+
+
+def _empty_thinking_events(*, signature: str | None = None) -> tuple[str, ...]:
+    events = [_message_start()]
+    events.extend(_thinking_block_events(0, "", emit_delta=False, signature=signature))
+    events.extend(_text_block_events(1, "SYNTHETIC_EMPTY_THINKING_OK"))
+    events.extend(_message_end())
+    return tuple(events)
+
+
+def _usage_only_events() -> tuple[str, ...]:
+    return (
+        _message_start(),
+        _event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        _event("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        *_message_end(),
+    )
 
 
 def _redacted_thinking_events() -> tuple[str, ...]:
@@ -320,35 +439,9 @@ def _redacted_thinking_events() -> tuple[str, ...]:
 
 def _interleaved_thinking_events() -> tuple[str, ...]:
     events: list[str] = [_message_start()]
-    for index, block_type, delta_type, value in (
-        (0, "thinking", "thinking_delta", "first synthetic thought"),
-        (1, "text", "text_delta", "SYNTHETIC_INTERLEAVE"),
-        (2, "thinking", "thinking_delta", "second synthetic thought"),
-    ):
-        key = "thinking" if block_type == "thinking" else "text"
-        events.extend(
-            (
-                _event(
-                    "content_block_start",
-                    {
-                        "type": "content_block_start",
-                        "index": index,
-                        "content_block": {"type": block_type, key: ""},
-                    },
-                ),
-                _event(
-                    "content_block_delta",
-                    {
-                        "type": "content_block_delta",
-                        "index": index,
-                        "delta": {"type": delta_type, key: value},
-                    },
-                ),
-                _event(
-                    "content_block_stop", {"type": "content_block_stop", "index": index}
-                ),
-            )
-        )
+    events.extend(_thinking_block_events(0, "first synthetic thought"))
+    events.extend(_text_block_events(1, "SYNTHETIC_INTERLEAVE"))
+    events.extend(_thinking_block_events(2, "second synthetic thought"))
     events.extend(_message_end())
     return tuple(events)
 
@@ -356,31 +449,43 @@ def _interleaved_thinking_events() -> tuple[str, ...]:
 def _tool_use_events() -> tuple[str, ...]:
     return (
         _message_start(),
+        *_tool_use_block_events(0),
+        *_message_end("tool_use"),
+    )
+
+
+def _thinking_tool_use_events() -> tuple[str, ...]:
+    return (
+        _message_start(),
+        *_thinking_block_events(0, "synthetic thought before tool"),
+        *_tool_use_block_events(1),
+        *_message_end("tool_use"),
+    )
+
+
+def _interleaved_tool_use_events() -> tuple[str, ...]:
+    return (
+        _message_start(),
+        *_thinking_block_events(0, "first synthetic thought"),
+        *_tool_use_block_events(1),
+        *_thinking_block_events(2, "second synthetic thought"),
+        *_message_end("tool_use"),
+    )
+
+
+def _opaque_tool_use_events() -> tuple[str, ...]:
+    return (
+        _message_start(),
         _event(
             "content_block_start",
             {
                 "type": "content_block_start",
                 "index": 0,
-                "content_block": {
-                    "type": "tool_use",
-                    "id": "toolu_synthetic_read",
-                    "name": "Read",
-                    "input": {},
-                },
-            },
-        ),
-        _event(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {
-                    "type": "input_json_delta",
-                    "partial_json": '{"file_path":"synthetic-fixture.txt"}',
-                },
+                "content_block": {"type": "redacted_thinking", "data": "opaque"},
             },
         ),
         _event("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        *_tool_use_block_events(1),
         *_message_end("tool_use"),
     )
 
