@@ -3,6 +3,7 @@
 import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from free_claude_code.cli.server_startup import (
     server_port_is_occupied as _server_port_is_occupied,
@@ -157,14 +158,16 @@ def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
     return True
 
 
-def _launch_claude_from_control(danger: bool, argv: Sequence[str]) -> None:
+def _launch_claude_from_control(
+    danger: bool, argv: Sequence[str], cwd: Path | None = None
+) -> None:
     """Adapt the terminal client callback to the Claude launcher entry points."""
 
     from free_claude_code.cli.launchers.claude import launch, launch_danger
 
     launcher = launch_danger if danger else launch
     try:
-        launcher(tuple(argv))
+        launcher(tuple(argv), cwd=cwd)
     except SystemExit as exc:
         if exc.code not in {None, 0}:
             print(f"Claude exited with status {exc.code}.")

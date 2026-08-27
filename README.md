@@ -34,7 +34,7 @@ terminal-browser presentation. The verified Muse path is
 `opencode_go/muse-spark-1.2-contributor` over OpenCode Go's Responses protocol.
 
 This repository is a personal Harness fork. The local release head is version
-`4.50.0`; examples below describe this checkout, not every feature proposed in
+`4.51.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. Live smoke receipts retain the package version that
 was installed when each receipt was captured; read the receipt's own metadata
 before treating it as evidence for a later release head.
@@ -58,11 +58,11 @@ before treating it as evidence for a later release head.
 
 | Status | Current scope |
 | --- | --- |
-| **Current-source verified** | Terminal `fcc-server`/`fccdanger`, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
+| **Current-source verified** | Terminal `fcc-server`/`fccdanger`, the local repo/profile control center with next-launch isolation and bundle transfer, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
 | **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
 | **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
-| **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, portable FCC profiles, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
+| **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/Harness/issues/66). |
 
 <div align="center">
   <img src="assets/pic.png" alt="Claude Code running with Free Claude Code" width="700">
@@ -113,10 +113,13 @@ INFO:     FCC control endpoint: http://127.0.0.1:8082/admin (terminal-only; brow
 Use the port shown in your terminal if it differs from `8082`.
 
 The control center provides the normal client handoff plus explicit local
-provider/account, model, usage, route-diagnosis, profile, settings, logs, and
-restart actions. Home redraws use the local snapshot; Admin/provider requests
-only happen after selecting one of those actions. API keys are entered through
-hidden prompts and are never echoed back.
+repository/profile selection, selective learning-bundle transfer,
+provider/account, model, usage, route-diagnosis, settings, logs, and restart
+actions. Home redraws use the local snapshot; Admin/provider requests only
+happen after selecting one of those actions. API keys are entered through
+hidden prompts and are never echoed back. Repository discovery is local and
+cached; a selected repository and profile apply only to the next Claude/Danger
+launch and never mutate a running session.
 You can still verify the local server explicitly before using a separate client
 terminal:
 

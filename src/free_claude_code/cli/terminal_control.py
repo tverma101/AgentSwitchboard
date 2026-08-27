@@ -10,7 +10,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Protocol, TextIO
 
 from free_claude_code.application.connected_accounts import ConnectedAccountLoginMode
 from free_claude_code.cli.claude_env import context_cap_tokens
@@ -38,13 +38,54 @@ from free_claude_code.config.provider_catalog import (
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
-from free_claude_code.learning.config import configured_profile, profile_home
+from free_claude_code.learning.bundle import (
+    BundleError,
+    export_from_store,
+    import_bundle,
+    inspect_bundle,
+)
+from free_claude_code.learning.config import (
+    PROFILE_ENV,
+    LearningProfileError,
+    archive_profile,
+    configured_profile,
+    create_profile,
+    list_archived_profiles,
+    list_profiles,
+    profile_home,
+    rename_profile,
+    restore_profile,
+)
+from free_claude_code.learning.hooks import claude_config_dir
+from free_claude_code.learning.store import LearningStore, project_identity
+
+from .repo_picker import (
+    RepoEntry,
+    cache_is_fresh,
+    cache_path,
+    choose_repo,
+    default_roots,
+    discover_repos,
+    load_cached_repos,
+    save_cached_repos,
+)
+from .selection import SelectionItem, choose_item
 
 CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
 CODEX_STATUS_TIMEOUT_SECONDS = 5.0
 LOG_PREVIEW_LINES = 30
 _CODEX_API_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
-ControlClientLauncher = Callable[[bool, Sequence[str]], None]
+
+
+class ControlClientLauncher(Protocol):
+    """Callback used to launch a client from the control center."""
+
+    def __call__(
+        self,
+        danger: bool,
+        argv: Sequence[str],
+        cwd: Path | None = None,
+    ) -> None: ...
 
 
 def terminal_control_available(
@@ -108,8 +149,16 @@ def run_control_menu(
     """Run the intentionally small line-oriented FCC terminal menu."""
 
     displayed_model = settings.model
+    next_profile = configured_profile()
+    selected_repo: RepoEntry | None = None
     while True:
-        _print_home(settings, supervisor=supervisor, model=displayed_model)
+        _print_home(
+            settings,
+            supervisor=supervisor,
+            model=displayed_model,
+            profile=next_profile,
+            repo=selected_repo,
+        )
         try:
             choice = input("FCC> ").strip().casefold()
         except EOFError, KeyboardInterrupt:
@@ -117,9 +166,19 @@ def run_control_menu(
             return
 
         if choice in {"", "c", "claude"}:
-            launch_client(False, ())
+            _launch_selected(
+                launch_client,
+                danger=False,
+                profile=next_profile,
+                repo=selected_repo,
+            )
         elif choice in {"d", "danger"}:
-            launch_client(True, ())
+            _launch_selected(
+                launch_client,
+                danger=True,
+                profile=next_profile,
+                repo=selected_repo,
+            )
         elif choice in {"x", "connect", "codex"}:
             _connect_codex()
         elif choice in {"p", "providers", "accounts"}:
@@ -139,7 +198,9 @@ def run_control_menu(
         elif choice in {"l", "logs"}:
             _run_logs_menu()
         elif choice in {"f", "profile", "profiles"}:
-            _print_profile()
+            next_profile = _run_profile_menu(next_profile)
+        elif choice in {"o", "repo", "repos"}:
+            selected_repo = _run_repo_menu(selected_repo)
         elif choice in {"r", "restart"}:
             if supervisor is None:
                 print(
@@ -152,7 +213,7 @@ def run_control_menu(
         elif choice in {"q", "quit", "exit"}:
             return
         else:
-            print("Unknown command. Use C, D, P, M, U, N, Y, X, S, L, F, R, or Q.")
+            print("Unknown command. Use C, D, P, M, U, N, Y, X, S, L, F, O, R, or Q.")
 
 
 def _print_home(
@@ -160,6 +221,8 @@ def _print_home(
     *,
     supervisor: ServerSupervisor | None,
     model: str | None = None,
+    profile: str | None = None,
+    repo: RepoEntry | None = None,
 ) -> None:
     owner = "this terminal" if supervisor is not None else "another process"
     status = (
@@ -168,17 +231,21 @@ def _print_home(
         else ServerStatus.RUNNING.value
     )
     displayed_model = settings.model if model is None else model
+    displayed_profile = configured_profile() if profile is None else profile
+    displayed_repo = repo.display_path if repo is not None else Path.cwd().name
     print()
     print("FCC Harness")
     print("-----------")
     print(f"Server    {status} ({owner})")
+    print(f"Repo      {displayed_repo}")
     print(f"Model     {displayed_model}")
-    print(f"Profile   {configured_profile()}")
+    print(f"Profile   {displayed_profile} (next launch)")
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
     print()
-    print("[Enter/C] Claude   [D] Danger   [P] Providers  [M] Models")
-    print("[U] Usage          [N] Diagnose [Y] Policy   [X] Connect")
-    print("[S] Settings       [L] Logs     [F] Profile [R] Restart  [Q] Quit")
+    print("[Enter/C] Claude   [D] Danger   [O] Repos    [F] Profiles")
+    print("[P] Providers      [M] Models    [U] Usage    [N] Diagnose")
+    print("[Y] Policy         [X] Connect   [S] Settings [L] Logs")
+    print("[R] Restart        [Q] Quit")
 
 
 def _print_policy_status(settings: Settings) -> None:
@@ -216,6 +283,389 @@ def _string_values(value: object) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     return tuple(str(item) for item in value)
+
+
+def _launch_selected(
+    launch_client: ControlClientLauncher,
+    *,
+    danger: bool,
+    profile: str,
+    repo: RepoEntry | None,
+) -> None:
+    """Launch one client with next-launch profile and repository state."""
+
+    argv: tuple[str, ...] = ()
+    if profile != configured_profile():
+        argv = ("--profile", profile)
+    previous_profile = os.environ.get(PROFILE_ENV)
+    try:
+        if repo is None:
+            launch_client(danger, argv)
+        else:
+            launch_client(danger, argv, Path(repo.path))
+    finally:
+        if previous_profile is None:
+            os.environ.pop(PROFILE_ENV, None)
+        else:
+            os.environ[PROFILE_ENV] = previous_profile
+
+
+def _profile_items(
+    profiles: Sequence[str], *, selected: str, active: str
+) -> list[SelectionItem]:
+    return [
+        SelectionItem(
+            item_id=profile,
+            label=profile,
+            detail=" · ".join(
+                marker
+                for marker, enabled in (
+                    ("active", profile == active),
+                    ("next", profile == selected),
+                )
+                if enabled
+            )
+            or "available",
+        )
+        for profile in profiles
+    ]
+
+
+def _choose_profile(
+    profiles: Sequence[str], *, selected: str, active: str
+) -> str | None:
+    item = choose_item(
+        _profile_items(profiles, selected=selected, active=active),
+        title="FCC Learning profiles",
+        footer="type filter · ↑↓ move · enter select · esc cancel",
+    )
+    return item.item_id if item is not None else None
+
+
+def _run_profile_menu(next_profile: str) -> str:
+    """Manage profiles without changing the namespace of the running server."""
+
+    active_profile = configured_profile()
+    while True:
+        try:
+            profiles = list_profiles()
+            archived = list_archived_profiles()
+        except LearningProfileError as exc:
+            print(f"Profiles unavailable: {exc}")
+            return next_profile
+        print()
+        print("Profiles")
+        print("--------")
+        for profile in profiles:
+            markers = []
+            if profile == active_profile:
+                markers.append("active")
+            if profile == next_profile:
+                markers.append("next")
+            print(f"  {profile} ({', '.join(markers) or 'available'})")
+        if archived:
+            print("Archived: " + ", ".join(archived))
+        print("[S] Select  [C] Create  [N] Rename  [A] Archive")
+        print("[R] Restore [T] Transfer bundle  [B] Back")
+        try:
+            choice = input("Profile> ").strip().casefold()
+        except EOFError, KeyboardInterrupt:
+            print()
+            return next_profile
+        if choice in {"b", "back", "q", "quit"}:
+            return next_profile
+        if choice in {"s", "select"}:
+            selected = _choose_profile(
+                profiles, selected=next_profile, active=active_profile
+            )
+            if selected is not None:
+                next_profile = selected
+                print(f"Next launch profile: {next_profile}")
+            continue
+        if choice in {"c", "create"}:
+            try:
+                name = input("New profile name> ").strip()
+            except EOFError, KeyboardInterrupt:
+                print()
+                continue
+            if not name:
+                print("No profile created.")
+                continue
+            try:
+                next_profile = create_profile(name)
+            except LearningProfileError as exc:
+                print(f"Could not create profile: {exc}")
+            else:
+                print(f"Created and selected profile: {next_profile}")
+            continue
+        if choice in {"n", "rename"}:
+            profile = _choose_named_profile(profiles, active_profile)
+            if profile is None:
+                continue
+            try:
+                new_name = input(f"Rename {profile} to> ").strip()
+            except EOFError, KeyboardInterrupt:
+                print()
+                continue
+            if not new_name:
+                print("No profile renamed.")
+                continue
+            try:
+                renamed = rename_profile(profile, new_name)
+            except LearningProfileError as exc:
+                print(f"Could not rename profile: {exc}")
+            else:
+                if next_profile == profile:
+                    next_profile = renamed
+                print(f"Renamed profile to: {renamed}")
+            continue
+        if choice in {"a", "archive"}:
+            profile = _choose_named_profile(profiles, active_profile)
+            if profile is None:
+                continue
+            try:
+                archived_name = archive_profile(profile)
+            except LearningProfileError as exc:
+                print(f"Could not archive profile: {exc}")
+            else:
+                if next_profile == archived_name:
+                    next_profile = active_profile
+                print(f"Archived profile: {archived_name}")
+            continue
+        if choice in {"r", "restore"}:
+            if not archived:
+                print("No archived profiles are available.")
+                continue
+            profile = _choose_profile(
+                archived, selected=next_profile, active=active_profile
+            )
+            if profile is None:
+                continue
+            try:
+                restored = restore_profile(profile)
+            except LearningProfileError as exc:
+                print(f"Could not restore profile: {exc}")
+            else:
+                next_profile = restored
+                print(f"Restored and selected profile: {restored}")
+            continue
+        if choice in {"t", "transfer", "bundle"}:
+            _run_bundle_menu(next_profile)
+            continue
+        print("Unknown profile action. Use S, C, N, A, R, T, or B.")
+
+
+def _choose_named_profile(profiles: Sequence[str], active: str) -> str | None:
+    named = [profile for profile in profiles if profile != "default"]
+    if not named:
+        print("No named profiles are available; the default profile is protected.")
+        return None
+    return _choose_profile(named, selected=active, active=active)
+
+
+def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
+    """Select a repository from the local discovery cache or explicit refresh."""
+
+    cache = cache_path()
+    repos = load_cached_repos(cache)
+    while True:
+        print()
+        print("Repositories")
+        print("------------")
+        if current is not None:
+            print(f"Current: {current.display_path}")
+        elif repos:
+            print("Current: terminal working directory")
+        else:
+            print("No cached repositories.")
+        if repos and not cache_is_fresh(cache):
+            print("Cache is stale; choose Refresh to rescan local roots.")
+        print("[S] Select  [R] Refresh local roots  [B] Back")
+        try:
+            choice = input("Repos> ").strip().casefold()
+        except EOFError, KeyboardInterrupt:
+            print()
+            return current
+        if choice in {"b", "back", "q", "quit"}:
+            return current
+        if choice in {"r", "refresh"}:
+            roots = default_roots()
+            repos = discover_repos(roots)
+            save_cached_repos(repos, cache)
+            print(f"Discovered {len(repos)} local GitHub-backed repos.")
+            continue
+        if choice in {"s", "select", ""}:
+            if not repos:
+                print("No repositories available. Choose Refresh first.")
+                continue
+            selected = choose_repo(repos)
+            if selected is None:
+                continue
+            save_cached_repos(_mark_repo_used(repos, selected), cache)
+            print(f"Next launch repository: {selected.display_path}")
+            return selected
+        print("Unknown repository action. Use S, R, or B.")
+
+
+def _mark_repo_used(repos: Sequence[RepoEntry], selected: RepoEntry) -> list[RepoEntry]:
+    now = time.time()
+    return [
+        RepoEntry(
+            name=repo.name,
+            path=repo.path,
+            branch=repo.branch,
+            remote=repo.remote,
+            last_used=now if repo.path == selected.path else repo.last_used,
+        )
+        for repo in repos
+    ]
+
+
+def _selection_values(raw: str) -> tuple[str, ...] | None:
+    """Parse an optional comma-separated selector list."""
+
+    value = raw.strip()
+    if not value:
+        return None
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _selection_ids(raw: str) -> tuple[int, ...] | None:
+    """Parse optional comma-separated numeric memory IDs."""
+
+    values = _selection_values(raw)
+    if values is None:
+        return None
+    try:
+        return tuple(int(value) for value in values)
+    except ValueError:
+        print("Memory IDs must be comma-separated positive integers.")
+        return ()
+
+
+def _print_bundle_plan(result: dict[str, Any]) -> None:
+    selected = result.get("selected")
+    if isinstance(selected, dict):
+        print(
+            "Selected: "
+            f"{selected.get('memories', 0)} memory item(s), "
+            f"{selected.get('skills', 0)} skill(s)"
+        )
+    actions = result.get("actions")
+    if not isinstance(actions, list) or not actions:
+        print("No bundle changes are needed.")
+        return
+    print("Plan:")
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        print(
+            f"  {action.get('kind', '?')} {action.get('key', '?')}: {action.get('action', '?')}"
+        )
+
+
+def _run_bundle_menu(profile: str) -> None:
+    """Expose the existing bundle engine for explicit profile transfers."""
+
+    project_key = project_identity(str(Path.cwd()))
+    while True:
+        print()
+        print(f"Profile transfer ({profile})")
+        print("-----------------------")
+        print("[E] Export  [I] Import  [V] Inspect  [B] Back")
+        try:
+            choice = input("Bundle> ").strip().casefold()
+        except EOFError, KeyboardInterrupt:
+            print()
+            return
+        if choice in {"b", "back", "q", "quit"}:
+            return
+        if choice in {"e", "export"}:
+            try:
+                path_text = input(
+                    f"Export path [./fcc-learning-{profile}.bundle]> "
+                ).strip()
+                path = Path(path_text or f"./fcc-learning-{profile}.bundle")
+                memory_ids = _selection_ids(input("Memory IDs (blank for all)> "))
+                skill_keys = _selection_values(input("Skill keys (blank for all)> "))
+                if memory_ids == ():
+                    continue
+                result = export_from_store(
+                    path,
+                    store=LearningStore(profile=profile),
+                    project_key=project_key,
+                    profile=profile,
+                    memory_ids=memory_ids,
+                    skill_keys=skill_keys,
+                )
+            except (BundleError, LearningProfileError, OSError) as exc:
+                print(f"Bundle export failed: {exc}")
+            else:
+                print(f"Bundle exported: {path}")
+                _print_bundle_plan(result)
+            continue
+        if choice in {"v", "inspect"}:
+            try:
+                path = Path(input("Bundle path> ").strip())
+                result = inspect_bundle(path)
+            except (BundleError, OSError) as exc:
+                print(f"Bundle inspection failed: {exc}")
+            else:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            continue
+        if choice in {"i", "import"}:
+            try:
+                path = Path(input("Bundle path> ").strip())
+                conflict = input("Conflict policy [skip/replace/fail] (skip)> ").strip()
+                conflict = conflict or "skip"
+                memory_keys = _selection_values(input("Memory keys (blank for all)> "))
+                skill_keys = _selection_values(input("Skill keys (blank for all)> "))
+                store = LearningStore(profile=profile)
+                preview = import_bundle(
+                    path,
+                    store=store,
+                    target_project_key=project_key,
+                    claude_config_dir=claude_config_dir(),
+                    conflict=conflict,
+                    memory_keys=memory_keys,
+                    skill_keys=skill_keys,
+                    dry_run=True,
+                )
+            except (BundleError, LearningProfileError, OSError) as exc:
+                print(f"Bundle import preview failed: {exc}")
+                continue
+            _print_bundle_plan(preview)
+            if not any(
+                isinstance(action, dict) and action.get("action") in {"add", "replace"}
+                for action in preview.get("actions", [])
+            ):
+                continue
+            try:
+                apply = input("Apply this plan? [y/N]> ").strip().casefold()
+            except EOFError, KeyboardInterrupt:
+                print()
+                continue
+            if apply not in {"y", "yes"}:
+                print("Import cancelled.")
+                continue
+            try:
+                result = import_bundle(
+                    path,
+                    store=store,
+                    target_project_key=project_key,
+                    claude_config_dir=claude_config_dir(),
+                    conflict=conflict,
+                    memory_keys=memory_keys,
+                    skill_keys=skill_keys,
+                    dry_run=False,
+                )
+            except (BundleError, LearningProfileError, OSError) as exc:
+                print(f"Bundle import failed: {exc}")
+            else:
+                print("Bundle imported.")
+                _print_bundle_plan(result)
+            continue
+        print("Unknown bundle action. Use E, I, V, or B.")
 
 
 def _run_settings_menu(settings: Settings) -> str | None:

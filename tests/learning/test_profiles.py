@@ -18,6 +18,7 @@ from free_claude_code.learning.config import (
     archive_profile,
     create_profile,
     extract_profile_argument,
+    list_archived_profiles,
     list_profiles,
     profile_database,
     profile_home,
@@ -278,8 +279,10 @@ def test_profile_lifecycle_preserves_state_and_uses_recovery_archive(
     assert archive_profile("school") == "school"
     assert not profile_home("school").exists()
     assert list_profiles() == ("default",)
+    assert list_archived_profiles() == ("school",)
     assert restore_profile("school") == "school"
     assert list_profiles() == ("default", "school")
+    assert list_archived_profiles() == ()
     assert LearningStore(profile="school").counts() == {"memories": 1, "skills": 0}
 
 

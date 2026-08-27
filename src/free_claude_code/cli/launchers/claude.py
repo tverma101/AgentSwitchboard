@@ -3,6 +3,7 @@
 import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
@@ -35,7 +36,7 @@ _DISPLAY_NAME = "Claude Code"
 _INSTALL_HINT = "Install Claude Code with: npm install -g @anthropic-ai/claude-code"
 
 
-def launch(argv: Sequence[str] | None = None) -> None:
+def launch(argv: Sequence[str] | None = None, *, cwd: Path | None = None) -> None:
     """Launch Claude Code with Free Claude Code proxy environment variables."""
 
     args = list(sys.argv[1:] if argv is None else argv)
@@ -51,7 +52,12 @@ def launch(argv: Sequence[str] | None = None) -> None:
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
     if error := preflight_proxy(proxy_root_url):
-        if _start_interactive_owner(args):
+        started = (
+            _start_interactive_owner(args)
+            if cwd is None
+            else _start_interactive_owner(args, cwd=cwd)
+        )
+        if started:
             return
         print(
             f"Free Claude Code proxy is not reachable at {proxy_root_url}: {error}",
@@ -76,7 +82,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
     )
     if conflict_message := settings_env_routing_conflict_message(
         os.environ,
-        cwd=os.getcwd(),
+        cwd=str(cwd) if cwd is not None else os.getcwd(),
         argv=args,
     ):
         print(conflict_message, file=sys.stderr)
@@ -108,10 +114,11 @@ def launch(argv: Sequence[str] | None = None) -> None:
         binary_name=binary_name,
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
+        cwd=cwd,
     )
 
 
-def _start_interactive_owner(args: Sequence[str]) -> bool:
+def _start_interactive_owner(args: Sequence[str], *, cwd: Path | None = None) -> bool:
     """Start an explicit in-process server owner for an interactive direct launch."""
 
     from free_claude_code.cli import commands
@@ -130,7 +137,10 @@ def _start_interactive_owner(args: Sequence[str]) -> bool:
     settings = commands.load_server_settings()
     proxy_root_url = local_proxy_root_url(settings)
     if preflight_proxy(proxy_root_url) is None:
-        launch(args)
+        if cwd is None:
+            launch(args)
+        else:
+            launch(args, cwd=cwd)
         return True
 
     if server_port_is_occupied(settings.host, settings.port):
@@ -150,12 +160,17 @@ def _start_interactive_owner(args: Sequence[str]) -> bool:
     return True
 
 
-def _launch_control_client(danger: bool, argv: Sequence[str]) -> None:
+def _launch_control_client(
+    danger: bool, argv: Sequence[str], cwd: Path | None = None
+) -> None:
     """Launch a Claude client selected by the terminal control callback."""
 
     launcher = launch_danger if danger else launch
     try:
-        launcher(tuple(argv))
+        if cwd is None:
+            launcher(tuple(argv))
+        else:
+            launcher(tuple(argv), cwd=cwd)
     except SystemExit as exc:
         if exc.code not in {None, 0}:
             print(f"Claude exited with status {exc.code}.")
@@ -176,13 +191,15 @@ def _firewall_environment(settings: object) -> dict[str, str]:
     return environment
 
 
-def launch_danger(argv: Sequence[str] | None = None) -> None:
+def launch_danger(
+    argv: Sequence[str] | None = None, *, cwd: Path | None = None
+) -> None:
     """Launch Claude Code with FCC and skip-permissions enabled explicitly."""
 
     args = list(sys.argv[1:] if argv is None else argv)
     if "--dangerously-skip-permissions" not in args:
         args.insert(0, "--dangerously-skip-permissions")
-    launch(args)
+    launch(args, cwd=cwd)
 
 
 def claude_binary_name() -> str:

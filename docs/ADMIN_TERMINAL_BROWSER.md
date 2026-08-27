@@ -16,13 +16,17 @@ conflict without emitting a Uvicorn bind traceback. Use `--headless` or a
 non-TTY invocation for the prior blocking server-only behavior.
 
 The control center keeps the surface intentionally small: Enter/C launches
-`fcc-claude`, D launches `fccdanger`, P opens provider/account status and
-explicit configuration, testing, local reachability, or connected-account
-login actions, M shows or refreshes cached models, U shows local usage, X runs
+`fcc-claude`, D launches `fccdanger`, O selects a locally discovered repository,
+F selects or manages the next-launch learning profile (including explicit
+bundle preview/transfer), P opens provider/account status and explicit
+configuration, testing, local reachability, or connected-account login
+actions, M shows or refreshes cached models, U shows local usage, X runs
 metadata-only route diagnostics, S edits Model and Reasoning Policy through the
-canonical loopback Admin API, L previews/filter the existing structured server
-log, F shows the active learning profile, R restarts only an FCC supervisor
-owned by this terminal, and Q exits. Locked Admin fields remain read-only.
+canonical loopback Admin API, L previews/filters the existing structured server
+log, R restarts only an FCC supervisor owned by this terminal, and Q exits.
+Locked Admin fields remain read-only. Repository and profile selection are
+local-only; they are passed to the child launch and do not change a live
+server/session namespace.
 
 The home screen is deliberately local-only: it uses the startup settings
 snapshot and supervisor state and does not request Admin/provider data on every
