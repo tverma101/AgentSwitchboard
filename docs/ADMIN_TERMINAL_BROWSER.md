@@ -20,13 +20,15 @@ The control center keeps the surface intentionally small: Enter/C launches
 F selects or manages the next-launch learning profile (including explicit
 bundle preview/transfer), P opens provider/account status and explicit
 configuration, testing, local reachability, or connected-account login
-actions, M shows or refreshes cached models, U shows local usage, X runs
-metadata-only route diagnostics, S edits Model and Reasoning Policy through the
-canonical loopback Admin API, L previews/filters the existing structured server
-log, R restarts only an FCC supervisor owned by this terminal, and Q exits.
-Locked Admin fields remain read-only. Repository and profile selection are
-local-only; they are passed to the child launch and do not change a live
-server/session namespace.
+actions, and lets the user add, edit, test, enable/disable, or remove custom
+providers through the canonical Admin API. M lists cached models and opens the
+shared filterable picker for an explicit model change, U shows local usage, X
+runs metadata-only route diagnostics, S edits Model and Reasoning Policy
+through the canonical loopback Admin API, L previews/filters the existing
+structured server log, R restarts only an FCC supervisor owned by this
+terminal, and Q exits. Locked Admin fields remain read-only. Repository and
+profile selection are local-only; they are passed to the child launch and do
+not change a live server/session namespace.
 
 The home screen is deliberately local-only: it uses the startup settings
 snapshot and supervisor state and does not request Admin/provider data on every

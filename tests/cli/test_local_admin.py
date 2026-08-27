@@ -88,6 +88,44 @@ def test_terminal_read_actions_use_canonical_admin_routes() -> None:
     ]
 
 
+def test_custom_provider_actions_use_canonical_admin_routes() -> None:
+    settings = _settings()
+    values = {
+        "id": "local-gateway",
+        "display_name": "Local Gateway",
+        "base_url": "http://127.0.0.1:9000/v1",
+        "models": ["local-model"],
+    }
+    with patch.object(local_admin, "_request_json", return_value={}) as request:
+        local_admin.apply_custom_provider(settings, values)
+        local_admin.apply_custom_provider(
+            settings,
+            {"display_name": "Updated Gateway"},
+            existing_provider_id="local/gateway",
+        )
+        local_admin.remove_custom_provider(settings, "local/gateway")
+
+    assert request.call_args_list == [
+        call(
+            settings,
+            "/admin/api/custom-providers",
+            method="POST",
+            payload=values,
+        ),
+        call(
+            settings,
+            "/admin/api/custom-providers/local%2Fgateway",
+            method="PUT",
+            payload={"display_name": "Updated Gateway"},
+        ),
+        call(
+            settings,
+            "/admin/api/custom-providers/local%2Fgateway",
+            method="DELETE",
+        ),
+    ]
+
+
 def test_connected_account_actions_are_secret_free_and_use_expected_methods() -> None:
     settings = _settings()
     with patch.object(local_admin, "_request_json", return_value={}) as request:

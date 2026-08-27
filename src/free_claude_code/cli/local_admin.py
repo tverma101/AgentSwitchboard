@@ -62,6 +62,33 @@ def test_provider(settings: Settings, provider_id: str) -> dict[str, Any]:
     )
 
 
+def apply_custom_provider(
+    settings: Settings,
+    values: Mapping[str, Any],
+    *,
+    existing_provider_id: str | None = None,
+) -> dict[str, Any]:
+    """Create or update a custom provider through the canonical Admin API."""
+
+    if existing_provider_id is None:
+        path = "/admin/api/custom-providers"
+        method = "POST"
+    else:
+        path = f"/admin/api/custom-providers/{quote(existing_provider_id, safe='')}"
+        method = "PUT"
+    return _request_json(settings, path, method=method, payload=dict(values))
+
+
+def remove_custom_provider(settings: Settings, provider_id: str) -> dict[str, Any]:
+    """Remove one custom provider through the canonical Admin API."""
+
+    return _request_json(
+        settings,
+        f"/admin/api/custom-providers/{quote(provider_id, safe='')}",
+        method="DELETE",
+    )
+
+
 def route_diagnostic(
     settings: Settings,
     *,
