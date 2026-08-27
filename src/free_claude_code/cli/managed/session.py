@@ -7,6 +7,8 @@ from collections.abc import AsyncGenerator
 
 from loguru import logger
 
+from free_claude_code.application.helpers import ApprovedHelperRegistry
+from free_claude_code.application.session_policy import SessionExecutionPolicy
 from free_claude_code.cli.claude_env import settings_env_routing_conflict_message
 from free_claude_code.cli.claude_firewall import (
     ClaudeCompatibilityError,
@@ -45,6 +47,8 @@ class ManagedClaudeSession:
         auth_token: str = "",
         *,
         log_raw_cli_diagnostics: bool = False,
+        session_policy: SessionExecutionPolicy | None = None,
+        approved_helper_registry: ApprovedHelperRegistry | None = None,
     ):
         self.config = ManagedClaudeConfig(
             workspace_path=os.path.normpath(os.path.abspath(workspace_path)),
@@ -52,6 +56,8 @@ class ManagedClaudeSession:
             allowed_dirs=[os.path.normpath(d) for d in (allowed_dirs or [])],
             claude_bin=claude_bin,
             auth_token=auth_token,
+            session_policy=session_policy,
+            approved_helper_registry=approved_helper_registry,
         )
         self.workspace = self.config.workspace_path
         self.proxy_root_url = self.config.proxy_root_url

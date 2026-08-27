@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Callable, MutableMapping
 
+from free_claude_code.application.session_policy import SessionExecutionPolicy
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
 
@@ -20,10 +21,12 @@ class ProviderRuntime:
         providers: MutableMapping[str, BaseProvider] | None = None,
         *,
         provider_constructor: ProviderConstructor = create_provider,
+        session_policy: SessionExecutionPolicy | None = None,
     ) -> None:
         self.settings = settings
         self._providers = providers if providers is not None else {}
         self._provider_constructor = provider_constructor
+        self.session_policy = session_policy
 
     def is_cached(self, provider_id: str) -> bool:
         """Return whether a provider for this id is already cached."""

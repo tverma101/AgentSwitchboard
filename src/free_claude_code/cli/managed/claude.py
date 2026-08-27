@@ -7,6 +7,8 @@ from typing import Any
 
 from loguru import logger
 
+from free_claude_code.application.helpers import ApprovedHelperRegistry
+from free_claude_code.application.session_policy import SessionExecutionPolicy
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
     build_claude_proxy_env,
@@ -43,6 +45,8 @@ class ManagedClaudeConfig:
     allowed_dirs: list[str] = field(default_factory=list)
     claude_bin: str = CLAUDE_BINARY_NAME
     auth_token: str = ""
+    session_policy: SessionExecutionPolicy | None = None
+    approved_helper_registry: ApprovedHelperRegistry | None = None
 
 
 @dataclass(slots=True)

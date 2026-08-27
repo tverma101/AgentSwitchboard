@@ -20,6 +20,7 @@ from free_claude_code.application.connected_accounts import (
     ConnectedAccountStatus,
 )
 from free_claude_code.application.errors import ApplicationUnavailableError
+from free_claude_code.application.helpers import ApprovedHelperRegistry
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import StopResult
 from free_claude_code.config.admin.persistence import (
@@ -122,11 +123,16 @@ class ApplicationRuntime:
         transcriber: Transcriber | None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+        approved_helper_registry: ApprovedHelperRegistry | None = None,
+        helper_cleanup: Callable[[], None] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
+        self._approved_helper_registry = approved_helper_registry
+        self._helper_cleanup = helper_cleanup
+        self._helper_closed = False
         self._connected_account_revisions = {
             provider_id: manager.status().revision
             for provider_id, manager in self._connected_accounts.items()
@@ -232,6 +238,7 @@ class ApplicationRuntime:
 
     def admin_status(self) -> dict[str, Any]:
         settings = self.settings
+        session_policy = self.provider_manager.current_session_policy()
         return {
             "status": "running",
             "host": settings.host,
@@ -240,6 +247,9 @@ class ApplicationRuntime:
             "provider": parse_provider_type(settings.model),
             "pending_fields": list(self._pending_fields),
             "provider_status": provider_config_status(load_value_state()),
+            "session_policy": (
+                session_policy.receipt() if session_policy is not None else None
+            ),
             "cached_models": {
                 provider_id: sorted(model_ids)
                 for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
@@ -482,6 +492,8 @@ class ApplicationRuntime:
             auth_token=settings.anthropic_auth_token,
             log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
             log_messaging_error_details=settings.log_messaging_error_details,
+            session_policy=self.provider_manager.current_session_policy(),
+            approved_helper_registry=self._approved_helper_registry,
         )
         session_store = messaging_session.SessionStore(
             storage_path=os.path.join(data_path, "sessions.json"),
@@ -511,6 +523,8 @@ class ApplicationRuntime:
         if not await self._cleanup_messaging():
             return False
         if not await self._cleanup_transcriber():
+            return False
+        if not await self._cleanup_helper_runtime():
             return False
         verbose = self.settings.log_api_error_tracebacks
         if not self._provider_manager_closed:
@@ -610,3 +624,19 @@ class ApplicationRuntime:
         if closed and self._transcriber is transcriber:
             self._transcriber = None
         return closed
+
+    async def _cleanup_helper_runtime(self) -> bool:
+        """Close the optional native helper host after sessions have drained."""
+
+        if self._helper_closed or self._helper_cleanup is None:
+            return True
+        try:
+            self._helper_cleanup()
+        except Exception as exc:
+            logger.warning(
+                "Shutdown step failed: approved_helper.close: exc_type={}",
+                type(exc).__name__,
+            )
+            return False
+        self._helper_closed = True
+        return True

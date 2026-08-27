@@ -119,3 +119,12 @@ def test_usage_rejects_out_of_range_days_without_network() -> None:
     ):
         local_admin.get_usage(settings, days=0)
     request.assert_not_called()
+
+
+def test_get_admin_status_reads_live_policy_receipt() -> None:
+    settings = _settings()
+    status = {"status": "running", "session_policy": {"provider_policy_mode": "strict"}}
+    with patch.object(local_admin, "_request_json", return_value=status) as request:
+        assert local_admin.get_admin_status(settings) == status
+
+    request.assert_called_once_with(settings, "/admin/api/status")

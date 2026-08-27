@@ -5,6 +5,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
+from free_claude_code.application.capabilities import CapabilityRoutingMode
 from free_claude_code.config.constants import (
     ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
     HTTP_CONNECT_TIMEOUT_DEFAULT,
@@ -21,6 +22,7 @@ from free_claude_code.config.model_refs import (
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.reasoning import ReasoningPreference
+from free_claude_code.core.provider_policy import ProviderPolicyMode
 
 
 class TestSettings:
@@ -243,6 +245,24 @@ class TestSettings:
         monkeypatch.setenv("PROVIDER_RATE_LIMIT", "20")
         settings = Settings()
         assert settings.provider_rate_limit == 20
+
+    def test_session_policy_settings_load_typed_values(self, monkeypatch):
+        """Session policy settings are explicit and default-safe."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("FCC_PROVIDER_POLICY_MODE", "allow-listed")
+        monkeypatch.setenv("FCC_CAPABILITY_ROUTING_MODE", "smart_local")
+        monkeypatch.setenv("FCC_ALLOWED_HELPERS", "codex-computer-use, local-vision")
+        monkeypatch.setenv("FCC_PAID_FALLBACK", "true")
+
+        settings = Settings()
+
+        assert settings.provider_policy_mode == ProviderPolicyMode.ALLOW_LISTED.value
+        assert (
+            settings.capability_routing_mode == CapabilityRoutingMode.SMART_LOCAL.value
+        )
+        assert settings.allowed_helper_ids == "codex-computer-use, local-vision"
+        assert settings.paid_fallback is True
 
     def test_provider_rate_window_from_env(self, monkeypatch):
         """PROVIDER_RATE_WINDOW env var is loaded into settings."""
