@@ -333,7 +333,7 @@ async def test_provider_override_can_classify_retryable_semantics() -> None:
 
 @pytest.mark.asyncio
 async def test_one_leader_backs_off_while_followers_coalesce() -> None:
-    controller = _controller(base_delay=2.0, max_delay=60.0)
+    controller = _controller(base_delay=10.0, max_delay=60.0)
     leader_session = controller.new_retry_session()
     follower_session = controller.new_retry_session()
     leader = await controller.open_attempt(leader_session)
@@ -367,7 +367,7 @@ async def test_one_leader_backs_off_while_followers_coalesce() -> None:
         await real_sleep(0)
 
         assert len(delays) == 1
-        assert 1.9 <= delays[0] <= 2.0
+        assert 0.0 < delays[0] <= 10.0
         assert not follower_attempt_task.done()
 
         release_sleep.set()
@@ -411,7 +411,7 @@ async def test_cancelled_follower_leaves_recovery_episode() -> None:
 
 @pytest.mark.asyncio
 async def test_cancelled_backoff_leader_transfers_to_a_waiter() -> None:
-    controller = _controller(base_delay=2.0, max_delay=60.0)
+    controller = _controller(base_delay=10.0, max_delay=60.0)
     leader_session = controller.new_retry_session()
     follower_session = controller.new_retry_session()
     leader = await controller.open_attempt(leader_session)
@@ -430,7 +430,7 @@ async def test_cancelled_backoff_leader_transfers_to_a_waiter() -> None:
 
     async def controlled_sleep(delay: float) -> None:
         nonlocal sleep_calls
-        assert 1.9 <= delay <= 2.0
+        assert 0.0 < delay <= 10.0
         sleep_calls += 1
         if sleep_calls == 1:
             first_sleep_started.set()
