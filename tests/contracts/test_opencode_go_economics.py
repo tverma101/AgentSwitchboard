@@ -5,16 +5,22 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from smoke.lib.opencode_go_economics import (
+    COMPACTION_ECONOMICS_RECEIPT_SCHEMA,
+    COMPACTION_ECONOMICS_SCHEMA,
     GoUsage,
+    assert_compaction_economics,
     cache_read_share,
     compare_receipts,
     estimated_cost_usd,
+    load_compaction_economics_receipt,
     load_receipt,
     pricing_for,
     stable_prefix_hash,
     summarize_phases,
+    validate_compaction_economics,
 )
 
 
@@ -120,6 +126,152 @@ def test_compaction_phase_rejects_unknown_phase() -> None:
                 "phase": "after_everything",
             }
         )
+
+
+def test_compaction_economics_schema_is_valid_json_schema() -> None:
+    Draft202012Validator.check_schema(COMPACTION_ECONOMICS_RECEIPT_SCHEMA)
+
+
+def test_checked_in_synthetic_economics_receipt_covers_the_full_boundary() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "fixtures"
+        / "opencode_go_compaction_economics.synthetic.json"
+    )
+    payload, rows = load_compaction_economics_receipt(path)
+    report = validate_compaction_economics(rows)
+
+    assert payload["schema"] == COMPACTION_ECONOMICS_SCHEMA
+    assert not list(
+        Draft202012Validator(COMPACTION_ECONOMICS_RECEIPT_SCHEMA).iter_errors(payload)
+    )
+    assert [row.phase for row in rows] == [
+        "pre_compact",
+        "compact_turn",
+        "post_compact",
+        "mature_post_compact",
+        "resume",
+    ]
+    assert [row.input_tokens for row in rows] == [72020, 70000, 70800, 70950, 71000]
+    assert [row.effective_uncached_input_tokens for row in rows] == [
+        620,
+        5050,
+        820,
+        850,
+        900,
+    ]
+    assert [row.cache_read_tokens for row in rows] == [
+        71400,
+        64950,
+        69980,
+        70100,
+        70100,
+    ]
+    assert [row.cache_write_tokens for row in rows] == [0, 0, 0, 0, 0]
+    assert [row.attempts for row in rows] == [1, 1, 1, 1, 1]
+    assert [row.retries for row in rows] == [0, 0, 0, 0, 0]
+    assert [row.ttft_ms for row in rows] == [300, 450, 320, 310, 305]
+    assert [row.duration_ms for row in rows] == [900, 1100, 880, 870, 860]
+    assert len({row.request_shape_hash for row in rows}) == 5
+    assert [row.stable_prefix_hash for row in rows[-3:]] == [
+        "prefix-post-v1",
+        "prefix-post-v1",
+        "prefix-post-v1",
+    ]
+    assert {row.compact_boundary_hash for row in rows} == {"boundary-v1"}
+    assert report["passed"] is True
+    assert all(report["invariants"].values())
+    assert report["summary"]["retry_amplification"] == pytest.approx(1.0)
+    serialized = json.dumps(report)
+    assert "prompt" not in serialized
+    assert "content" not in serialized
+    assert "tool_result" not in serialized
+
+
+@pytest.mark.parametrize(
+    "change, failed",
+    [
+        (
+            lambda rows: [replace(rows[0], stable_prefix_hash=None), *rows[1:]],
+            "stable_prefix_hashes_present",
+        ),
+        (
+            lambda rows: [
+                *rows[:1],
+                replace(rows[1], request_shape_hash=None),
+                *rows[2:],
+            ],
+            "request_shape_hashes_present",
+        ),
+        (
+            lambda rows: [
+                *rows[:2],
+                replace(rows[2], compact_boundary_hash="other"),
+                *rows[3:],
+            ],
+            "compact_boundary_identity",
+        ),
+        (
+            lambda rows: [
+                *rows[:1],
+                replace(rows[1], learning_memory_ids=("learning-memory-hash-1",)),
+                *rows[2:],
+            ],
+            "learning_memory_not_duplicated",
+        ),
+        (
+            lambda rows: [*rows[:2], replace(rows[2], upstream_attempts=2), *rows[3:]],
+            "retry_amplification_bounded",
+        ),
+        (
+            lambda rows: [
+                *rows[:2],
+                replace(rows[2], ttft_ms=900, duration_ms=100),
+                *rows[3:],
+            ],
+            "timings_ordered_when_available",
+        ),
+    ],
+)
+def test_compaction_economics_rejects_cross_turn_regressions(change, failed) -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "smoke"
+        / "fixtures"
+        / "opencode_go_compaction_economics.synthetic.json"
+    )
+    _, rows = load_compaction_economics_receipt(path)
+
+    report = validate_compaction_economics(change(rows))
+
+    assert report["passed"] is False
+    assert report["invariants"][failed] is False
+    with pytest.raises(ValueError, match=failed):
+        assert_compaction_economics(change(rows))
+
+
+def test_compaction_economics_rejects_raw_prompt_or_content_fields(tmp_path) -> None:
+    path = tmp_path / "receipt.json"
+    payload = {
+        "schema": COMPACTION_ECONOMICS_SCHEMA,
+        "evidence": "synthetic-only",
+        "model": "muse-spark-1.2-contributor",
+        "protocol": "responses",
+        "turns": [
+            {
+                "model": "muse-spark-1.2-contributor",
+                "protocol": "responses",
+                "logical_request_id": "bad",
+                "phase": "pre_compact",
+                "prompt": "must not be committed",
+            }
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="metadata-only"):
+        load_compaction_economics_receipt(path)
 
 
 def test_cache_read_share_excludes_cache_write_from_the_ratio() -> None:
