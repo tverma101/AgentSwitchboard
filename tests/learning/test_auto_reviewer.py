@@ -114,9 +114,7 @@ def test_auto_persistence_drops_legacy_or_nonlearning_tickets(
     assert legacy.outcome.promoted is False
     assert legacy.outcome.reason == "missing_a1"
 
-    nolearn = persist_from_message(
-        _message(learn=False), plan=plan, registry=registry
-    )
+    nolearn = persist_from_message(_message(learn=False), plan=plan, registry=registry)
     assert nolearn.outcome.promoted is False
     assert nolearn.outcome.reason == "x1_learn_false"
     assert registry.load() == ()

@@ -14,10 +14,9 @@ import re
 import time
 import uuid
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
@@ -115,26 +114,30 @@ def process_agent_result(
     if not isinstance(raw_input, Mapping) or not isinstance(raw_response, Mapping):
         return None
 
-    base_input = _base_agent_input(raw_input)
+    input_mapping = {
+        key: value for key, value in raw_input.items() if isinstance(key, str)
+    }
+    response_mapping = {
+        key: value for key, value in raw_response.items() if isinstance(key, str)
+    }
+    base_input = _base_agent_input(input_mapping)
     try:
         plan = build_reviewer_plan(base_input, profile=profile)
     except OSError, ReviewerScarError, ValueError:
         return None
 
-    status = raw_response.get("status")
+    status = response_mapping.get("status")
     if status == "async_launched":
         session_id = payload.get("session_id")
-        agent_id = raw_response.get("agentId")
+        agent_id = response_mapping.get("agentId")
         if isinstance(session_id, str) and isinstance(agent_id, str):
-            try:
+            with suppress(OSError, ReviewerScarError):
                 PendingReviewerTasks(profile).save(session_id, agent_id, plan)
-            except OSError, ReviewerScarError:
-                pass
         return None
     if status != "completed":
         return None
 
-    message = _agent_response_text(raw_response)
+    message = _agent_response_text(response_mapping)
     return persist_from_message(
         message,
         plan=plan,
@@ -197,20 +200,32 @@ def persist_from_message(
         kind = ScarKind(fields["kind"])
         prevention = PreventionClass(fields["pain"])
     except ValueError:
-        return AutoReviewResult(ticket_result, AutoScarOutcome(False, "a1_invalid_enum"))
+        return AutoReviewResult(
+            ticket_result, AutoScarOutcome(False, "a1_invalid_enum")
+        )
 
     if pack not in plan.packs:
-        return AutoReviewResult(ticket_result, AutoScarOutcome(False, "a1_pack_not_selected"))
+        return AutoReviewResult(
+            ticket_result, AutoScarOutcome(False, "a1_pack_not_selected")
+        )
     if kind is ScarKind.EFFICIENCY and pack is not ReviewerPack.EFFICIENCY:
-        return AutoReviewResult(ticket_result, AutoScarOutcome(False, "a1_kind_pack_mismatch"))
+        return AutoReviewResult(
+            ticket_result, AutoScarOutcome(False, "a1_kind_pack_mismatch")
+        )
     if fields["when"] != ticket.cave or fields["rule"] != ticket.next_action:
-        return AutoReviewResult(ticket_result, AutoScarOutcome(False, "a1_x1_semantic_mismatch"))
+        return AutoReviewResult(
+            ticket_result, AutoScarOutcome(False, "a1_x1_semantic_mismatch")
+        )
 
     evidence = () if fields["ev"] == "-" else tuple(fields["ev"].split(","))
     if tuple(sorted(set(evidence))) != tuple(sorted(set(ticket.evidence))):
-        return AutoReviewResult(ticket_result, AutoScarOutcome(False, "a1_x1_evidence_mismatch"))
+        return AutoReviewResult(
+            ticket_result, AutoScarOutcome(False, "a1_x1_evidence_mismatch")
+        )
     if not _scope_matches_task(fields["scope"], plan.fingerprint):
-        return AutoReviewResult(ticket_result, AutoScarOutcome(False, "a1_scope_not_task_relevant"))
+        return AutoReviewResult(
+            ticket_result, AutoScarOutcome(False, "a1_scope_not_task_relevant")
+        )
 
     candidate = ScarCandidate(
         pack=pack,
@@ -231,7 +246,9 @@ def persist_from_message(
             )
         record = registry.upsert(decision)
     except OSError, ReviewerScarError, ValueError:
-        return AutoReviewResult(ticket_result, AutoScarOutcome(False, "persistence_rejected"))
+        return AutoReviewResult(
+            ticket_result, AutoScarOutcome(False, "persistence_rejected")
+        )
     return AutoReviewResult(
         ticket_result,
         AutoScarOutcome(True, "counterfactual_gate_passed", record.scar_id),
@@ -293,7 +310,9 @@ def _parse_auto_candidate(message: str | None) -> dict[str, str] | str:
     return fields
 
 
-def _state_from_ticket(status: ExitStatus, verification: VerificationLevel) -> ScarState:
+def _state_from_ticket(
+    status: ExitStatus, verification: VerificationLevel
+) -> ScarState:
     if verification is VerificationLevel.NONE:
         return ScarState.OBSERVED
     if status is ExitStatus.DONE and verification in {
@@ -372,7 +391,7 @@ class PendingReviewerTasks:
             if len(entries) > MAX_PENDING_TASKS:
                 ordered = sorted(
                     entries,
-                    key=lambda item: int(entries[item].get("created_at", 0)),
+                    key=lambda item: _created_at(entries[item]),
                 )
                 for stale in ordered[: len(entries) - MAX_PENDING_TASKS]:
                     entries.pop(stale, None)
@@ -392,7 +411,9 @@ class PendingReviewerTasks:
                 operations=_string_tuple(value.get("operations")),
                 risks=_string_tuple(value.get("risks")),
             )
-            packs = tuple(ReviewerPack(item) for item in _string_tuple(value.get("packs")))
+            packs = tuple(
+                ReviewerPack(item) for item in _string_tuple(value.get("packs"))
+            )
         except ValueError:
             return None
         return ReviewerTaskPlan(
@@ -446,7 +467,7 @@ class PendingReviewerTasks:
 
 
 def _pending_key(session_id: str, agent_id: str) -> str:
-    return hashlib.sha256(f"{session_id}\0{agent_id}".encode("utf-8")).hexdigest()[:24]
+    return hashlib.sha256(f"{session_id}\0{agent_id}".encode()).hexdigest()[:24]
 
 
 def _prune_entries(
@@ -464,10 +485,15 @@ def _prune_entries(
     return fresh
 
 
+def _created_at(value: Mapping[str, object]) -> int:
+    created = value.get("created_at")
+    return created if isinstance(created, int) and not isinstance(created, bool) else 0
+
+
 def _string_tuple(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+    if not isinstance(value, list):
         return ()
-    return tuple(value)
+    return tuple(item for item in value if isinstance(item, str))
 
 
 __all__ = [

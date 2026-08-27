@@ -115,7 +115,10 @@ def install_hooks(config_dir: Path | None = None) -> bool:
         for group in groups:
             if not isinstance(group, dict):
                 continue
-            if expected_matcher is not None and group.get("matcher") != expected_matcher:
+            if (
+                expected_matcher is not None
+                and group.get("matcher") != expected_matcher
+            ):
                 continue
             candidates = group.get("hooks")
             if not isinstance(candidates, list):
