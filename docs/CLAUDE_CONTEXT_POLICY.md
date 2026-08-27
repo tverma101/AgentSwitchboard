@@ -93,3 +93,21 @@ The complete execution-surface status map is recorded in the metadata-only
 [Claude compatibility matrix](../smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
 It keeps passed, unverified, and skipped boundaries separate; the matrix does
 not promote the remaining subagent-around-compact gap.
+
+## Deterministic inheritance contract
+
+The focused inheritance gate in
+[`smoke/lib/claude_compaction_inheritance.py`](../smoke/lib/claude_compaction_inheritance.py)
+checks the policy at the fresh-session baseline and at resumed, forked, child,
+interrupted-compaction, and candidate-upgrade boundaries. A passed deterministic
+case must reassert the same bounded context/compact window, policy hash, gateway
+identity, provider/model, protocol, route identity, and hashed session/process
+relationship. Explicit user overrides are accepted only when their bounded value
+and source are recorded.
+
+The checked-in
+[inheritance contract receipt](../smoke/receipts/claude-compaction-inheritance-2026-08-24.json)
+is `synthetic-only` and sets `live_provider_claim` to `false`. Its passed rows
+prove the validator shape, not a Claude/provider run. The subagent and child
+compaction edges remain `unverified`; interrupted recovery and candidate-version
+canary remain `skipped` and quarantined until their separate evidence exists.
