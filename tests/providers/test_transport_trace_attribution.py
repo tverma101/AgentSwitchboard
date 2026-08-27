@@ -100,3 +100,13 @@ def test_other_provider_http_status_does_not_claim_opencode_gateway() -> None:
         "upstream_error:http_503",
         "upstream_provider_domain_unmodeled",
     ]
+
+
+def test_shared_classification_fields_can_be_reused_by_error_receipts() -> None:
+    domain, confidence, evidence_codes = _provider()._classify_stream_failure(
+        "OPEN_ROUTER", ConnectionError("socket reset")
+    )
+
+    assert domain.value == "unknown"
+    assert confidence.value == "medium"
+    assert evidence_codes == ["transport_failure_ownership_unproven"]

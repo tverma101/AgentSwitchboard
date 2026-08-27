@@ -32,6 +32,12 @@ OpenCode Go provider traces emit `provider.fault_attribution` as metadata-only
 receipts. In addition to route, protocol, token, cache, tool, retry, and fault
 fields, each stream receipt includes media and timing metadata:
 
+The shared `provider.response.error` event emitted by the OpenAI-compatible and
+ChatGPT/Codex provider paths carries the same `fault_domain`, `confidence`, and
+non-empty `evidence_codes` fields. A transport or upstream error without enough
+evidence remains `unknown`; the trace must not guess that the model or Harness
+caused it.
+
 - `media_count`: number of image/document blocks in the request, including
   nested tool results.
 - `media_type_hash`: ordered one-way hash of media block type and declared media

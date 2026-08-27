@@ -313,11 +313,30 @@ class OpenAICodexProvider(BaseProvider):
                     read_timeout_s=self._config.http_read_timeout,
                     request_id=request_id,
                 )
+                (
+                    fault_domain,
+                    fault_confidence,
+                    fault_evidence_codes,
+                ) = self._classify_stream_failure("OPENAI", error)
                 self._log_stream_transport_error(
                     "OPENAI",
                     f" request_id={request_id}" if request_id else "",
                     error,
                     request_id=request_id,
+                )
+                trace_event(
+                    stage="provider",
+                    event="provider.response.error",
+                    source="provider",
+                    provider="openai",
+                    request_id=request_id,
+                    exc_type=type(error).__name__,
+                    failure_kind=failure.kind.value,
+                    status_code=failure.status_code,
+                    provider_retryable=failure.retryable,
+                    fault_domain=fault_domain.value,
+                    confidence=fault_confidence.value,
+                    evidence_codes=fault_evidence_codes,
                 )
                 if not decision.committed:
                     recovery.discard()
