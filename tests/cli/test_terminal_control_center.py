@@ -202,6 +202,121 @@ def test_provider_field_mapping_uses_catalog_owned_settings_attributes() -> None
     assert [key for key, _field in openai_fields] == ["OPENAI_PROXY"]
 
 
+def test_provider_filter_uses_shared_picker() -> None:
+    from free_claude_code.cli import terminal_control
+
+    statuses = [
+        {
+            "provider_id": "openai",
+            "display_name": "OpenAI",
+            "label": "Configured",
+        }
+    ]
+    item = terminal_control.SelectionItem("openai", "OpenAI", "Configured")
+    with patch.object(terminal_control, "choose_item", return_value=item) as choose:
+        selected = terminal_control._select_provider(statuses, "ope")
+
+    assert selected is statuses[0]
+    choose.assert_called_once()
+
+
+def test_model_menu_selects_through_shared_picker() -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    item = terminal_control.SelectionItem("opencode_go/selected", "selected")
+    with (
+        patch.object(
+            terminal_control,
+            "get_models",
+            return_value={
+                "models": [item.item_id],
+                "model_labels": {},
+                "model_evidence": {},
+            },
+        ),
+        patch.object(terminal_control, "choose_item", return_value=item) as choose,
+        patch.object(
+            terminal_control,
+            "apply_admin_values",
+            return_value={"applied": True},
+        ) as apply,
+        patch("builtins.input", return_value="s"),
+    ):
+        assert terminal_control._run_models_menu(settings) == item.item_id
+
+    choose.assert_called_once()
+    apply.assert_called_once_with(settings, {"MODEL": item.item_id})
+
+
+def test_model_items_include_friendly_label_and_evidence() -> None:
+    from free_claude_code.cli import terminal_control
+
+    items = terminal_control._model_items(
+        {
+            "models": ["gateway/model"],
+            "model_labels": {"gateway/model": "Gateway Model"},
+            "model_evidence": {
+                "gateway/model": {"evidence_source": "provider_metadata"}
+            },
+        }
+    )
+
+    assert items == [
+        terminal_control.SelectionItem(
+            "gateway/model",
+            "Gateway Model · gateway/model",
+            "provider_metadata",
+        )
+    ]
+
+
+def test_custom_provider_editor_hides_credentials() -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    secret = "super-secret-custom-key"
+    with (
+        patch(
+            "builtins.input",
+            side_effect=[
+                "gateway",
+                "Gateway",
+                "http://127.0.0.1:9000/v1",
+                "n",
+                "local-model",
+            ],
+        ),
+        patch.object(
+            terminal_control.getpass,
+            "getpass",
+            side_effect=[secret, "http://127.0.0.1:8080"],
+        ),
+        patch.object(
+            terminal_control,
+            "apply_custom_provider",
+            return_value={"applied": True},
+        ) as apply,
+        patch("builtins.print") as printed,
+    ):
+        assert terminal_control._edit_custom_provider(settings) is True
+
+    apply.assert_called_once_with(
+        settings,
+        {
+            "id": "gateway",
+            "display_name": "Gateway",
+            "base_url": "http://127.0.0.1:9000/v1",
+            "local": False,
+            "models": ["local-model"],
+            "api_key": secret,
+            "proxy": "http://127.0.0.1:8080",
+        },
+        existing_provider_id=None,
+    )
+    assert all(secret not in str(call_args) for call_args in printed.call_args_list)
+
+
 def test_connected_account_detail_uses_explicit_browser_login_action() -> None:
     from free_claude_code.cli import terminal_control
 

@@ -19,6 +19,7 @@ from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.local_admin import (
     LocalAdminError,
     apply_admin_values,
+    apply_custom_provider,
     cancel_connected_account_login,
     connected_account_status,
     disconnect_connected_account,
@@ -27,6 +28,7 @@ from free_claude_code.cli.local_admin import (
     get_local_provider_status,
     get_models,
     get_usage,
+    remove_custom_provider,
     route_diagnostic,
     start_connected_account_login,
     test_provider,
@@ -184,7 +186,9 @@ def run_control_menu(
         elif choice in {"p", "providers", "accounts"}:
             _run_provider_menu(settings)
         elif choice in {"m", "models"}:
-            _run_models_menu(settings)
+            updated_model = _run_models_menu(settings)
+            if updated_model is not None:
+                displayed_model = updated_model
         elif choice in {"u", "usage"}:
             _run_usage_menu(settings)
         elif choice in {"n", "diagnose", "diagnostics"}:
@@ -830,7 +834,7 @@ def _run_provider_menu(settings: Settings) -> None:
                 f"{index:>2}. {provider.get('display_name', provider.get('provider_id', '?'))}"
                 f" [{provider.get('label', provider.get('status', 'unknown'))}]"
             )
-        print("Enter a number or provider id. [B] Back")
+        print("Enter a filter or provider id. [A] Add custom  [B] Back")
         try:
             selection = input("Provider> ").strip()
         except EOFError, KeyboardInterrupt:
@@ -838,6 +842,15 @@ def _run_provider_menu(settings: Settings) -> None:
             return
         if selection.casefold() in {"b", "back", "q", "quit"}:
             return
+        if selection.casefold() in {"a", "add", "custom"}:
+            _edit_custom_provider(settings)
+            try:
+                config = get_admin_config(settings)
+                statuses = _provider_statuses(config)
+            except LocalAdminError as exc:
+                print(f"Provider refresh unavailable: {exc}")
+                return
+            continue
         provider = _select_provider(statuses, selection)
         if provider is None:
             print("Unknown provider selection.")
@@ -871,7 +884,181 @@ def _select_provider(
             str(provider.get("display_name", "")).casefold(),
         }:
             return provider
-    return None
+    item = choose_item(
+        [
+            SelectionItem(
+                item_id=str(provider.get("provider_id", "")),
+                label=str(
+                    provider.get("display_name", provider.get("provider_id", ""))
+                ),
+                detail=str(provider.get("label", provider.get("status", "unknown"))),
+            )
+            for provider in statuses
+            if str(provider.get("provider_id", ""))
+        ],
+        title="FCC providers",
+        initial_query=selection,
+        footer="type filter · ↑↓ move · enter select · esc cancel",
+    )
+    if item is None:
+        return None
+    return next(
+        (
+            provider
+            for provider in statuses
+            if provider.get("provider_id") == item.item_id
+        ),
+        None,
+    )
+
+
+def _custom_provider_values(provider: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Collect a secret-safe custom-provider update from the terminal."""
+
+    existing_id = str(provider.get("provider_id", "")) if provider else ""
+    try:
+        provider_id = input(
+            f"Provider id [{existing_id}]> " if existing_id else "Provider id> "
+        ).strip()
+        if not provider_id and existing_id:
+            provider_id = existing_id
+        display_name = input(
+            f"Display name [{provider.get('display_name', '') if provider else ''}]> "
+        ).strip()
+        if not display_name and provider:
+            display_name = str(provider.get("display_name", ""))
+        base_url = input(
+            f"Base URL [{provider.get('base_url', '') if provider else ''}]> "
+        ).strip()
+        if not base_url and provider:
+            base_url = str(provider.get("base_url", ""))
+        api_key = getpass.getpass("API key (blank keeps current)> ").strip()
+        proxy = getpass.getpass("Proxy (blank keeps current)> ").strip()
+        local_default = "y" if provider and provider.get("local") is True else "n"
+        local_value = input(f"Local endpoint? [y/N, current {local_default}]> ").strip()
+        current_local = provider.get("local", False) if provider else False
+        local = (
+            current_local
+            if not local_value
+            else local_value.casefold() in {"y", "yes", "1", "true"}
+        )
+        models_text = input(
+            f"Model ids, comma-separated [{', '.join(_string_values(provider.get('model_ids', [])) if provider else ())}]> "
+        ).strip()
+        models = (
+            [item.strip() for item in models_text.split(",") if item.strip()]
+            if models_text
+            else list(provider.get("model_ids", []))
+            if provider
+            else []
+        )
+    except EOFError, KeyboardInterrupt:
+        print()
+        return None
+
+    values: dict[str, Any] = {
+        "id": provider_id,
+        "display_name": display_name,
+        "base_url": base_url,
+        "local": bool(local),
+        "models": models,
+    }
+    if api_key:
+        values["api_key"] = api_key
+    if proxy:
+        values["proxy"] = proxy
+    if existing_id:
+        values.pop("id")
+    return values
+
+
+def _edit_custom_provider(
+    settings: Settings, provider: dict[str, Any] | None = None
+) -> bool:
+    values = _custom_provider_values(provider)
+    if values is None:
+        return False
+    existing_id = str(provider.get("provider_id", "")) if provider else None
+    try:
+        result = apply_custom_provider(
+            settings,
+            values,
+            existing_provider_id=existing_id,
+        )
+    except LocalAdminError as exc:
+        print(f"Could not save custom provider: {exc}")
+        return False
+    _print_apply_result("custom provider", result)
+    return result.get("applied") is True
+
+
+def _run_custom_provider_detail(settings: Settings, provider: dict[str, Any]) -> None:
+    """Manage one custom provider through the existing Admin owner."""
+
+    provider_id = str(provider.get("provider_id", ""))
+    while True:
+        print()
+        print(f"{provider.get('display_name', provider_id)} ({provider_id})")
+        print(f"Status: {provider.get('label', provider.get('status', 'unknown'))}")
+        print(f"Base URL: {provider.get('base_url', '')}")
+        print(
+            "API key: "
+            + ("configured" if provider.get("api_key_configured") else "missing")
+        )
+        print(
+            "Proxy: "
+            + ("configured" if provider.get("proxy_configured") else "missing")
+        )
+        model_ids = provider.get("model_ids")
+        if isinstance(model_ids, list) and model_ids:
+            print("Models: " + ", ".join(str(model) for model in model_ids))
+        enabled = provider.get("enabled") is not False
+        print("[E] Edit  [T] Test  [D] " + ("Disable" if enabled else "Enable"))
+        print("[X] Remove  [B] Back")
+        try:
+            choice = input("Custom provider action> ").strip().casefold()
+        except EOFError, KeyboardInterrupt:
+            print()
+            return
+        if choice in {"b", "back", "q", "quit"}:
+            return
+        if choice in {"e", "edit"}:
+            if _edit_custom_provider(settings, provider):
+                return
+        elif choice in {"t", "test"}:
+            _test_provider(settings, provider_id)
+        elif choice in {"d", "toggle", "enable", "disable"}:
+            try:
+                result = apply_custom_provider(
+                    settings,
+                    {"enabled": not enabled},
+                    existing_provider_id=provider_id,
+                )
+            except LocalAdminError as exc:
+                print(f"Could not update custom provider: {exc}")
+            else:
+                _print_apply_result("custom provider", result)
+                if result.get("applied") is True:
+                    return
+        elif choice in {"x", "remove", "delete"}:
+            try:
+                confirm = input(f"Remove {provider_id}? [y/N]> ").strip().casefold()
+            except EOFError, KeyboardInterrupt:
+                print()
+                continue
+            if confirm not in {"y", "yes"}:
+                print("Removal cancelled.")
+                continue
+            try:
+                result = remove_custom_provider(settings, provider_id)
+            except LocalAdminError as exc:
+                print(f"Could not remove custom provider: {exc}")
+            else:
+                _print_apply_result("custom provider", result)
+                if result.get("applied") is True:
+                    return
+        else:
+            print("Unknown custom-provider action. Use E, T, D, X, or B.")
 
 
 def _run_provider_detail(
@@ -881,6 +1068,9 @@ def _run_provider_detail(
 ) -> None:
     provider_id = str(provider.get("provider_id", ""))
     if not provider_id:
+        return
+    if provider.get("custom") is True:
+        _run_custom_provider_detail(settings, provider)
         return
     descriptor = PROVIDER_CATALOG.get(provider_id)
     fields = _provider_fields(config, provider_id)
@@ -1111,43 +1301,86 @@ def _account_action(
     print(f"{success_message}: {status.get('state', 'unknown')}")
 
 
-def _run_models_menu(settings: Settings) -> None:
+def _model_items(result: dict[str, Any]) -> list[SelectionItem]:
+    models = result.get("models")
+    model_list = [str(model) for model in models] if isinstance(models, list) else []
+    labels = result.get("model_labels")
+    evidence = result.get("model_evidence")
+    items: list[SelectionItem] = []
+    for model in model_list:
+        label = model
+        if isinstance(labels, dict) and isinstance(labels.get(model), str):
+            friendly = str(labels[model])
+            if friendly and friendly != model:
+                label = f"{friendly} · {model}"
+        detail = ""
+        if isinstance(evidence, dict) and isinstance(evidence.get(model), dict):
+            source = evidence[model].get("evidence_source")
+            if isinstance(source, str) and source:
+                detail = source
+        items.append(SelectionItem(item_id=model, label=label, detail=detail))
+    return items
+
+
+def _run_models_menu(settings: Settings) -> str | None:
     while True:
         try:
             result = get_models(settings)
         except LocalAdminError as exc:
             print(f"Models unavailable: {exc}")
-            return
-        models = result.get("models")
-        model_list = (
-            [str(model) for model in models] if isinstance(models, list) else []
-        )
+            return None
+        items = _model_items(result)
         print()
-        print(f"Models ({len(model_list)})")
+        print(f"Models ({len(items)})")
         print("--------")
-        for model in model_list[:60]:
-            print(f"  {model}")
-        if len(model_list) > 60:
-            print(f"  ... {len(model_list) - 60} more")
+        print(f"Current: {settings.model}")
+        for item in items[:24]:
+            detail = f" [{item.detail}]" if item.detail else ""
+            print(f"  {item.label}{detail}")
+        if len(items) > 24:
+            print(f"  ... {len(items) - 24} more; use Select to filter")
         failed = result.get("failed_providers")
         if isinstance(failed, list) and failed:
             print("Refresh failures: " + ", ".join(str(item) for item in failed))
         try:
-            choice = input("Models> [R]efresh [B]ack: ").strip().casefold()
+            choice = input("Models> [S]elect [R]efresh [B]ack: ").strip().casefold()
         except EOFError, KeyboardInterrupt:
             print()
-            return
+            return None
         if choice in {"b", "back", "q", "quit", ""}:
-            return
+            return None
+        if choice in {"s", "select"}:
+            selected = choose_item(
+                items,
+                title="FCC models",
+                footer="type filter · ↑↓ move · enter select · esc cancel",
+            )
+            if selected is None:
+                continue
+            try:
+                applied = apply_admin_values(
+                    settings,
+                    {"MODEL": selected.item_id},
+                )
+            except LocalAdminError as exc:
+                print(f"Could not apply MODEL: {exc}")
+                continue
+            _print_apply_result("MODEL", applied)
+            if applied.get("applied") is True:
+                get_settings.cache_clear()
+                settings.model = selected.item_id
+                return selected.item_id
+            continue
         if choice in {"r", "refresh"}:
             try:
                 result = get_models(settings, refresh=True)
             except LocalAdminError as exc:
                 print(f"Model refresh failed: {exc}")
                 continue
-            print(f"Model refresh completed ({len(result.get('models', []))} visible).")
+            refreshed_items = _model_items(result)
+            print(f"Model refresh completed ({len(refreshed_items)} visible).")
         else:
-            print("Unknown models action.")
+            print("Unknown models action. Use S, R, or B.")
 
 
 def _run_usage_menu(settings: Settings) -> None:

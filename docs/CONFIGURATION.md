@@ -25,12 +25,15 @@ fcc-server
 The command opens the terminal control center. Press Enter/C for `fcc-claude`,
 D for `fccdanger`, O to select a cached/local repository, or F to select/manage
 the profile used by the next launch. F also exposes explicit selective bundle
-preview/export/import. P opens provider/account actions, M shows models, U
-shows local usage, N runs route diagnostics, X connects Codex, S edits the
-supported Model and Reasoning Policy fields, L previews/filters the structured
-server log, R restarts only a server owned by this terminal, and Q exits. If
-FCC is already healthy, the control center attaches without claiming its
-lifecycle. Use `fcc-server --headless` for a blocking server-only process.
+preview/export/import. P opens provider/account actions; its custom-provider
+path supports add, edit, test, enable/disable, and remove through the
+canonical Admin API. M shows models and opens a shared filterable picker for
+an explicit model change, U shows local usage, N runs route diagnostics, X
+connects Codex, S edits the supported Model and Reasoning Policy fields, L
+previews/filters the structured server log, R restarts only a server owned by
+this terminal, and Q exits. If FCC is already healthy, the control center
+attaches without claiming its lifecycle. Use `fcc-server --headless` for a
+blocking server-only process.
 
 The home redraw is local-only. Admin, provider, model, usage, and diagnostic
 requests happen only after selecting their explicit action.
