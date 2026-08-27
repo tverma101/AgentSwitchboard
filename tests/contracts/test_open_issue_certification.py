@@ -25,14 +25,13 @@ def test_all_current_engineering_issues_have_a_shared_evidence_path() -> None:
         61,
         63,
         66,
-        98,
         102,
         122,
     }
 
-    # #66 is the tracker board and #122 is the later learning feature; every
-    # other current issue is now a certification/evidence lane with a shared step.
-    assert uncovered_issues(current_open) == (66, 122)
+    # #66 is the tracker board. Every actual engineering/certification issue has
+    # at least one deterministic or explicit-live shared evidence step.
+    assert uncovered_issues(current_open) == (66,)
 
 
 def test_live_steps_are_not_returned_by_default() -> None:
@@ -40,6 +39,10 @@ def test_live_steps_are_not_returned_by_default() -> None:
     assert [step.step_id for step in steps_for_issue(21, include_live=True)] == [
         "codex-browser-device"
     ]
+
+
+def test_reviewer_scar_core_is_a_deterministic_engineering_lane() -> None:
+    assert [step.step_id for step in steps_for_issue(122)] == ["reviewer-scar-core"]
 
 
 def test_deterministic_issue_plan_stays_stable_and_reuses_existing_machinery() -> None:
