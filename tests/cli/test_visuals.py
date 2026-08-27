@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 from free_claude_code.cli.visuals import (
+    MacOSFocusedWindowCapture,
     build_appshot_attachment,
+    capture_focused_window,
     enqueue_appshot,
     pending_appshots,
     render_attachment,
@@ -83,6 +85,146 @@ def test_terminal_preview_falls_back_to_metadata_for_sixel() -> None:
 
     assert rendered.startswith("[img ")
     assert "\x1b" not in rendered
+
+
+def test_capture_focused_window_uses_window_id_without_region_or_interaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        Path(command[-1]).write_bytes(_png_bytes())
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(
+        "free_claude_code.cli.macos_screenshot.subprocess.run", fake_run
+    )
+
+    image = capture_focused_window(tmp_path, 7312)
+
+    assert image.read_bytes() == _png_bytes()
+    assert commands == [
+        [
+            "screencapture",
+            "-x",
+            "-l",
+            "7312",
+            str(tmp_path / "appshot.png"),
+        ]
+    ]
+    assert "-R" not in commands[0]
+    assert "-w" not in commands[0]
+    assert "-i" not in commands[0]
+
+
+def test_macos_appshot_capture_uses_the_inspected_window_id() -> None:
+    metadata = {
+        "app": "Safari",
+        "window": "localhost:3000",
+        "x": 12,
+        "y": 34,
+        "width": 800,
+        "height": 600,
+        "window_id": 7312,
+    }
+    captures: list[int] = []
+    permission_checks: list[None] = []
+
+    def read_metadata() -> dict[str, object]:
+        return dict(metadata)
+
+    def capture_window(output_dir: Path, window_id: int) -> Path:
+        captures.append(window_id)
+        image = output_dir / "appshot.png"
+        image.write_bytes(_png_bytes())
+        return image
+
+    source = MacOSFocusedWindowCapture(
+        metadata_reader=read_metadata,
+        capture_reader=capture_window,
+        permission_preflight=lambda: permission_checks.append(None),
+    )
+    inspected = source.inspect_focused_window()
+
+    assert inspected.width == 800
+    assert inspected.height == 600
+    assert source.capture_focused_window(inspected) == _png_bytes()
+    assert captures == [7312]
+    assert permission_checks == [None]
+
+
+def test_macos_appshot_rejects_bounds_change_before_reading_pixels() -> None:
+    metadata = {
+        "app": "Safari",
+        "window": "localhost:3000",
+        "x": 12,
+        "y": 34,
+        "width": 800,
+        "height": 600,
+        "window_id": 7312,
+    }
+    captures: list[int] = []
+
+    def read_metadata() -> dict[str, object]:
+        return dict(metadata)
+
+    def capture_window(output_dir: Path, window_id: int) -> Path:
+        captures.append(window_id)
+        image = output_dir / "appshot.png"
+        image.write_bytes(_png_bytes())
+        return image
+
+    source = MacOSFocusedWindowCapture(
+        metadata_reader=read_metadata,
+        capture_reader=capture_window,
+        permission_preflight=lambda: None,
+    )
+    inspected = source.inspect_focused_window()
+    metadata["x"] = 99
+
+    with pytest.raises(RuntimeError, match="changed before capture"):
+        source.capture_focused_window(inspected)
+
+    assert captures == []
+
+
+def test_macos_appshot_rejects_window_id_change_before_reading_pixels() -> None:
+    metadata = {
+        "app": "Safari",
+        "window": "localhost:3000",
+        "x": 12,
+        "y": 34,
+        "width": 800,
+        "height": 600,
+        "window_id": 7312,
+    }
+    captures: list[int] = []
+
+    def read_metadata() -> dict[str, object]:
+        return dict(metadata)
+
+    def capture_window(output_dir: Path, window_id: int) -> Path:
+        captures.append(window_id)
+        image = output_dir / "appshot.png"
+        image.write_bytes(_png_bytes())
+        return image
+
+    source = MacOSFocusedWindowCapture(
+        metadata_reader=read_metadata,
+        capture_reader=capture_window,
+        permission_preflight=lambda: None,
+    )
+    inspected = source.inspect_focused_window()
+    metadata["window_id"] = 7313
+
+    with pytest.raises(RuntimeError, match="changed before capture"):
+        source.capture_focused_window(inspected)
+
+    assert captures == []
 
 
 def test_appshot_queue_is_explicit_session_scoped_and_metadata_only(
