@@ -20,6 +20,7 @@ class CertificationStep:
     environment: tuple[tuple[str, str], ...] = ()
     required_environment: tuple[str, ...] = ()
     description: str = ""
+    timeout_seconds: float = 300.0
 
 
 CERTIFICATION_STEPS: tuple[CertificationStep, ...] = (

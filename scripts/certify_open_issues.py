@@ -78,6 +78,7 @@ def _plan(step: CertificationStep) -> dict[str, object]:
         "environment": dict(step.environment),
         "required_environment": list(step.required_environment),
         "description": step.description,
+        "timeout_seconds": step.timeout_seconds,
     }
 
 
@@ -96,12 +97,22 @@ def _run_step(step: CertificationStep, *, root: Path) -> dict[str, object]:
     environment = os.environ.copy()
     environment.update(dict(step.environment))
     started = time.monotonic()
-    result = subprocess.run(
-        _resolved_argv(step),
-        cwd=root,
-        env=environment,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            _resolved_argv(step),
+            cwd=root,
+            env=environment,
+            check=False,
+            timeout=step.timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            **_plan(step),
+            "status": "failed",
+            "reason": "timeout",
+            "returncode": None,
+            "duration_s": round(max(0.0, time.monotonic() - started), 3),
+        }
     return {
         **_plan(step),
         "status": "passed" if result.returncode == 0 else "failed",
