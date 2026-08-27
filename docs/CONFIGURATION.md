@@ -155,6 +155,15 @@ receipts contain provider/model metadata rather than credentials.
   Managed Claude sessions (including resume/fork tasks) apply the same
   compatibility check before spawning a child; an uncertified executable exits
   with a typed compatibility failure instead of bypassing the FCC policy.
+- Candidate upgrades are evaluated by the neutral
+  `free_claude_code.core.claude_candidate` contract using synthetic metadata
+  and process results. Candidate assessment is immutable: the explicit
+  last-known-good version and route remain active until a caller explicitly
+  promotes a certified candidate. Additive metadata is tolerated, while
+  changes to an established semantic contract field quarantine the candidate.
+  Rollback returns to the preserved last-known-good route. Candidate receipts
+  contain only bounded, credential-redacted incompatibility evidence; the
+  contract does not update Claude, contact a provider, or mutate user config.
 - `/v1/models` exposes explicit reasoning evidence when the provider's model
   catalog supplies it: overall support, individually evidenced effort levels,
   provider default, reasoning-token reporting, visible-summary and opaque-
