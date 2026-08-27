@@ -78,10 +78,12 @@ FCC_LIVE_SMOKE=1 FCC_SMOKE_TARGETS=cli uv run pytest \
   smoke/product/test_claude_synthetic_thinking_product_live.py -n 0 -s --tb=short
 ```
 
-The checked-in fixture matrix covers visible thinking, redacted thinking,
-interleaved thinking, late/malformed signatures, additive deltas, and a tool
-continuation. The installed-client canary runs the safe visible, redacted, and
-tool-roundtrip cases; expected client rendering/rejection is recorded in
+The checked-in fixture matrix covers visible summaries and thinking, empty and
+usage-only responses, text-only unsupported reasoning, redacted thinking,
+interleaved thinking, late/malformed signatures, additive deltas, and plain,
+thinking, interleaved, or opaque-state tool continuations. The installed-client
+canary runs the client-safe summary, empty, unsupported, usage-only, redacted,
+and tool-roundtrip cases; expected client rendering/rejection is recorded in
 `.smoke-results/` rather than treated as Muse/provider evidence.
 
 Heavy/side-effectful targets are opt-in:
