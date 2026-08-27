@@ -1,0 +1,37 @@
+{
+  "schema": "fcc.native-harness-comparator.example.v1",
+  "native": {
+    "scenario_id": "example-tool-turn",
+    "path": "native",
+    "success": true,
+    "protocol": "responses",
+    "upstream_attempts": 1,
+    "event_sequence": ["response.output_item.done", "response.completed"],
+    "terminal_event": "response.completed",
+    "tool_call_count": 1,
+    "complete_tool_calls": true,
+    "valid_tool_json": true,
+    "stable_prefix_hash": "example-prefix",
+    "request_shape_hash": "example-shape",
+    "fault_domain": "unknown",
+    "confidence": "low",
+    "evidence_codes": []
+  },
+  "harness": {
+    "scenario_id": "example-tool-turn",
+    "path": "harness",
+    "success": true,
+    "protocol": "responses",
+    "upstream_attempts": 1,
+    "event_sequence": ["response.output_item.done", "response.completed"],
+    "terminal_event": "response.completed",
+    "tool_call_count": 1,
+    "complete_tool_calls": true,
+    "valid_tool_json": true,
+    "stable_prefix_hash": "example-prefix",
+    "request_shape_hash": "example-shape",
+    "fault_domain": "unknown",
+    "confidence": "low",
+    "evidence_codes": []
+  }
+}
