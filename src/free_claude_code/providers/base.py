@@ -13,6 +13,11 @@ from free_claude_code.core.diagnostics import (
     exception_cause_types,
     redacted_exception_traceback,
 )
+from free_claude_code.core.fault_attribution import (
+    FaultConfidence,
+    FaultDomain,
+    classify_failure,
+)
 from free_claude_code.core.provider_policy import (
     ProviderEgressGuard,
     ProviderPolicyError,
@@ -67,11 +72,29 @@ class BaseProvider(ABC):
         *,
         request_id: str | None = None,
     ) -> None:
-        """Log streaming transport failures (metadata-only unless verbose is enabled)."""
+        """Log streaming transport failures without inventing fault ownership."""
         response = getattr(error, "response", None)
         http_status = (
             getattr(response, "status_code", None) if response is not None else None
         )
+        error_code = (
+            f"http_{http_status}"
+            if isinstance(http_status, int) and 100 <= http_status <= 599
+            else None
+        )
+        if error_code is None:
+            fault_domain, confidence, evidence_codes = classify_failure(transport=True)
+        elif tag.strip().upper() == "OPENCODE_GO":
+            fault_domain, confidence, evidence_codes = classify_failure(
+                error_code=error_code
+            )
+        else:
+            fault_domain = FaultDomain.UNKNOWN
+            confidence = FaultConfidence.MEDIUM
+            evidence_codes = [
+                f"upstream_error:{error_code}",
+                "upstream_provider_domain_unmodeled",
+            ]
         cause_types = exception_cause_types(error)
         trace_event(
             stage="provider",
@@ -82,9 +105,9 @@ class BaseProvider(ABC):
             exc_type=type(error).__name__,
             http_status=http_status,
             cause_types=cause_types,
-            fault_domain="harness_transport",
-            confidence="medium",
-            evidence_codes=["provider_transport_error"],
+            fault_domain=fault_domain.value,
+            confidence=confidence.value,
+            evidence_codes=evidence_codes,
         )
 
         if self._config.log_api_error_tracebacks:
@@ -126,7 +149,7 @@ class BaseProvider(ABC):
 
     @abstractmethod
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
-        """Return the model metadata currently advertised by this provider."""
+        """Return model metadata currently advertised by this provider."""
 
     @abstractmethod
     def stream_response(
