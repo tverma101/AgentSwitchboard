@@ -35,6 +35,7 @@ from free_claude_code.core.openai_responses import (
     openai_error_type_for_failure,
     openai_failure_payload,
 )
+from free_claude_code.core.trace import trace_event
 from free_claude_code.usage import UsageStore
 
 ModelInfoResolver = Callable[[str, str], ProviderModelInfo | None]
@@ -99,14 +100,29 @@ class ResponsesHandler:
             )
             require_non_empty_messages(response_request.messages)
             routed = self._model_router.resolve_messages_request(response_request)
-            if self._model_info_resolver is not None:
-                validate_visual_capability(
-                    routed.request,
-                    model_info=self._model_info_resolver(
+            visual_input = validate_visual_capability(
+                routed.request,
+                model_info=(
+                    self._model_info_resolver(
                         routed.resolved.provider_id,
                         routed.resolved.provider_model,
-                    ),
-                    model_ref=routed.resolved.provider_model_ref,
+                    )
+                    if self._model_info_resolver is not None
+                    else None
+                ),
+                model_ref=routed.resolved.provider_model_ref,
+            )
+            if visual_input is not None:
+                trace_event(
+                    stage="ingress",
+                    event="free_claude_code.api.visual_input.admitted",
+                    source="api",
+                    request_id=request_id,
+                    provider_id=routed.resolved.provider_id,
+                    provider_model=routed.resolved.provider_model,
+                    provider_model_ref=routed.resolved.provider_model_ref,
+                    wire_api="responses",
+                    **visual_input.as_dict(),
                 )
 
             streamed = self._provider_executor.stream(
@@ -115,6 +131,7 @@ class ResponsesHandler:
                 raw_log_label="FULL_RESPONSES_PAYLOAD",
                 raw_log_payload=request_payload,
                 request_id=request_id,
+                visual_input=visual_input,
             )
             return await openai_responses_sse_streaming_response(
                 self._responses_adapter.iter_sse_from_anthropic(

@@ -5,6 +5,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from free_claude_code.core.trace import trace_event
+from free_claude_code.core.visual_attachments import (
+    VisualAttachmentError,
+    validate_base64_source,
+    validate_image_url,
+)
 
 from .errors import ResponsesConversionError
 from .models import OpenAIResponsesRequest
@@ -389,6 +394,9 @@ def _convert_message_content(content: Any) -> str | list[dict[str, Any]]:
             if part_type == "refusal":
                 blocks.append({"type": "text", "text": str(part.get("refusal", ""))})
                 continue
+            if part_type == "input_image":
+                blocks.append(_responses_image_part(part))
+                continue
             raise ResponsesConversionError(
                 f"Unsupported Responses content part type: {part_type!r}"
             )
@@ -398,6 +406,43 @@ def _convert_message_content(content: Any) -> str | list[dict[str, Any]]:
     raise ResponsesConversionError(
         f"Unsupported Responses message content: {type(content).__name__}"
     )
+
+
+def _responses_image_part(part: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert one Responses input image without fetching or retaining bytes."""
+    image_url = part.get("image_url")
+    if not isinstance(image_url, str) or not image_url.strip():
+        raise ResponsesConversionError(
+            "Responses input_image requires a non-empty image_url."
+        )
+
+    if image_url.lower().startswith("data:"):
+        header, separator, encoded = image_url.partition(",")
+        parameters = header[5:].split(";") if header.lower().startswith("data:") else []
+        if (
+            not separator
+            or len(parameters) < 2
+            or "base64" not in {parameter.lower() for parameter in parameters[1:]}
+        ):
+            raise ResponsesConversionError(
+                "Responses input_image data URLs must contain base64 image data."
+            )
+        source: dict[str, Any] = {
+            "type": "base64",
+            "media_type": parameters[0].lower(),
+            "data": encoded,
+        }
+        try:
+            validate_base64_source(source)
+        except VisualAttachmentError as exc:
+            raise ResponsesConversionError(str(exc)) from exc
+    else:
+        try:
+            validate_image_url(image_url)
+        except VisualAttachmentError as exc:
+            raise ResponsesConversionError(str(exc)) from exc
+        source = {"type": "url", "url": image_url}
+    return {"type": "image", "source": source}
 
 
 def _content_as_text(content: Any) -> str:

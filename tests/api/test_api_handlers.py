@@ -32,6 +32,10 @@ _CLASSIFIER_USER = (
     "<transcript>\nUser: review the repo\nWebFetch https://example.com: fetch\n"
     "</transcript>\n<block> immediately."
 )
+_PNG_DATA = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class FakeProvider:
@@ -215,6 +219,175 @@ async def test_messages_handler_rejects_image_for_known_nonvision_model() -> Non
 
     assert provider.preflight_calls == []
     assert provider.requests == []
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_rejects_image_when_model_metadata_is_missing() -> None:
+    provider = FakeProvider()
+    provider_resolver = MagicMock(return_value=provider)
+    handler = MessagesHandler(
+        Settings(),
+        provider_resolver=provider_resolver,
+    )
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.test/image.png",
+                        },
+                    }
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(InvalidRequestError, match="metadata unavailable"):
+        await handler.create(request)
+
+    provider_resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_rejects_invalid_image_before_provider_resolution() -> (
+    None
+):
+    provider = FakeProvider()
+    provider_resolver = MagicMock(return_value=provider)
+    handler = MessagesHandler(
+        Settings(),
+        provider_resolver=provider_resolver,
+        model_info_resolver=lambda _provider, _model: ProviderModelInfo(
+            "test-model", supports_vision=True
+        ),
+    )
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "invalid",
+                        },
+                    }
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(InvalidRequestError, match="Image attachment rejected"):
+        await handler.create(request)
+
+    provider_resolver.assert_not_called()
+    assert provider.preflight_calls == []
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_emits_metadata_only_visual_receipt() -> None:
+    provider = FakeProvider()
+    handler = MessagesHandler(
+        Settings(),
+        provider_resolver=lambda _: provider,
+        model_info_resolver=lambda _provider, _model: ProviderModelInfo(
+            "test-model", supports_vision=True
+        ),
+    )
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": _PNG_DATA,
+                        },
+                    },
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.test/image.png",
+                        },
+                    },
+                ],
+            )
+        ],
+    )
+
+    with patch("free_claude_code.api.handlers.messages.trace_event") as trace:
+        response = await handler.create(request, request_id="req_visual_receipt")
+        assert isinstance(response, StreamingResponse)
+        await _streaming_body_text(response)
+
+    receipts = _trace_events(trace, "free_claude_code.api.visual_input.admitted")
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt["request_id"] == "req_visual_receipt"
+    assert receipt["image_count"] == 2
+    assert receipt["inline_image_count"] == 1
+    assert receipt["url_image_count"] == 1
+    serialized = json.dumps(receipt)
+    assert _PNG_DATA not in serialized
+    assert "example.test" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_responses_handler_admits_input_image_and_emits_receipt() -> None:
+    provider = FakeProvider()
+    handler = ResponsesHandler(
+        Settings(),
+        provider_resolver=lambda _: provider,
+        model_info_resolver=lambda _provider, _model: ProviderModelInfo(
+            "test-model", supports_vision=True
+        ),
+    )
+
+    with patch("free_claude_code.api.handlers.responses.trace_event") as trace:
+        response = await handler.create(
+            OpenAIResponsesRequest(
+                model="nvidia_nim/test-model",
+                input=[
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:image/png;base64,{_PNG_DATA}",
+                            },
+                            {"type": "input_text", "text": "Inspect this."},
+                        ],
+                    }
+                ],
+            ),
+            request_id="req_responses_visual",
+        )
+        assert isinstance(response, StreamingResponse)
+        await _streaming_body_text(response)
+
+    assert len(provider.requests) == 1
+    image_block = provider.requests[0].messages[0].content[0]
+    assert get_block_attr(image_block, "type") == "image"
+    receipts = _trace_events(trace, "free_claude_code.api.visual_input.admitted")
+    assert len(receipts) == 1
+    assert receipts[0]["wire_api"] == "responses"
+    assert receipts[0]["image_count"] == 1
+    assert _PNG_DATA not in json.dumps(receipts[0])
 
 
 @pytest.mark.asyncio

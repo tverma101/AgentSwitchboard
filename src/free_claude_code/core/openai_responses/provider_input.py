@@ -14,6 +14,7 @@ from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.core.visual_attachments import (
     VisualAttachmentError,
     validate_base64_source,
+    validate_image_url,
 )
 
 from .cache_identity import select_prompt_cache_key
@@ -371,6 +372,10 @@ def _image_part(block: Any) -> dict[str, Any]:
     source_type = get_block_attr(source, "type")
     if source_type == "url":
         url = get_block_attr(source, "url")
+        try:
+            validate_image_url(url)
+        except VisualAttachmentError as exc:
+            raise ResponsesConversionError(str(exc)) from exc
     elif source_type == "base64":
         media_type = get_block_attr(source, "media_type")
         data = get_block_attr(source, "data")

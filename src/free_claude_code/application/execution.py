@@ -22,6 +22,7 @@ from free_claude_code.usage import UsageStore, UsageStreamObserver
 
 from .ports import ProviderResolver
 from .routing import RoutedMessagesRequest
+from .visual_capabilities import VisualInputReceipt
 
 TokenCounter = Callable[
     [list[Message], str | list[SystemContent] | None, list[Tool] | None],
@@ -56,8 +57,12 @@ class ProviderExecutor:
         raw_log_label: str,
         raw_log_payload: object,
         request_id: str,
+        visual_input: VisualInputReceipt | None = None,
     ) -> AsyncIterator[str]:
         """Preflight synchronously, then return the traced provider stream."""
+        visual_input_fields = (
+            {"visual_input": visual_input.as_dict()} if visual_input is not None else {}
+        )
         provider = self._provider_resolver(routed.resolved.provider_id)
         provider.preflight_stream(
             routed.request,
@@ -89,6 +94,7 @@ class ProviderExecutor:
             route_trace["wire_api"] = "responses"
         if self._generation_id is not None:
             route_trace["generation_id"] = self._generation_id
+        route_trace.update(visual_input_fields)
         trace_event(**route_trace)
 
         request_snapshot = anthropic_request_snapshot(routed.request)
@@ -104,6 +110,7 @@ class ProviderExecutor:
             message_count=len(routed.request.messages),
             snapshot=request_snapshot,
             request_id=request_id,
+            **visual_input_fields,
         )
 
         if self._log_raw_payloads:
@@ -165,6 +172,7 @@ class ProviderExecutor:
         }
         if self._generation_id is not None:
             stream_trace["generation_id"] = self._generation_id
+        stream_trace.update(visual_input_fields)
 
         return traced_async_stream(
             provider_body(),

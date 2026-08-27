@@ -9,6 +9,7 @@ from typing import Any
 from free_claude_code.core.visual_attachments import (
     VisualAttachmentError,
     validate_base64_source,
+    validate_image_url,
 )
 
 from .content import get_block_attr, get_block_type
@@ -223,6 +224,10 @@ def _openai_user_image_part(block: Any) -> dict[str, Any]:
         url = get_block_attr(source, "url")
         if not isinstance(url, str) or not url.strip():
             raise OpenAIConversionError("URL image source requires a non-empty url.")
+        try:
+            validate_image_url(url)
+        except VisualAttachmentError as exc:
+            raise OpenAIConversionError(str(exc)) from exc
     else:
         raise OpenAIConversionError(
             f"Unsupported image source type {source_type!r}; expected 'base64' or 'url'."

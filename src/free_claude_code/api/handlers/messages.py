@@ -127,14 +127,28 @@ class MessagesHandler:
             routed = self._model_router.resolve_messages_request(request_data)
             routed = self._apply_message_routing_policies(routed)
             self._reject_unsupported_server_tools(routed)
-            if self._model_info_resolver is not None:
-                validate_visual_capability(
-                    routed.request,
-                    model_info=self._model_info_resolver(
+            visual_input = validate_visual_capability(
+                routed.request,
+                model_info=(
+                    self._model_info_resolver(
                         routed.resolved.provider_id,
                         routed.resolved.provider_model,
-                    ),
-                    model_ref=routed.resolved.provider_model_ref,
+                    )
+                    if self._model_info_resolver is not None
+                    else None
+                ),
+                model_ref=routed.resolved.provider_model_ref,
+            )
+            if visual_input is not None:
+                trace_event(
+                    stage="ingress",
+                    event="free_claude_code.api.visual_input.admitted",
+                    source="api",
+                    request_id=request_id,
+                    provider_id=routed.resolved.provider_id,
+                    provider_model=routed.resolved.provider_model,
+                    provider_model_ref=routed.resolved.provider_model_ref,
+                    **visual_input.as_dict(),
                 )
 
             result = self._run_message_intercepts(routed)
@@ -147,6 +161,7 @@ class MessagesHandler:
                         raw_log_label="FULL_PAYLOAD",
                         raw_log_payload=routed.request.model_dump(),
                         request_id=request_id,
+                        visual_input=visual_input,
                     )
                 )
             return await self._to_public_response(
