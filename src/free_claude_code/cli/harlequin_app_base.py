@@ -21,10 +21,7 @@ class ScreenBase(Screen):
         def sort_key(binding_pair: tuple[str, ActiveBinding]) -> int:
             return 0 if binding_pair[1].node == self.app else 1
 
-        return {
-            key: value
-            for key, value in sorted(super().active_bindings.items(), key=sort_key)
-        }
+        return dict(sorted(super().active_bindings.items(), key=sort_key))
 
 
 class HarlequinAppBase(App, inherit_bindings=False):

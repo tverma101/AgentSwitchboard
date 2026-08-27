@@ -274,6 +274,9 @@ async def test_browser_authorization_validates_state_and_returns_pkce_grant(
     assert rejected.status_code == 400
     assert rejected.text == "State mismatch"
     assert response.status_code == 200
+    assert "Authorization received" in response.text
+    assert "CodeSwitchyard is finishing sign-in" in response.text
+    assert "OpenAI is connected to Free Claude Code" not in response.text
     assert grant.code == "authorization_code"
     assert grant.redirect_uri == redirect_uri
     assert grant.code_verifier

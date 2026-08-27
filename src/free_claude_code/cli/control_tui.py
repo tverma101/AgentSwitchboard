@@ -9,15 +9,14 @@ limited to feeding existing local actions/state into that shell.
 import asyncio
 import json
 import os
-import time
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from textual import on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -56,6 +55,7 @@ from free_claude_code.learning.config import configured_profile, list_profiles
 from free_claude_code.learning.reviewer_flow import reviewer_status
 
 from . import codex_accounts
+from .harlequin_app_base import HarlequinAppBase
 from .repo_picker import (
     RepoEntry,
     cache_path,
@@ -131,7 +131,7 @@ class InputModal(ModalScreen[str | None]):
         self.dismiss(None)
 
 
-class ControlCenterApp(App[ControlResult | None]):
+class ControlCenterApp(HarlequinAppBase):
     """Persistent GUI-like terminal shell over the existing control actions."""
 
     TITLE = "CodeSwitchyard"
@@ -286,7 +286,7 @@ class ControlCenterApp(App[ControlResult | None]):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("q", "quit", "Quit"),
         ("c", "launch_claude", "Claude"),
         ("d", "launch_danger", "Danger"),
@@ -400,7 +400,9 @@ class ControlCenterApp(App[ControlResult | None]):
         if page not in {item[0] for item in self.NAV}:
             return
         if not force:
-            self.selected_provider = None if page != "providers" else self.selected_provider
+            self.selected_provider = (
+                None if page != "providers" else self.selected_provider
+            )
         self.page = page
         title = dict(self.NAV)[page]
         self.query_one("#page-title", Static).update(title)
@@ -447,7 +449,9 @@ class ControlCenterApp(App[ControlResult | None]):
             if self.supervisor is not None
             else ServerStatus.RUNNING.value
         )
-        repo = self.selected_repo.display_path if self.selected_repo else Path.cwd().name
+        repo = (
+            self.selected_repo.display_path if self.selected_repo else Path.cwd().name
+        )
         codex = self._safe_codex_summary()
         text = (
             f"Server       {status} ({owner})\n"
@@ -629,7 +633,9 @@ class ControlCenterApp(App[ControlResult | None]):
     async def _render_logs(self, content: VerticalScroll) -> None:
         path = server_log_path()
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[
+                -200:
+            ]
         except OSError as exc:
             lines = [f"Log unavailable ({type(exc).__name__})"]
         self.query_one("#summary", Static).update(str(path))
@@ -700,7 +706,7 @@ class ControlCenterApp(App[ControlResult | None]):
     async def open_provider_button(self) -> None:
         table = self.query_one("#table", DataTable)
         if table.cursor_row >= 0 and table.row_count:
-            key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+            key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
             await self._show_provider_detail(str(key.value))
 
     async def _show_provider_detail(self, provider_id: str) -> None:
@@ -711,11 +717,16 @@ class ControlCenterApp(App[ControlResult | None]):
         descriptor = PROVIDER_CATALOG.get(provider_id)
         config = get_admin_config(self.settings)
         provider = self._provider_from_config(config, provider_id)
-        name = str(provider.get("display_name", provider_id)) if provider else provider_id
+        name = (
+            str(provider.get("display_name", provider_id)) if provider else provider_id
+        )
         self.query_one("#page-title", Static).update(name)
         self._clear_actions()
 
-        if descriptor is not None and descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT:
+        if (
+            descriptor is not None
+            and descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT
+        ):
             status = connected_account_status(self.settings, provider_id)
             for key in ("state", "email", "model_count", "message"):
                 value = status.get(key)
@@ -755,7 +766,7 @@ class ControlCenterApp(App[ControlResult | None]):
             table = self.query_one("#table", DataTable)
             if not table.row_count:
                 return
-            key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+            key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
             provider_id = str(key.value)
         try:
             result = await asyncio.to_thread(test_provider, self.settings, provider_id)
@@ -794,7 +805,9 @@ class ControlCenterApp(App[ControlResult | None]):
         if isinstance(code, str) and code:
             self.notify(f"Device code: {code}", title="OpenAI device login", timeout=15)
         else:
-            self.notify("Browser opened. Waiting for OpenAI to finish…", title="FCC login")
+            self.notify(
+                "Browser opened. Waiting for OpenAI to finish…", title="FCC login"
+            )
         await self._show_provider_detail(provider_id)
 
     @on(Button.Pressed, "#fcc-disconnect")
@@ -809,7 +822,9 @@ class ControlCenterApp(App[ControlResult | None]):
 
     async def _disconnect_fcc(self, provider_id: str) -> None:
         try:
-            await asyncio.to_thread(disconnect_connected_account, self.settings, provider_id)
+            await asyncio.to_thread(
+                disconnect_connected_account, self.settings, provider_id
+            )
         except LocalAdminError as exc:
             self.notify(str(exc), severity="error")
         else:
@@ -824,7 +839,7 @@ class ControlCenterApp(App[ControlResult | None]):
         table = self.query_one("#table", DataTable)
         if not table.row_count:
             return
-        key = str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+        key = str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
         config = get_admin_config(self.settings)
         field = next(
             (
@@ -855,7 +870,9 @@ class ControlCenterApp(App[ControlResult | None]):
 
     async def _apply_field(self, provider_id: str, key: str, value: str) -> None:
         try:
-            result = await asyncio.to_thread(apply_admin_values, self.settings, {key: value})
+            result = await asyncio.to_thread(
+                apply_admin_values, self.settings, {key: value}
+            )
         except LocalAdminError as exc:
             self.notify(str(exc), severity="error")
             return
@@ -974,7 +991,9 @@ class ControlCenterApp(App[ControlResult | None]):
 
     async def _apply_setting(self, key: str, value: str) -> None:
         try:
-            result = await asyncio.to_thread(apply_admin_values, self.settings, {key: value})
+            result = await asyncio.to_thread(
+                apply_admin_values, self.settings, {key: value}
+            )
         except LocalAdminError as exc:
             self.notify(str(exc), severity="error")
             return
@@ -1019,10 +1038,13 @@ class ControlCenterApp(App[ControlResult | None]):
         table = self.query_one("#table", DataTable)
         if not table.row_count or table.cursor_row < 0:
             return None
-        return str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+        return str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
 
     def _repo_for_path(self, path: str) -> RepoEntry | None:
-        return next((repo for repo in load_cached_repos(cache_path()) if repo.path == path), None)
+        return next(
+            (repo for repo in load_cached_repos(cache_path()) if repo.path == path),
+            None,
+        )
 
     def _provider_from_config(
         self, config: Mapping[str, Any], provider_id: str

@@ -46,6 +46,7 @@ async def test_control_tui_mounts_persistent_navigation_shell() -> None:
             assert app.query_one("#actions")
             assert app.query_one("#launch-claude")
             assert app.query_one("#launch-danger")
+            assert app.theme == "harlequin"
 
 
 @pytest.mark.asyncio
@@ -111,25 +112,23 @@ async def test_browser_login_waits_for_real_connected_state() -> None:
         ],
         "fields": [],
     }
-    statuses = iter(
-        [
-            {
-                "state": "connecting",
-                "connected": False,
-                "model_count": 0,
-            },
-            {
-                "state": "connected",
-                "connected": True,
-                "email": "fcc@example.com",
-                "model_count": 6,
-            },
-        ]
-    )
+    statuses: list[dict[str, object]] = [
+        {
+            "state": "connecting",
+            "connected": False,
+            "model_count": 0,
+        },
+        {
+            "state": "connected",
+            "connected": True,
+            "email": "fcc@example.com",
+            "model_count": 6,
+        },
+    ]
 
     def status(*_args: object, **_kwargs: object) -> dict[str, object]:
         try:
-            return next(statuses)
+            return statuses.pop(0)
         except StopIteration:
             return {
                 "state": "connected",
@@ -191,7 +190,9 @@ async def test_repo_navigation_never_uses_nested_input_prompts() -> None:
             "free_claude_code.cli.control_tui.load_cached_repos",
             return_value=[],
         ),
-        patch("builtins.input", side_effect=AssertionError("TUI must not call input()")),
+        patch(
+            "builtins.input", side_effect=AssertionError("TUI must not call input()")
+        ),
     ):
         async with app.run_test() as pilot:
             await app._show_page("repos")

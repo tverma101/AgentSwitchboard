@@ -11,7 +11,6 @@ from free_claude_code.config.settings import Settings
 from .control_tui import run_control_tui
 from .terminal_control import _wait_for_proxy
 
-
 ControlClientLauncher = Callable[[bool, Sequence[str], Path | None], None]
 
 
@@ -25,12 +24,17 @@ def run_owned_control_center(
     supervisor = ServerSupervisor(console_logging=False)
     if not supervisor.schedule_run():
         raise RuntimeError("CodeSwitchyard server worker could not be scheduled")
-    server_thread = threading.Thread(target=supervisor.run, name="codeswitchyard-tui-server")
+    server_thread = threading.Thread(
+        target=supervisor.run, name="codeswitchyard-tui-server"
+    )
     server_thread.start()
     try:
         error = _wait_for_proxy(settings, server_thread)
         if error is not None:
-            print(f"CodeSwitchyard server failed to become ready: {error}", file=sys.stderr)
+            print(
+                f"CodeSwitchyard server failed to become ready: {error}",
+                file=sys.stderr,
+            )
             raise SystemExit(1)
         run_control_tui(
             settings,

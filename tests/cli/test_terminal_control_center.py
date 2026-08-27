@@ -21,7 +21,12 @@ def _settings(*, port: int = 8082) -> Settings:
 
 
 def test_interactive_fcc_server_owns_control_center_when_proxy_is_down() -> None:
-    from free_claude_code.cli import commands, entrypoints, terminal_control
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        entrypoints,
+        terminal_control,
+    )
 
     settings = _settings()
     with (
@@ -32,7 +37,7 @@ def test_interactive_fcc_server_owns_control_center_when_proxy_is_down() -> None
         ),
         patch.object(entrypoints, "_server_port_is_occupied", return_value=False),
         patch.object(terminal_control, "terminal_control_available", return_value=True),
-        patch.object(terminal_control, "run_owned_control_center") as run_control,
+        patch.object(control_tui_entry, "run_owned_control_center") as run_control,
         patch.object(commands, "serve") as raw_server,
     ):
         entrypoints.serve(())
@@ -45,7 +50,12 @@ def test_interactive_fcc_server_owns_control_center_when_proxy_is_down() -> None
 
 
 def test_headless_fcc_server_preserves_blocking_server_behavior() -> None:
-    from free_claude_code.cli import commands, entrypoints, terminal_control
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        entrypoints,
+        terminal_control,
+    )
 
     settings = _settings()
     with (
@@ -56,7 +66,7 @@ def test_headless_fcc_server_preserves_blocking_server_behavior() -> None:
         ),
         patch.object(entrypoints, "_server_port_is_occupied", return_value=False),
         patch.object(terminal_control, "terminal_control_available", return_value=True),
-        patch.object(terminal_control, "run_owned_control_center") as run_control,
+        patch.object(control_tui_entry, "run_owned_control_center") as run_control,
         patch.object(commands, "serve") as raw_server,
     ):
         entrypoints.serve(("--headless",))
@@ -66,7 +76,12 @@ def test_headless_fcc_server_preserves_blocking_server_behavior() -> None:
 
 
 def test_interactive_fcc_server_attaches_to_existing_proxy_without_ownership() -> None:
-    from free_claude_code.cli import commands, entrypoints, terminal_control
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        entrypoints,
+        terminal_control,
+    )
 
     settings = _settings(port=31337)
     with (
@@ -76,8 +91,8 @@ def test_interactive_fcc_server_attaches_to_existing_proxy_without_ownership() -
             return_value=None,
         ),
         patch.object(terminal_control, "terminal_control_available", return_value=True),
-        patch.object(terminal_control, "run_attached_control_center") as attach,
-        patch.object(terminal_control, "run_owned_control_center") as own,
+        patch.object(control_tui_entry, "run_attached_control_center") as attach,
+        patch.object(control_tui_entry, "run_owned_control_center") as own,
         patch.object(entrypoints, "_server_port_is_occupied") as port_probe,
     ):
         entrypoints.serve(())
