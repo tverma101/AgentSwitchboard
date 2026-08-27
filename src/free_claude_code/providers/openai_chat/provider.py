@@ -48,7 +48,10 @@ from free_claude_code.providers.http import (
     close_provider_stream,
     maybe_await_aclose,
 )
-from free_claude_code.providers.model_listing import extract_openai_model_infos
+from free_claude_code.providers.model_listing import (
+    extract_openai_model_infos,
+    model_infos_from_ids,
+)
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
@@ -98,6 +101,7 @@ class OpenAIChatProvider(BaseProvider):
         default_headers: Mapping[str, str] | None = None,
         api_key_provider: OpenAIAsyncCredentialProvider | None = None,
         http_client: httpx.AsyncClient | None = None,
+        fallback_model_ids: tuple[str, ...] = (),
     ):
         super().__init__(config)
         self._profile = profile
@@ -108,6 +112,7 @@ class OpenAIChatProvider(BaseProvider):
         # later requests clamp proactively instead of paying the 400 each time.
         self._model_output_caps: dict[str, int] = {}
         self._admission = admission
+        self._fallback_model_ids = fallback_model_ids
         if http_client is None and config.proxy:
             http_client = httpx.AsyncClient(
                 proxy=config.proxy,
@@ -141,7 +146,17 @@ class OpenAIChatProvider(BaseProvider):
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return model metadata from the OpenAI-compatible models endpoint."""
         self._authorize_egress(self._base_url)
-        payload = await self._list_models_payload()
+        try:
+            payload = await self._list_models_payload()
+        except Exception as exc:
+            if not self._fallback_model_ids:
+                raise
+            logger.warning(
+                "{}_MODEL_LIST: using configured fallback model ids; exc_type={}",
+                self._provider_name,
+                type(exc).__name__,
+            )
+            return model_infos_from_ids(self._fallback_model_ids)
         if not self._profile.model_ids_are_routable:
             return frozenset()
         return extract_openai_model_infos(payload, provider_name=self._provider_name)

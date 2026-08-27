@@ -67,7 +67,7 @@ def build_provider_config(
         raise ApplicationUnavailableError(
             f"{env_name} is not set. Add it to your .env file."
         )
-    proxy = string_setting(settings, descriptor.proxy_attr)
+    proxy = string_setting(settings, descriptor.proxy_attr, descriptor.static_proxy)
     return ProviderConfig(
         api_key=credential,
         base_url=resolved_base_url,

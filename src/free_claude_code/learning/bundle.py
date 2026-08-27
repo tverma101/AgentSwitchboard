@@ -320,10 +320,14 @@ def export_from_store(
     project_key: str,
     profile: str = "default",
     limit: int = 1000,
+    memory_ids: Iterable[int] | None = None,
+    skill_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Export the visible global/current-project learning state."""
+    """Export visible learning state, optionally selecting individual items."""
 
-    skills = store.list_skills(project_key=project_key)
+    skills = _select_export_skills(
+        store.list_skills(project_key=project_key), skill_keys=skill_keys
+    )
     skill_contents: dict[str, str] = {}
     for row in skills:
         skill_key = str(row["skill_key"])
@@ -336,12 +340,65 @@ def export_from_store(
     bundle = build_bundle(
         profile=profile,
         project_key=project_key,
-        memories=store.list_memories(project_key=project_key, limit=max(0, limit)),
+        memories=_select_export_memories(
+            store,
+            project_key=project_key,
+            limit=limit,
+            memory_ids=memory_ids,
+        ),
         skills=skills,
         skill_contents=skill_contents,
     )
     write_bundle(path, bundle)
     return bundle_summary(bundle)
+
+
+def _select_export_memories(
+    store: LearningStore,
+    *,
+    project_key: str,
+    limit: int,
+    memory_ids: Iterable[int] | None,
+) -> list[Any]:
+    if memory_ids is None:
+        return store.list_memories(project_key=project_key, limit=max(0, limit))
+
+    selected: list[Any] = []
+    seen: set[int] = set()
+    for memory_id in memory_ids:
+        if (
+            isinstance(memory_id, bool)
+            or not isinstance(memory_id, int)
+            or memory_id < 1
+        ):
+            raise BundleError(f"memory selection id is invalid: {memory_id!r}")
+        if memory_id in seen:
+            continue
+        row = store.get_memory(memory_id, project_key=project_key)
+        if row is None:
+            raise BundleError(f"memory selection is not visible: {memory_id}")
+        seen.add(memory_id)
+        selected.append(row)
+    return selected
+
+
+def _select_export_skills(
+    skills: Iterable[Any], *, skill_keys: Iterable[str] | None
+) -> list[Any]:
+    available = list(skills)
+    if skill_keys is None:
+        return available
+
+    requested: set[str] = set()
+    for skill_key in skill_keys:
+        if not isinstance(skill_key, str) or not _SKILL_KEY_RE.fullmatch(skill_key):
+            raise BundleError(f"skill selection key is invalid: {skill_key!r}")
+        requested.add(skill_key)
+    by_key = {str(row["skill_key"]): row for row in available}
+    missing = sorted(requested - by_key.keys())
+    if missing:
+        raise BundleError(f"skill selection is not visible: {', '.join(missing)}")
+    return [by_key[key] for key in sorted(requested)]
 
 
 def _validate_manifest(manifest: object) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -578,6 +635,36 @@ def _target_skill_digest(path: Path) -> str | None:
         raise BundleError(f"cannot read existing skill: {path}") from exc
 
 
+def _select_manifest_entries(
+    entries: Iterable[Mapping[str, Any]],
+    *,
+    selected_keys: Iterable[str] | None,
+    kind: str,
+) -> list[Mapping[str, Any]]:
+    available = list(entries)
+    if selected_keys is None:
+        return available
+
+    requested: set[str] = set()
+    for key in selected_keys:
+        if not isinstance(key, str):
+            raise BundleError(f"{kind} selection key is invalid: {key!r}")
+        valid = (
+            _HEX_DIGEST_RE.fullmatch(key) is not None
+            if kind == "memory"
+            else _SKILL_KEY_RE.fullmatch(key) is not None
+        )
+        if not valid:
+            raise BundleError(f"{kind} selection key is invalid: {key!r}")
+        requested.add(key)
+
+    by_key = {str(entry["key"]): entry for entry in available}
+    missing = sorted(requested - by_key.keys())
+    if missing:
+        raise BundleError(f"{kind} selection is not in bundle: {', '.join(missing)}")
+    return [by_key[key] for key in sorted(requested)]
+
+
 def plan_import(
     bundle: LearningBundle,
     *,
@@ -585,13 +672,21 @@ def plan_import(
     target_project_key: str,
     claude_config_dir: Path,
     conflict: str = "skip",
+    memory_keys: Iterable[str] | None = None,
+    skill_keys: Iterable[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Plan an import without changing SQLite or skill files."""
 
     if conflict not in {"skip", "replace", "fail"}:
         raise BundleError(f"unsupported conflict policy: {conflict}")
     actions: list[dict[str, Any]] = []
-    for entry in bundle.manifest["memories"]:
+    selected_memories = _select_manifest_entries(
+        bundle.manifest["memories"], selected_keys=memory_keys, kind="memory"
+    )
+    selected_skills = _select_manifest_entries(
+        bundle.manifest["skills"], selected_keys=skill_keys, kind="skill"
+    )
+    for entry in selected_memories:
         text = _target_memory_text(str(entry["text"]), target_project_key)
         duplicate = _memory_exists(
             store,
@@ -606,7 +701,7 @@ def plan_import(
                 "action": "skip_duplicate" if duplicate else "add",
             }
         )
-    for entry in bundle.manifest["skills"]:
+    for entry in selected_skills:
         path = _skill_target_path(
             skill_key=str(entry["key"]),
             scope=str(entry["scope"]),
@@ -716,9 +811,15 @@ def import_bundle(
     claude_config_dir: Path,
     conflict: str = "skip",
     dry_run: bool = False,
+    memory_keys: Iterable[str] | None = None,
+    skill_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Plan or apply a bundle import with explicit conflict behavior."""
+    """Plan or apply a selected bundle import with explicit conflict behavior."""
 
+    if memory_keys is not None:
+        memory_keys = tuple(memory_keys)
+    if skill_keys is not None:
+        skill_keys = tuple(skill_keys)
     bundle = read_bundle(path)
     actions = plan_import(
         bundle,
@@ -726,7 +827,25 @@ def import_bundle(
         target_project_key=target_project_key,
         claude_config_dir=claude_config_dir,
         conflict=conflict,
+        memory_keys=memory_keys,
+        skill_keys=skill_keys,
     )
+    selected = {
+        "memories": len(
+            _select_manifest_entries(
+                bundle.manifest["memories"],
+                selected_keys=memory_keys,
+                kind="memory",
+            )
+        ),
+        "skills": len(
+            _select_manifest_entries(
+                bundle.manifest["skills"],
+                selected_keys=skill_keys,
+                kind="skill",
+            )
+        ),
+    }
     if any(action["action"] == "conflict" for action in actions) and not dry_run:
         raise BundleError(
             "import has conflicts; choose --conflict skip or --conflict replace"
@@ -735,12 +854,23 @@ def import_bundle(
         return {
             **bundle_summary(bundle),
             "dry_run": True,
+            "selected": selected,
             "actions": actions,
             "applied": {"memories": 0, "skills": 0},
         }
 
-    memory_entries = {str(entry["key"]): entry for entry in bundle.manifest["memories"]}
-    skill_entries = {str(entry["key"]): entry for entry in bundle.manifest["skills"]}
+    memory_entries = {
+        str(entry["key"]): entry
+        for entry in _select_manifest_entries(
+            bundle.manifest["memories"], selected_keys=memory_keys, kind="memory"
+        )
+    }
+    skill_entries = {
+        str(entry["key"]): entry
+        for entry in _select_manifest_entries(
+            bundle.manifest["skills"], selected_keys=skill_keys, kind="skill"
+        )
+    }
     applied = {"memories": 0, "skills": 0}
     for action in actions:
         if action["kind"] == "memory" and action["action"] == "add":
@@ -768,6 +898,7 @@ def import_bundle(
     return {
         **bundle_summary(bundle),
         "dry_run": False,
+        "selected": selected,
         "actions": actions,
         "applied": applied,
     }

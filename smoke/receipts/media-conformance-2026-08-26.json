@@ -1,0 +1,51 @@
+{
+  "schema": "fcc.media-conformance.evidence.v1",
+  "receipt": "media-conformance-current-source-contract",
+  "captured_at": "2026-08-26T10:40:20Z",
+  "source": "deterministic_in_memory_images",
+  "harness": {
+    "package_version": "4.30.26",
+    "commit_sha": "1f2ae39ce77a1d570f03288d80911276b8fe41ff",
+    "working_tree_clean_before_capture": true
+  },
+  "command": "uv run pytest -n 0 -q tests/contracts/test_media_conformance.py",
+  "result": {
+    "status": "passed",
+    "tests_passed": 17,
+    "tests_skipped": 0,
+    "tests_failed": 0,
+    "corpus_schema": "fcc.media-conformance.v1",
+    "corpus_cases": 16,
+    "payload_free": true,
+    "provider_contacted": false
+  },
+  "adapters_exercised": [
+    "anthropic_messages",
+    "openai_chat",
+    "openai_responses",
+    "opencode_go_messages",
+    "opencode_go_responses"
+  ],
+  "assertions": {
+    "supported_media_order_preserved": true,
+    "media_count_and_type_metadata_preserved": true,
+    "tool_result_association_preserved_or_typed_rejected": true,
+    "unsupported_and_malformed_media_rejected_before_upstream": true,
+    "retry_side_effect_bound_is_one": true,
+    "receipt_payload_fields_absent": true
+  },
+  "evidence_boundary": {
+    "kind": "current_source_synthetic_contract",
+    "proves": [
+      "checked-in media corpus is complete and payload-free",
+      "local adapter builders preserve or typed-reject declared media cases",
+      "metadata-only receipt invariants are enforced"
+    ],
+    "unverified": [
+      "live provider vision request",
+      "real tool-result screenshot round trip",
+      "native Anthropic client rendering",
+      "provider-specific image quality or latency"
+    ]
+  }
+}

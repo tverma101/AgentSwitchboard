@@ -133,6 +133,21 @@ SECTIONS: tuple[ConfigSectionSpec, ...] = (
 
 _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
+        "CUSTOM_PROVIDERS_JSON",
+        "Custom OpenAI-Compatible Providers",
+        "providers",
+        "textarea",
+        settings_attr="custom_providers_json",
+        secret=True,
+        advanced=True,
+        restart_required=True,
+        session_sensitive=True,
+        description=(
+            "Managed by the custom-provider Admin actions. The value is masked; "
+            "custom provider edits require a session restart."
+        ),
+    ),
+    ConfigFieldSpec(
         "MODEL",
         "Default Model",
         "models",

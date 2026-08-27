@@ -145,10 +145,13 @@ before replacing it, while `--conflict fail` aborts before any change. Unknown
 schema versions, checksum mismatches, unsafe paths, secrets, and malformed
 `SKILL.md` files fail visibly.
 
-This is the first portable-bundle contract for issue #68. Bundle export/import
-now operate on the explicitly selected learning store when `--profile` is
-provided. Cross-profile re-homing, selective item-level copy, full history
-transfer, and admin/App Mode profile selection remain follow-up work.
+Bundle export/import operate on the explicitly selected learning store when
+`--profile` is provided. Export accepts repeatable `--memory-id` and
+`--skill-key` selectors; import accepts repeatable portable `--memory-key` and
+`--skill-key` selectors and reports the selected counts in its JSON result.
+This supports explicit selective cross-profile re-homing without copying raw
+SQLite state. Full history transfer and admin/App Mode profile selection remain
+follow-up work.
 
 `fcc-claude` normally installs/repairs the hooks automatically, so manual `install` is usually unnecessary.
 
