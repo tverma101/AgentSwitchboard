@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import base64
 import json
 import os
@@ -48,10 +46,6 @@ def _write_auth(home: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
-def _account(accounts: tuple[codex_accounts.CodexAccount, ...], profile: str):
-    return next(account for account in accounts if account.profile == profile)
-
-
 def test_list_accounts_imports_live_auth_without_exposing_tokens(tmp_path: Path) -> None:
     home = tmp_path / ".codex"
     _write_auth(home, _auth_payload("acct-1", "me@example.com"))
@@ -70,7 +64,9 @@ def test_list_accounts_imports_live_auth_without_exposing_tokens(tmp_path: Path)
         assert saved.stat().st_mode & 0o777 == 0o600
 
 
-def test_select_account_snapshots_outgoing_auth_then_restores_target(tmp_path: Path) -> None:
+def test_select_account_snapshots_outgoing_auth_then_restores_target(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / ".codex"
     _write_auth(home, _auth_payload("acct-a", "a@example.com", refresh_token="a-old"))
     first = codex_accounts.list_accounts(home=home)[0]
@@ -80,9 +76,10 @@ def test_select_account_snapshots_outgoing_auth_then_restores_target(tmp_path: P
     assert second.account_id == "acct-b"
     assert len(codex_accounts.list_accounts(home=home)) == 2
 
-    # Simulate Codex rotating account B while it is live. The switch must
-    # snapshot this exact outgoing auth before installing account A.
-    _write_auth(home, _auth_payload("acct-b", "b@example.com", refresh_token="b-rotated"))
+    _write_auth(
+        home,
+        _auth_payload("acct-b", "b@example.com", refresh_token="b-rotated"),
+    )
     selected = codex_accounts.select_account(first.profile, home=home)
 
     assert selected.account_id == "acct-a"
@@ -96,8 +93,10 @@ def test_select_account_snapshots_outgoing_auth_then_restores_target(tmp_path: P
 
 def test_add_account_stashes_live_auth_before_official_login(tmp_path: Path) -> None:
     home = tmp_path / ".codex"
-    old_payload = _auth_payload("acct-old", "old@example.com", refresh_token="old-refresh")
-    _write_auth(home, old_payload)
+    _write_auth(
+        home,
+        _auth_payload("acct-old", "old@example.com", refresh_token="old-refresh"),
+    )
     old_profile = codex_accounts.list_accounts(home=home)[0].profile
     observations: list[bool] = []
 
@@ -132,10 +131,7 @@ def test_add_account_stashes_live_auth_before_official_login(tmp_path: Path) -> 
 
 def test_add_account_restores_previous_auth_when_login_fails(tmp_path: Path) -> None:
     home = tmp_path / ".codex"
-    old_payload = _auth_payload("acct-old", "old@example.com")
-    old_bytes = json.dumps(old_payload).encode()
-    (home).mkdir(parents=True)
-    (home / "auth.json").write_bytes(old_bytes)
+    _write_auth(home, _auth_payload("acct-old", "old@example.com"))
     codex_accounts.list_accounts(home=home)
 
     def fake_runner(argv, *, env, check):
