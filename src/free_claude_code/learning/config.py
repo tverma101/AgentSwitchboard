@@ -6,16 +6,30 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 PROFILE_ENV = "FCC_LEARNING_PROFILE"
+LEARNING_ENABLED_ENV = "FCC_LEARNING_ENABLED"
 DEFAULT_PROFILE = "default"
 PROFILE_SCHEMA = "fcc.learning.profile"
 PROFILE_VERSION = 1
 _PROFILE_ARCHIVE_DIR = ".archive"
+_ENABLED_VALUES = frozenset({"1", "true", "yes", "on"})
 
 _PROFILE_RE = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,31})\Z")
 
 
 class LearningProfileError(ValueError):
     """Raised when an explicit learning profile name is unsafe or invalid."""
+
+
+def learning_enabled(environment: Mapping[str, str] | None = None) -> bool:
+    """Return whether FCC Learning was explicitly opted into.
+
+    Learning is intentionally opt-in.  Any value other than a documented
+    truthy value, including an unset variable, keeps hooks and post-turn
+    distillation disabled.
+    """
+
+    values = os.environ if environment is None else environment
+    return values.get(LEARNING_ENABLED_ENV, "0").strip().lower() in _ENABLED_VALUES
 
 
 def normalize_profile(profile: str | None) -> str:

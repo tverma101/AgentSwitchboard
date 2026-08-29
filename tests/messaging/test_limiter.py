@@ -9,6 +9,12 @@ import pytest_asyncio
 from free_claude_code.messaging.limiter import MessagingRateLimiter
 
 
+async def _wait_for_background_tasks(limiter: MessagingRateLimiter) -> None:
+    tasks = tuple(limiter._background_tasks)
+    assert tasks
+    await asyncio.gather(*tasks)
+
+
 class TestMessagingRateLimiter:
     """Tests for MessagingRateLimiter."""
 
@@ -77,7 +83,7 @@ class TestMessagingRateLimiter:
         Verify multiple rapid requests with same dedup_key are compacted.
         Logic ported from verify_limiter.py
         """
-        limiter = self.create_limiter(rate_limit=1, rate_window=1.0)
+        limiter = self.create_limiter(rate_limit=1, rate_window=0.01)
 
         call_counts = {}
 
@@ -91,9 +97,8 @@ class TestMessagingRateLimiter:
                 lambda i=i: mock_edit("msg1", f"update_{i}"), dedup_key="edit:msg1"
             )
 
-        # Wait for processing
-        # 1st might go through immediately, subsequent ones queue and compact
-        await asyncio.sleep(2.5)
+        # Await the owned fire-and-forget tasks instead of polling wall-clock time.
+        await _wait_for_background_tasks(limiter)
 
         # Expected: ~2 calls (first and last)
         assert call_counts["msg1"] <= 2, (
@@ -107,14 +112,20 @@ class TestMessagingRateLimiter:
         Verify that even when compacted, all futures resolve to the result of the LAST execution.
         Logic ported from verify_limiter_v2.py
         """
-        limiter = self.create_limiter(rate_limit=1, rate_window=0.5)
+        limiter = self.create_limiter(rate_limit=1, rate_window=0.01)
 
         call_counts = {}
         msg_id = "test_msg_hang"
 
+        blocker_started = asyncio.Event()
+        release_blocker = asyncio.Event()
+
+        async def blocker():
+            blocker_started.set()
+            await release_blocker.wait()
+
         async def mock_edit(mid, content):
             call_counts[mid] = call_counts.get(mid, 0) + 1
-            await asyncio.sleep(0.05)
             return f"result_{content}"
 
         async def task(i):
@@ -122,15 +133,34 @@ class TestMessagingRateLimiter:
                 lambda i=i: mock_edit(msg_id, f"v{i}"), dedup_key=f"edit:{msg_id}"
             )
 
-        start_time = time.time()
+        blocker_task = asyncio.create_task(
+            limiter.enqueue(blocker, dedup_key="compaction-blocker")
+        )
+        await blocker_started.wait()
 
-        # Enqueue 3 tasks concurrently
-        results = await asyncio.gather(task(1), task(2), task(3))
+        first = asyncio.create_task(task(1))
+        second = asyncio.create_task(task(2))
+        third = asyncio.create_task(task(3))
 
-        duration = time.time() - start_time
+        async def wait_for_compaction() -> None:
+            while True:
+                queued = limiter._queue_map.get(f"edit:{msg_id}")
+                if queued is not None and len(queued[1]) >= 2:
+                    return
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_for_compaction(), timeout=1.0)
+        start_time = time.monotonic()
+        release_blocker.set()
+        results = await asyncio.wait_for(
+            asyncio.gather(blocker_task, first, second, third),
+            timeout=1.0,
+        )
+
+        duration = time.monotonic() - start_time
 
         # All results should be the LAST one executed
-        for res in results:
+        for res in results[1:]:
             assert res == "result_v3", f"Expected result_v3, got {res}"
 
         # Should be reasonably fast
@@ -142,7 +172,7 @@ class TestMessagingRateLimiter:
     @pytest.mark.asyncio
     async def test_flood_wait_handling(self):
         """Test that FloodWait exceptions pause the worker."""
-        limiter = self.create_limiter(rate_limit=1, rate_window=1.0)
+        limiter = self.create_limiter(rate_limit=1, rate_window=0.01)
 
         # Mock exception with .seconds attribute
         class FloodWait(Exception):
@@ -155,7 +185,7 @@ class TestMessagingRateLimiter:
         async def mock_fail():
             nonlocal call_count
             call_count += 1
-            raise FloodWait(1)  # 1 second wait
+            raise FloodWait(0.01)
 
         async def mock_success():
             nonlocal call_count
@@ -173,8 +203,8 @@ class TestMessagingRateLimiter:
         await limiter.enqueue(mock_success, dedup_key="key2")
         duration = time.time() - start
 
-        # Should have waited at least ~1s
-        assert duration >= 0.9, (
+        # A short injected duration still proves the worker honors the pause.
+        assert duration >= 0.009, (
             f"Should have waited for FloodWait, but took {duration:.2f}s"
         )
         assert call_count == 2
@@ -279,7 +309,7 @@ class TestMessagingRateLimiter:
             raise ValueError("fire_and_forget failed")
 
         limiter.fire_and_forget(fail_task, dedup_key="fire_fail")
-        await asyncio.sleep(1.5)
+        await _wait_for_background_tasks(limiter)
 
         joined = " ".join(str(r.message) for r in caplog.records)
         assert "ValueError" in joined

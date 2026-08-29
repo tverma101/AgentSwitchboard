@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -14,6 +16,7 @@ from .selection import SelectionItem, choose_item
 from .selection import fuzzy_match as match_items
 
 _CACHE_MAX_AGE_SECONDS = 24 * 60 * 60
+_GITHUB_IDENTITY_TIMEOUT_SECONDS = 5
 _SKIP_DIRS = frozenset(
     {
         ".cache",
@@ -92,14 +95,64 @@ def _run_git(path: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def _github_remote(path: Path) -> str:
+def github_authenticated_user() -> str | None:
+    """Return the active GitHub CLI account without exposing its token."""
+
+    gh = shutil.which("gh")
+    if gh is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [gh, "api", "user", "--hostname", "github.com", "--jq", ".login"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GITHUB_IDENTITY_TIMEOUT_SECONDS,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    if completed.returncode != 0:
+        return None
+    login = completed.stdout.strip()
+    if not login or any(character.isspace() for character in login):
+        return None
+    return login
+
+
+def _resolved_github_user(github_user: str | None) -> str | None:
+    """Resolve an explicit or current authenticated GitHub account."""
+
+    resolved = github_authenticated_user() if github_user is None else github_user
+    if not isinstance(resolved, str):
+        return None
+    resolved = resolved.strip()
+    return resolved or None
+
+
+def _github_remotes(path: Path) -> tuple[str, ...]:
     output = _run_git(path, "config", "--get-regexp", r"^remote\..*\.url$")
+    remotes: list[str] = []
     for line in output.splitlines():
         _, _, url = line.partition(" ")
         url = url.strip()
         if _is_github_remote(url):
-            return _remote_slug(url)
-    return ""
+            slug = _remote_slug(url)
+            if slug and slug not in remotes:
+                remotes.append(slug)
+    return tuple(remotes)
+
+
+def _github_remote(path: Path, *, github_user: str | None = None) -> str:
+    """Return a GitHub remote, preferring one owned by ``github_user``."""
+
+    remotes = _github_remotes(path)
+    if github_user is None:
+        return remotes[0] if remotes else ""
+    owner = github_user.casefold()
+    return next(
+        (remote for remote in remotes if _remote_owner(remote).casefold() == owner),
+        "",
+    )
 
 
 def _is_github_remote(url: str) -> bool:
@@ -121,6 +174,12 @@ def _remote_slug(url: str) -> str:
     return value[index + len(marker) :] if index >= 0 else value
 
 
+def _remote_owner(remote: str) -> str:
+    """Return the owner portion of an ``owner/repository`` slug."""
+
+    return remote.split("/", 1)[0] if "/" in remote else ""
+
+
 def _branch(path: Path) -> str:
     branch = _run_git(path, "symbolic-ref", "--quiet", "--short", "HEAD")
     if branch:
@@ -136,9 +195,14 @@ def _is_repo_root(path: Path) -> bool:
     return _run_git(path, "rev-parse", "--show-toplevel") == str(path.resolve())
 
 
-def discover_repos(roots: tuple[Path, ...]) -> list[RepoEntry]:
-    """Discover local GitHub-backed repositories beneath bounded roots."""
+def discover_repos(
+    roots: tuple[Path, ...], *, github_user: str | None = None
+) -> list[RepoEntry]:
+    """Discover local repositories connected to the active GitHub account."""
 
+    github_user = _resolved_github_user(github_user)
+    if github_user is None:
+        return []
     discovered: dict[str, RepoEntry] = {}
     for root in roots:
         root = root.expanduser().resolve()
@@ -154,7 +218,7 @@ def discover_repos(roots: tuple[Path, ...]) -> list[RepoEntry]:
             if not _is_repo_root(candidate):
                 continue
 
-            remote = _github_remote(candidate)
+            remote = _github_remote(candidate, github_user=github_user)
             if remote:
                 resolved = str(candidate.resolve())
                 discovered[resolved] = RepoEntry(
@@ -168,10 +232,20 @@ def discover_repos(roots: tuple[Path, ...]) -> list[RepoEntry]:
     return sorted(discovered.values(), key=lambda repo: repo.name.casefold())
 
 
-def load_cached_repos(path: Path | None = None) -> list[RepoEntry]:
-    """Load valid cached repository entries, ignoring corrupt/stale paths."""
+def load_cached_repos(
+    path: Path | None = None, *, github_user: str | None = None
+) -> list[RepoEntry]:
+    """Load cached paths, rebuilding every display field from live Git state.
+
+    The cache is only a list of recently discovered paths.  Names, branches,
+    and remotes are never trusted from JSON because a stale cache must not make
+    a non-repository or an unrelated remote look like a real GitHub checkout.
+    """
 
     path = cache_path() if path is None else path
+    github_user = _resolved_github_user(github_user)
+    if github_user is None:
+        return []
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except OSError, json.JSONDecodeError, TypeError:
@@ -180,21 +254,37 @@ def load_cached_repos(path: Path | None = None) -> list[RepoEntry]:
         return []
 
     entries: list[RepoEntry] = []
+    seen_paths: set[str] = set()
     for raw in payload.get("repos", []):
         if not isinstance(raw, dict):
             continue
         try:
-            entry = RepoEntry(
-                name=str(raw["name"]),
-                path=str(raw["path"]),
-                branch=str(raw.get("branch", "?")),
-                remote=str(raw.get("remote", "")),
-                last_used=float(raw.get("last_used", 0.0)),
-            )
+            candidate = Path(str(raw["path"])).expanduser().resolve(strict=True)
+            last_used = float(raw.get("last_used", 0.0))
         except KeyError, TypeError, ValueError:
             continue
-        if Path(entry.path).is_dir():
-            entries.append(entry)
+        except OSError:
+            continue
+        if not math.isfinite(last_used) or last_used < 0:
+            last_used = 0.0
+        if not candidate.is_dir() or not _is_repo_root(candidate):
+            continue
+        remote = _github_remote(candidate, github_user=github_user)
+        if not remote:
+            continue
+        resolved = str(candidate)
+        if resolved in seen_paths:
+            continue
+        seen_paths.add(resolved)
+        entries.append(
+            RepoEntry(
+                name=candidate.name,
+                path=resolved,
+                branch=_branch(candidate),
+                remote=remote,
+                last_used=last_used,
+            )
+        )
     return entries
 
 
@@ -309,11 +399,21 @@ def main(argv: list[str] | None = None) -> None:
     explicit_roots = bool(args.root)
     roots = tuple(Path(value).expanduser() for value in args.root) or default_roots()
     cache = cache_path()
+    github_user = github_authenticated_user()
+
+    if github_user is None:
+        print(
+            "No active GitHub CLI account found. Run `gh auth login` and try again.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     if explicit_roots:
-        repos = discover_repos(roots)
+        repos = discover_repos(roots, github_user=github_user)
     else:
-        repos = [] if args.refresh else load_cached_repos(cache)
+        repos = (
+            [] if args.refresh else load_cached_repos(cache, github_user=github_user)
+        )
         if args.refresh or not repos or not cache_is_fresh(cache):
             previous_last_used = {repo.path: repo.last_used for repo in repos}
             repos = [
@@ -324,7 +424,7 @@ def main(argv: list[str] | None = None) -> None:
                     remote=repo.remote,
                     last_used=previous_last_used.get(repo.path, 0.0),
                 )
-                for repo in discover_repos(roots)
+                for repo in discover_repos(roots, github_user=github_user)
             ]
             save_cached_repos(repos, cache)
 

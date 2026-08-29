@@ -205,7 +205,9 @@ def test_large_structured_result_is_rejected_without_mutation(tmp_path) -> None:
     assert json.dumps(original_content) == json.dumps(content)
 
 
-def test_large_media_result_is_rejected_instead_of_truncated(tmp_path) -> None:
+def test_large_media_result_is_rejected_only_when_explicitly_disabled(
+    tmp_path,
+) -> None:
     content = [
         {
             "type": "image",
@@ -221,9 +223,63 @@ def test_large_media_result_is_rejected_instead_of_truncated(tmp_path) -> None:
     with pytest.raises(ContextGovernanceError, match="structured or media"):
         govern_messages_request(
             request,
-            ContextGovernorConfig(tool_result_max_bytes=4096, artifact_dir=tmp_path),
+            ContextGovernorConfig(
+                tool_result_max_bytes=4096,
+                preserve_media=False,
+                artifact_dir=tmp_path,
+            ),
         )
 
+    assert not list(tmp_path.iterdir())
+
+
+def test_large_media_result_is_preserved_when_enabled(tmp_path) -> None:
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "x" * 10_000,
+            },
+        }
+    ]
+    request = _request(content)
+
+    governed = govern_messages_request(
+        request,
+        ContextGovernorConfig(
+            tool_result_max_bytes=4096,
+            preserve_media=True,
+            artifact_dir=tmp_path,
+        ),
+    )
+
+    assert governed.request is request
+    assert governed.records == ()
+    assert not list(tmp_path.iterdir())
+
+
+def test_large_media_result_is_preserved_by_default(tmp_path) -> None:
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "x" * 10_000,
+            },
+        }
+    ]
+    request = _request(content)
+
+    governed = govern_messages_request(
+        request,
+        ContextGovernorConfig(tool_result_max_bytes=4096, artifact_dir=tmp_path),
+    )
+
+    assert governed.request is request
+    assert governed.records == ()
     assert not list(tmp_path.iterdir())
 
 
@@ -242,3 +298,22 @@ def test_disabled_governor_does_not_write_artifacts(tmp_path) -> None:
     assert governed.request is request
     assert governed.records == ()
     assert not list(tmp_path.iterdir())
+
+
+def test_mcp_result_envelope_is_normalized_before_governance(tmp_path) -> None:
+    request = _request(
+        {
+            "content": [{"type": "text", "text": "ready"}],
+            "isError": False,
+            "_meta": {"request_id": "metadata-is-not-model-content"},
+        }
+    )
+
+    governed = govern_messages_request(
+        request,
+        ContextGovernorConfig(tool_result_max_bytes=4096, artifact_dir=tmp_path),
+    )
+
+    assert governed.request is not request
+    block = governed.request.messages[0].content[0]
+    assert get_block_attr(block, "content") == [{"type": "text", "text": "ready"}]

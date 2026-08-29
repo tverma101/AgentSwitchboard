@@ -18,6 +18,7 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.config.admin.values import MASKED_SECRET
+from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
 from free_claude_code.usage import UsageEvent, UsageStore
@@ -544,6 +545,36 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
         "confidence": "unknown",
         "source": "unknown",
     }
+
+
+def test_admin_models_keep_the_picker_catalog_separate_from_visible_models() -> None:
+    settings = Settings()
+    settings.model = "open_router/configured-model"
+    settings.model_catalog_mode = ModelCatalogMode.CURATED
+    settings.model_catalog_allowlist = "open_router/visible-model"
+    settings.open_router_api_key = "open-router-key"
+    app = create_test_app(settings)
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo("visible-model"),
+            ProviderModelInfo("hidden-model"),
+        },
+    )
+
+    response = _local_client(app).get("/admin/api/models")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["models"] == [
+        "open_router/configured-model",
+        "open_router/visible-model",
+    ]
+    assert body["catalog_models"] == [
+        "open_router/configured-model",
+        "open_router/hidden-model",
+        "open_router/visible-model",
+    ]
 
 
 def test_admin_models_expose_capability_evidence_provenance() -> None:

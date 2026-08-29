@@ -275,7 +275,7 @@ class ApplicationRuntime:
             }
         finally:
             await lease.release()
-        self.provider_manager.cache_model_infos(provider_id, infos)
+        await self.provider_manager.cache_model_infos_with_metadata(provider_id, infos)
         return {
             "provider_id": provider_id,
             "ok": True,

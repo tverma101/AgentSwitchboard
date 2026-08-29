@@ -88,9 +88,12 @@ class ProviderModelCache:
                     supports_thinking=info.supports_thinking,
                     supports_vision=info.supports_vision,
                     accepted_image_types=info.accepted_image_types,
+                    is_free=info.is_free,
+                    pricing=info.pricing,
                     reasoning=info.reasoning,
                     capability_evidence=info.capability_evidence,
                     capability_verification=info.capability_verification,
+                    catalog_metadata=info.catalog_metadata,
                 )
                 for info in sorted(
                     provider_infos.values(), key=lambda item: item.model_id

@@ -1,6 +1,7 @@
 """OpenAI Responses API product flow for Codex clients."""
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from fastapi.responses import JSONResponse
 
@@ -18,6 +19,7 @@ from free_claude_code.api.response_streams import (
 from free_claude_code.application.context_governance import (
     ContextGovernanceError,
     apply_context_governor,
+    should_preserve_media_for_model,
 )
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor
@@ -86,32 +88,37 @@ class ResponsesHandler:
                 request_data
             )
             response_request = MessagesRequest(**anthropic_payload)
-            response_request = apply_context_governor(
-                response_request,
-                self._settings,
-                request_id=request_id,
-            )
             if claude_session_id:
                 response_request = response_request.model_copy(
                     update={"claude_session_id": claude_session_id}
                 )
-            request_payload = response_request.model_dump(
-                mode="json", exclude_none=True
-            )
             require_non_empty_messages(response_request.messages)
             routed = self._model_router.resolve_messages_request(response_request)
+            model_info = (
+                self._model_info_resolver(
+                    routed.resolved.provider_id,
+                    routed.resolved.provider_model,
+                )
+                if self._model_info_resolver is not None
+                else None
+            )
             visual_input = validate_visual_capability(
                 routed.request,
-                model_info=(
-                    self._model_info_resolver(
-                        routed.resolved.provider_id,
-                        routed.resolved.provider_model,
-                    )
-                    if self._model_info_resolver is not None
-                    else None
-                ),
+                model_info=model_info,
                 model_ref=routed.resolved.provider_model_ref,
             )
+            routed = replace(
+                routed,
+                request=apply_context_governor(
+                    routed.request,
+                    self._settings,
+                    request_id=request_id,
+                    preserve_media=should_preserve_media_for_model(
+                        self._settings, model_info
+                    ),
+                ),
+            )
+            request_payload = routed.request.model_dump(mode="json", exclude_none=True)
             if visual_input is not None:
                 trace_event(
                     stage="ingress",

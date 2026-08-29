@@ -5,7 +5,11 @@ import json
 import tiktoken
 from loguru import logger
 
-from .content import get_block_attr
+from .content import (
+    get_block_attr,
+    is_tool_search_metadata_block,
+    without_tool_search_metadata,
+)
 from .models import Message, SystemContent, Tool
 
 ENCODER = tiktoken.get_encoding("cl100k_base")
@@ -42,6 +46,9 @@ def get_token_count(
             for block in msg.content:
                 b_type = get_block_attr(block, "type") or None
 
+                if is_tool_search_metadata_block(block):
+                    continue
+
                 if b_type == "text":
                     text = get_block_attr(block, "text", "")
                     total_tokens += _count_text_tokens(str(text))
@@ -67,7 +74,9 @@ def get_token_count(
                     else:
                         total_tokens += 765
                 elif b_type == "tool_result":
-                    content = get_block_attr(block, "content", "")
+                    content = without_tool_search_metadata(
+                        get_block_attr(block, "content", "")
+                    )
                     tool_use_id = get_block_attr(block, "tool_use_id", "")
                     if isinstance(content, str):
                         total_tokens += _count_text_tokens(content)

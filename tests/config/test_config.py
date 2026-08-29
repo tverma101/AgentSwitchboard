@@ -61,6 +61,8 @@ class TestSettings:
         assert settings.debug_subagent_stack is False
         assert settings.log_level == "INFO"
         assert settings.vertex_location == "global"
+        assert settings.model_metadata_catalog_enabled is True
+        assert settings.model_metadata_catalog_ttl_hours == 24.0
 
     def test_default_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
         """Unset CLAUDE_WORKSPACE stores agent data under the fixed path helper."""
@@ -215,6 +217,17 @@ class TestSettings:
         monkeypatch.setenv("OPENCODE_GO_BASE_URL", "http://127.0.0.1:5678/v1")
         assert Settings().opencode_go_base_url == "http://127.0.0.1:5678/v1"
 
+    def test_bai_api_key_and_base_url_from_env(self, monkeypatch):
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("BAI_API_KEY", "bai-token")
+        monkeypatch.setenv("BAI_BASE_URL", "https://bai.example/v1")
+
+        settings = Settings()
+
+        assert settings.bai_api_key == "bai-token"
+        assert settings.bai_base_url == "https://bai.example/v1"
+
     def test_ollama_base_url_defaults_to_root(self, monkeypatch):
         """OLLAMA_BASE_URL keeps the customer-facing Ollama root default."""
         from free_claude_code.config.settings import Settings
@@ -263,6 +276,21 @@ class TestSettings:
         )
         assert settings.allowed_helper_ids == "codex-computer-use, local-vision"
         assert settings.paid_fallback is True
+
+    def test_computer_use_approval_mode_from_env(self, monkeypatch):
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("FCC_COMPUTER_USE_APPROVAL", "decline")
+
+        assert Settings().computer_use_approval == "decline"
+
+    def test_computer_use_approval_mode_rejects_unknown_value(self, monkeypatch):
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("FCC_COMPUTER_USE_APPROVAL", "ask-user")
+
+        with pytest.raises(ValueError, match="FCC_COMPUTER_USE_APPROVAL"):
+            Settings()
 
     def test_provider_rate_window_from_env(self, monkeypatch):
         """PROVIDER_RATE_WINDOW env var is loaded into settings."""

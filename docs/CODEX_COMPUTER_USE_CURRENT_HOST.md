@@ -52,7 +52,7 @@ Important compatibility warning: older observed Computer Use builds could list M
 
 `ManagedCodexComputerUseBroker` is the native-parity candidate. It:
 - mirrors the current bundled plugin launcher when present;
-- falls back to the already verified signed client only if the launcher is absent;
+- refuses the retired direct-client path when the bundled launcher is absent;
 - enables current app-server feature flags;
 - disables model execution paths with a dead provider and zero retries;
 - strips ambient OpenAI/Codex API credentials by constructing a minimal child environment;
@@ -60,9 +60,43 @@ Important compatibility warning: older observed Computer Use builds could list M
 - creates an ephemeral, on-request, workspace-write thread with only the `computer-use` MCP server configured;
 - polls `mcpServerStatus/list` and fails closed unless all ten expected native tools appear;
 - exposes native tool names/auth state only as runtime evidence, never as dynamic Luna tool-schema input;
-- defaults all elicitations to cancel unless an explicit policy handler decides otherwise;
+- defaults low-level elicitations to cancel; the FCC Claude MCP server supplies
+  an explicit `auto` handler only when `codex-computer-use` is allow-listed,
+  while `FCC_COMPUTER_USE_APPROVAL=decline` keeps the user-facing bridge
+  fail-closed;
 - reports mutating timeout/transport loss as **indeterminate** instead of retrying;
 - retains the zero-Codex-model-turn fatal guard inherited from the base broker.
+
+For the normal `fcc-claude` launch, FCC validates the signed installation and
+exposes the official skill through the active Claude profile. It registers the
+FCC-owned local MCP name to the Python FCC MCP module
+(`free_claude_code.cli.codex_computer_use_mcp`). That server starts the signed
+Codex `app-server`, creates an ephemeral on-request thread, configures the
+official bundled Computer Use plugin launcher, waits for all ten native tools,
+and dispatches calls through `mcpServer/tool/call`. It answers the native
+elicitation handshake and preserves structured screenshot blocks. Read-only
+state/list calls get one bounded connection-recovery attempt; mutating calls
+are never replayed after an uncertain result. The old vendored Node bridge is
+kept only as a narrowly identified migration entry for older FCC installs;
+it is not the normal Claude MCP path. The signed native client remains
+unmodified.
+
+The registration is project-local and the Claude launcher does not replace or
+silently remove other user-owned MCP servers. The launcher supplies a default
+`MAX_MCP_OUTPUT_TOKENS=12000` result budget to the child Claude process when
+the user has not configured one, and the FCC server rejects any future
+Computer Use tool-schema expansion beyond its fixed 16 KiB contract. This
+keeps MCP growth bounded while preserving native structured screenshot blocks.
+
+### Structured result transport boundary
+
+The FCC MCP server returns the native MCP response with its JPEG screenshot
+block intact. It does not turn a screenshot into text, alter element IDs, or
+make a second model request. Claude integrations may replay either that
+response or a complete MCP `CallToolResult`/JSON-RPC result envelope inside
+Anthropic `tool_result.content`; the FCC compatibility boundary still owns
+provider-specific media conversion. Unsupported nested media remains
+fail-closed rather than being flattened into misleading text.
 
 ## Cache boundary
 

@@ -34,6 +34,7 @@ from free_claude_code.api.web_tools.streaming import stream_web_server_tool_resp
 from free_claude_code.application.context_governance import (
     ContextGovernanceError,
     apply_context_governor,
+    should_preserve_media_for_model,
 )
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
@@ -114,11 +115,6 @@ class MessagesHandler:
         """Create an Anthropic-compatible message response."""
         request_id = request_id or new_request_id()
         try:
-            request_data = apply_context_governor(
-                request_data,
-                self._settings,
-                request_id=request_id,
-            )
             if claude_session_id:
                 request_data = request_data.model_copy(
                     update={"claude_session_id": claude_session_id}
@@ -127,17 +123,29 @@ class MessagesHandler:
             routed = self._model_router.resolve_messages_request(request_data)
             routed = self._apply_message_routing_policies(routed)
             self._reject_unsupported_server_tools(routed)
+            model_info = (
+                self._model_info_resolver(
+                    routed.resolved.provider_id,
+                    routed.resolved.provider_model,
+                )
+                if self._model_info_resolver is not None
+                else None
+            )
             visual_input = validate_visual_capability(
                 routed.request,
-                model_info=(
-                    self._model_info_resolver(
-                        routed.resolved.provider_id,
-                        routed.resolved.provider_model,
-                    )
-                    if self._model_info_resolver is not None
-                    else None
-                ),
+                model_info=model_info,
                 model_ref=routed.resolved.provider_model_ref,
+            )
+            routed = replace(
+                routed,
+                request=apply_context_governor(
+                    routed.request,
+                    self._settings,
+                    request_id=request_id,
+                    preserve_media=should_preserve_media_for_model(
+                        self._settings, model_info
+                    ),
+                ),
             )
             if visual_input is not None:
                 trace_event(

@@ -11,6 +11,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.process_helpers import run_bounded, terminate_process_tree
+
+pytestmark = pytest.mark.installer
+
 FCC_COMMANDS = (
     "fcc-desktop",
     "fcc-server",
@@ -204,12 +208,10 @@ printf '%s\n' "$FCC_PS_OUTPUT"
 
     def run(self, *args: str, fail_step: str = "") -> subprocess.CompletedProcess[str]:
         env = self.env | {"FAIL_STEP": fail_step}
-        return subprocess.run(
+        return run_bounded(
             ["/bin/sh", str(_repo_root() / "scripts" / "install.sh"), *args],
-            check=False,
-            capture_output=True,
-            text=True,
             env=env,
+            timeout=15,
         )
 
     def run_interactive(
@@ -251,7 +253,7 @@ printf '%s\n' "$FCC_PS_OUTPUT"
                 if waited_pid == child_pid:
                     status = wait_status
                 elif time.monotonic() >= deadline:
-                    os.kill(child_pid, 9)
+                    terminate_process_tree(child_pid)
                     os.waitpid(child_pid, 0)
                     raise AssertionError("Interactive installer did not finish")
 
@@ -1296,6 +1298,7 @@ exit /b 76
             capture_output=True,
             text=True,
             env=env,
+            timeout=15,
         )
 
     def calls(self) -> list[str]:

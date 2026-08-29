@@ -102,11 +102,20 @@ fcc-learning profile restore school
 ```
 
 `fcc-claude --profile` is consumed by the FCC launcher and is not forwarded to
-Claude Code. The selected environment is inherited by SessionStart,
-UserPromptSubmit, and Stop hooks. A SessionStart hook announces the active
-profile in its context, and `fcc-learning status` reports the profile schema,
-version, and database path. Switching profiles under a live Claude process is
-not supported; start a new session instead.
+Claude Code. The selected profile is placed in the child Claude environment
+only; the long-lived `fcc-server`/control-center environment is never mutated
+by a client launch. This prevents a prior child launch from changing the
+profile shown as running on the next TUI redraw. The selected environment is
+inherited by SessionStart, UserPromptSubmit, and Stop hooks. A SessionStart
+hook announces the active profile in its context, and `fcc-learning status`
+reports the profile schema, version, and database path. Switching profiles
+under a live Claude process is not supported; start a new session instead.
+
+The control center labels this namespace **FCC Learning profile**. It is
+separate from a Codex tool-account profile, a Claude model setting, and a
+provider account. The running profile is the profile fixed when `fcc-server`
+started; a different profile selected in the TUI is explicitly marked as the
+next launch profile until a new Claude session starts.
 
 Named profile directories can be discovered and managed without opening the
 learning database. `profile rename` moves the directory atomically, while
@@ -202,7 +211,12 @@ center and loopback Admin page expose reviewer pack enable/disable and scar
 forget/supersede controls; these controls operate only on compact local
 metadata.
 
-`fcc-claude` normally installs/repairs the hooks automatically, so manual `install` is usually unnecessary.
+FCC Learning is disabled by default. `fcc-claude` removes only its own Learning
+hooks when `FCC_LEARNING_ENABLED` is unset or false, so existing reviewer and
+post-turn context cannot remain active accidentally. Set
+`FCC_LEARNING_ENABLED=1` before launching `fcc-claude` to explicitly opt in; it
+will then install or repair the hooks automatically. Manual `install` is
+usually unnecessary.
 
 `context-policy` is a separate explicit operation. It manages only FCC's
 delimited global context-discipline block and does not install hooks or change
@@ -214,7 +228,7 @@ Environment overrides:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `FCC_LEARNING_ENABLED` | `1` | Set `0` to disable hook installation and hook behavior. |
+| `FCC_LEARNING_ENABLED` | `0` | Set `1` to explicitly enable hook context, memory/skill persistence, and post-turn distillation. |
 | `FCC_LEARNING_MODEL` | `haiku` | Claude/FCC routing name for the distillation pass. |
 | `FCC_LEARNING_MEMORY_CONFIDENCE` | `0.88` | Minimum model confidence before a memory can be saved. |
 | `FCC_LEARNING_SKILL_CONFIDENCE` | `0.92` | Minimum model confidence before a skill can be written. |

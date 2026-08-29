@@ -3,8 +3,10 @@
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,11 +14,14 @@ from pathlib import Path
 
 CLAUDE_PROCESS_WRAPPER_ENV = "CLAUDE_CODE_PROCESS_WRAPPER"
 CLAUDE_KNOWN_GOOD_VERSION_ENV = "FCC_CLAUDE_KNOWN_GOOD_VERSION"
+CLAUDE_KNOWN_GOOD_BINARY_ENV = "FCC_CLAUDE_KNOWN_GOOD_BINARY"
 CLAUDE_ALLOW_UNCERTIFIED_ENV = "FCC_CLAUDE_ALLOW_UNCERTIFIED"
 CLAUDE_PROCESS_WRAPPER_PATH_ENV = "FCC_CLAUDE_PROCESS_WRAPPER_PATH"
 DEFAULT_KNOWN_GOOD_CLAUDE_VERSION = "2.1.228"
 MIN_PROCESS_WRAPPER_VERSION = (2, 1, 208)
 _VERSION_RE = re.compile(r"\b(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)\b")
+_CLAUDE_PACKAGE_NAME = "@anthropic-ai/claude-code"
+_CLAUDE_INSTALL_ROOT_NAME = "claude-code"
 _WRAPPER_FILENAME = "fcc-claude-process-wrapper"
 _RECEIPT_DIRNAME = "claude-compatibility"
 _WRAPPER_BODY = """#!/bin/sh
@@ -85,6 +90,189 @@ def default_process_wrapper_path(base_env: Mapping[str, str] | None = None) -> P
     if configured.strip():
         return Path(configured).expanduser()
     return _config_dir_path() / "bin" / _WRAPPER_FILENAME
+
+
+def find_known_good_claude_binary(
+    current_binary_path: str,
+    *,
+    base_env: Mapping[str, str],
+    known_good_version: str | None = None,
+) -> str | None:
+    """Find a locally installed Claude executable with the exact known-good version.
+
+    Candidate paths are deliberately bounded to an explicitly configured path,
+    ``PATH`` entries, and FCC's own versioned install directory.  A filename or
+    package directory is never trusted without executing ``--version`` and
+    matching the exact expected version.
+    """
+
+    expected_version = _known_good_version(known_good_version, base_env)
+    if expected_version is None:
+        return None
+
+    current_path = os.path.realpath(os.path.abspath(current_binary_path))
+    candidates: list[Path] = []
+    configured = base_env.get(CLAUDE_KNOWN_GOOD_BINARY_ENV, "").strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+
+    candidates.extend(
+        Path(directory).expanduser() / "claude"
+        for directory in os.get_exec_path(dict(base_env))
+    )
+
+    install_root = _config_dir_path() / _CLAUDE_INSTALL_ROOT_NAME / expected_version
+    candidates.extend(
+        (
+            install_root / "node_modules" / ".bin" / "claude",
+            install_root / "node_modules" / _CLAUDE_PACKAGE_NAME / "bin" / "claude.exe",
+            install_root / "bin" / "claude",
+        )
+    )
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_path = Path(os.path.abspath(os.fspath(candidate)))
+        candidate_key = os.path.realpath(os.fspath(candidate_path))
+        if candidate_key in seen or candidate_key == current_path:
+            continue
+        seen.add(candidate_key)
+        if not candidate_path.is_file():
+            continue
+        if _installed_claude_version(str(candidate_path), base_env) == expected_version:
+            return str(candidate_path)
+    return None
+
+
+def install_known_good_claude_binary(
+    *,
+    base_env: Mapping[str, str],
+    known_good_version: str,
+) -> str | None:
+    """Install an exact known-good Claude version from npm's offline cache.
+
+    This is a private, versioned FCC install and never changes the user's
+    global ``claude`` command.  npm lifecycle scripts remain disabled; Claude's
+    official native-binary installer is invoked explicitly after dependencies
+    are unpacked.  If the exact package is not already cached, the bounded
+    offline install fails without contacting the network.
+    """
+
+    expected_version = _known_good_version(known_good_version, base_env)
+    if expected_version is None:
+        return None
+    path_env = base_env.get("PATH", os.defpath)
+    npm = shutil.which("npm", path=path_env)
+    node = shutil.which("node", path=path_env)
+    if npm is None or node is None:
+        return None
+
+    install_parent = _config_dir_path() / _CLAUDE_INSTALL_ROOT_NAME
+    try:
+        install_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        staging = Path(
+            tempfile.mkdtemp(
+                prefix=f".{expected_version}-repair-",
+                dir=str(install_parent),
+            )
+        )
+    except OSError:
+        return None
+
+    preserve_staging = False
+    install_env = _offline_node_environment(base_env)
+    package_spec = f"{_CLAUDE_PACKAGE_NAME}@{expected_version}"
+    try:
+        result = subprocess.run(
+            [
+                npm,
+                "install",
+                "--prefix",
+                str(staging),
+                "--offline",
+                "--no-audit",
+                "--no-fund",
+                "--ignore-scripts",
+                package_spec,
+            ],
+            capture_output=True,
+            check=False,
+            cwd=str(staging),
+            env=install_env,
+            text=True,
+            timeout=60.0,
+        )
+        if result.returncode != 0:
+            return None
+
+        native_installer = (
+            staging / "node_modules" / _CLAUDE_PACKAGE_NAME / "install.cjs"
+        )
+        if not native_installer.is_file():
+            return None
+        result = subprocess.run(
+            [node, str(native_installer)],
+            capture_output=True,
+            check=False,
+            cwd=str(staging),
+            env=install_env,
+            text=True,
+            timeout=30.0,
+        )
+        if result.returncode != 0:
+            return None
+
+        staged_binary = staging / "node_modules" / ".bin" / "claude"
+        if _installed_claude_version(str(staged_binary), base_env) != expected_version:
+            return None
+
+        stable_root = install_parent / expected_version
+        if not os.path.lexists(stable_root):
+            try:
+                staging.replace(stable_root)
+            except OSError:
+                return None
+            preserve_staging = True
+            return str(stable_root / "node_modules" / ".bin" / "claude")
+
+        # Never overwrite a pre-existing user directory.  The private staging
+        # directory is still a valid exact-version fallback for this launch.
+        preserve_staging = True
+        return str(staged_binary)
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    finally:
+        if not preserve_staging:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def _known_good_version(
+    configured: str | None,
+    base_env: Mapping[str, str],
+) -> str | None:
+    version = (
+        (configured or "").strip()
+        or base_env.get(CLAUDE_KNOWN_GOOD_VERSION_ENV, "").strip()
+        or DEFAULT_KNOWN_GOOD_CLAUDE_VERSION
+    )
+    return version if _VERSION_RE.fullmatch(version) is not None else None
+
+
+def _offline_node_environment(base_env: Mapping[str, str]) -> dict[str, str]:
+    """Build a minimal environment for a cache-only npm repair."""
+
+    environment = {
+        "HOME": str(Path.home()),
+        "PATH": base_env.get("PATH", os.defpath),
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false",
+        "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+    }
+    for key in ("TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL"):
+        value = base_env.get(key)
+        if value:
+            environment[key] = value
+    return environment
 
 
 def ensure_process_wrapper(path: Path | None = None) -> Path:
@@ -278,6 +466,7 @@ def _validate_process_wrapper(path: Path) -> None:
 
 __all__ = [
     "CLAUDE_ALLOW_UNCERTIFIED_ENV",
+    "CLAUDE_KNOWN_GOOD_BINARY_ENV",
     "CLAUDE_KNOWN_GOOD_VERSION_ENV",
     "CLAUDE_PROCESS_WRAPPER_ENV",
     "CLAUDE_PROCESS_WRAPPER_PATH_ENV",
@@ -286,6 +475,8 @@ __all__ = [
     "default_process_wrapper_path",
     "enforce_claude_compatibility",
     "ensure_process_wrapper",
+    "find_known_good_claude_binary",
     "inspect_claude_compatibility",
+    "install_known_good_claude_binary",
     "write_compatibility_receipt",
 ]

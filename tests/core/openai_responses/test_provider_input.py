@@ -113,7 +113,367 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
     }
 
 
-def test_build_responses_provider_request_rejects_media_inside_tool_result() -> None:
+def test_responses_provider_filters_tool_search_controller_and_metadata() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_reference",
+                            "tool_name": "mcp__computer__click",
+                        },
+                        {"type": "text", "text": "The tool is ready."},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "search_call",
+                            "content": [
+                                {
+                                    "type": "tool_reference",
+                                    "tool_name": "mcp__computer__click",
+                                },
+                                {"type": "text", "text": "Search metadata removed."},
+                            ],
+                        }
+                    ],
+                },
+            ],
+            "tools": [
+                {
+                    "name": "tool_search_tool_regex",
+                    "type": "tool_search_tool_regex_20251119",
+                    "input_schema": {"type": "object"},
+                },
+                {
+                    "name": "mcp__computer__click",
+                    "description": "Click a visible control",
+                    "input_schema": {"type": "object"},
+                },
+            ],
+            "tool_choice": {"type": "tool", "name": "tool_search_tool_regex"},
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert [tool["name"] for tool in body["tools"]] == ["mcp__computer__click"]
+    assert body["tool_choice"] == "auto"
+    output = next(
+        item for item in body["input"] if item["type"] == "function_call_output"
+    )
+    assert output["output"] == "Search metadata removed."
+    assert "tool_reference" not in json.dumps(body)
+
+
+def test_build_responses_provider_request_preserves_image_inside_tool_result() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_image",
+                            "name": "screenshot",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_image",
+                            "content": [
+                                {"type": "text", "text": "Screenshot captured."},
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "url",
+                                        "url": "https://example.test/shot.png",
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"][1] == {
+        "type": "function_call_output",
+        "call_id": "call_image",
+        "output": [
+            {"type": "input_text", "text": "Screenshot captured."},
+            {"type": "input_image", "image_url": "https://example.test/shot.png"},
+        ],
+    }
+
+
+def test_build_responses_provider_request_preserves_single_tool_result_image_block() -> (
+    None
+):
+    """Accept the direct single-block shape emitted by some MCP bridges."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_single_image",
+                            "name": "screenshot",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_single_image",
+                            "content": {
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://example.test/single-shot.png",
+                                },
+                            },
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"][1] == {
+        "type": "function_call_output",
+        "call_id": "call_single_image",
+        "output": [
+            {
+                "type": "input_image",
+                "image_url": "https://example.test/single-shot.png",
+            }
+        ],
+    }
+
+
+def test_build_responses_provider_request_preserves_native_mcp_image_shape() -> None:
+    """Accept the direct image/data/mimeType block returned by the MCP bridge."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_native_image",
+                            "name": "screenshot",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_native_image",
+                            "content": {
+                                "type": "image",
+                                "data": (
+                                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                                ),
+                                "mimeType": "image/png",
+                            },
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"][1] == {
+        "type": "function_call_output",
+        "call_id": "call_native_image",
+        "output": [
+            {
+                "type": "input_image",
+                "image_url": (
+                    "data:image/png;base64,"
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                ),
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "tool_content",
+    [
+        {
+            "content": [
+                {"type": "text", "text": "Screenshot captured."},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.test/enveloped-shot.png",
+                    },
+                },
+            ],
+            "isError": False,
+            "_meta": {"request_id": "metadata-is-not-model-content"},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {
+                "content": [
+                    {"type": "text", "text": "Screenshot captured."},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.test/enveloped-shot.png",
+                        },
+                    },
+                ],
+                "isError": False,
+            },
+        },
+    ],
+)
+def test_build_responses_provider_request_unwraps_mcp_result_envelope(
+    tool_content: dict[str, object],
+) -> None:
+    """Preserve MCP screenshots when a bridge passes the complete result envelope."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_enveloped_image",
+                            "name": "screenshot",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_enveloped_image",
+                            "content": tool_content,
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"][1] == {
+        "type": "function_call_output",
+        "call_id": "call_enveloped_image",
+        "output": [
+            {"type": "input_text", "text": "Screenshot captured."},
+            {
+                "type": "input_image",
+                "image_url": "https://example.test/enveloped-shot.png",
+            },
+        ],
+    }
+
+
+def test_build_responses_provider_request_unwraps_text_only_mcp_result() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_enveloped_text",
+                            "name": "inspect",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_enveloped_text",
+                            "content": {
+                                "content": [{"type": "text", "text": "ready"}],
+                                "isError": False,
+                                "_meta": {},
+                            },
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"][1]["output"] == "ready"
+
+
+def test_build_responses_provider_request_rejects_unrepresentable_nested_media() -> (
+    None
+):
     request = MessagesRequest.model_validate(
         {
             "model": "gpt-test",
@@ -153,7 +513,7 @@ def test_build_responses_provider_request_rejects_media_inside_tool_result() -> 
         }
     )
 
-    with pytest.raises(ResponsesConversionError, match=r"media blocks.*tool_result"):
+    with pytest.raises(ResponsesConversionError, match=r"structured media blocks"):
         build_responses_provider_request(
             request,
             reasoning=ReasoningPolicy.provider_default(),

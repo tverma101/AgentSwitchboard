@@ -80,7 +80,13 @@ certification, mark the candidate quarantined with the failing contract, do not
 weaken routing/auth/context policy, and provide an explicit rollback path.
 
 Rollback should be a launcher/runtime choice rather than destructive mutation
-of the user's Claude state.
+of the user's Claude state. The launcher may automatically select an exact
+known-good executable already on PATH or configured with
+`FCC_CLAUDE_KNOWN_GOOD_BINARY`. If it is not installed but the exact package is
+already in npm's local cache, FCC may restore it under its private versioned
+directory with network access disabled. It must never silently set
+`FCC_CLAUDE_ALLOW_UNCERTIFIED=1`, substitute a merely older unverified binary,
+or overwrite a pre-existing user directory.
 
 ## Update-survival fixtures
 

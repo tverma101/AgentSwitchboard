@@ -68,6 +68,10 @@ class RequestRuntimePort(Protocol):
 
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]: ...
 
+    def cached_discovered_prefixed_model_infos(
+        self,
+    ) -> tuple[ProviderModelInfo, ...]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class StopResult:

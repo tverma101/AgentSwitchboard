@@ -20,6 +20,14 @@ PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
 
 
+class ClientLaunchError(RuntimeError):
+    """A client launch failed while called from an interactive control surface."""
+
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
 def preflight_proxy(proxy_root_url: str) -> str | None:
     """Return an error message when the local proxy health check is unreachable."""
 
@@ -47,11 +55,17 @@ def resolve_client_binary(
     binary_name: str,
     display_name: str,
     install_hint: str,
+    raise_for_control: bool = False,
 ) -> str:
     """Resolve an installed client binary or exit with a user-facing hint."""
 
     client_command = shutil.which(binary_name)
     if client_command is None:
+        message = (
+            f"Could not find {display_name} command: {binary_name}\n{install_hint}"
+        )
+        if raise_for_control:
+            raise ClientLaunchError(message, 127)
         print(
             f"Could not find {display_name} command: {binary_name}",
             file=sys.stderr,
@@ -69,6 +83,7 @@ def run_client_process(
     display_name: str,
     install_hint: str,
     cwd: Path | None = None,
+    raise_for_control: bool = False,
 ) -> None:
     """Run a client CLI command and mirror its exit code."""
 
@@ -83,6 +98,11 @@ def run_client_process(
             register_pid(process.pid)
         return_code = process.wait()
     except FileNotFoundError:
+        message = (
+            f"Could not find {display_name} command: {binary_name}\n{install_hint}"
+        )
+        if raise_for_control:
+            raise ClientLaunchError(message, 127) from None
         print(
             f"Could not find {display_name} command: {binary_name}",
             file=sys.stderr,
@@ -98,4 +118,11 @@ def run_client_process(
         if process is not None and process.pid:
             unregister_pid(process.pid)
 
+    if raise_for_control:
+        if return_code == 0:
+            return
+        raise ClientLaunchError(
+            f"{display_name} exited with status {return_code}.",
+            return_code,
+        )
     raise SystemExit(return_code)

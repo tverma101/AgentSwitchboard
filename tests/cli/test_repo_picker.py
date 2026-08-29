@@ -13,6 +13,7 @@ from free_claude_code.cli.repo_picker import (
     choose_repo,
     discover_repos,
     fuzzy_match,
+    github_authenticated_user,
     launch_repo,
     load_cached_repos,
     save_cached_repos,
@@ -51,6 +52,40 @@ def test_git_probe_failures_are_treated_as_missing_data(
     assert repo_picker._run_git(tmp_path, "status") == ""
 
 
+def test_github_authenticated_user_returns_active_cli_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(tuple(command))
+        return SimpleNamespace(returncode=0, stdout="tverma101\n")
+
+    monkeypatch.setattr(repo_picker.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(repo_picker.subprocess, "run", fake_run)
+
+    assert github_authenticated_user() == "tverma101"
+    assert calls == [
+        (
+            "/usr/bin/gh",
+            "api",
+            "user",
+            "--hostname",
+            "github.com",
+            "--jq",
+            ".login",
+        )
+    ]
+
+
+def test_github_authenticated_user_fails_closed_without_gh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repo_picker.shutil, "which", lambda _name: None)
+
+    assert github_authenticated_user() is None
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
@@ -68,16 +103,16 @@ def test_discovery_keeps_only_github_repos_and_handles_multiple_remotes(
 ) -> None:
     github_repo = tmp_path / "Repo With Spaces"
     unicode_repo = tmp_path / "répo"
-    other_repo = tmp_path / "gitlab"
+    foreign_repo = tmp_path / "foreign"
     _init_repo(github_repo, ("origin", "https://github.com/acme/space.git"))
     _init_repo(
         unicode_repo,
         ("origin", "https://gitlab.com/acme/nope.git"),
         ("github", "git@github.com:acme/unicode.git"),
     )
-    _init_repo(other_repo, ("origin", "https://gitlab.com/acme/nope.git"))
+    _init_repo(foreign_repo, ("origin", "https://github.com/other/foreign.git"))
 
-    repos = discover_repos((tmp_path,))
+    repos = discover_repos((tmp_path,), github_user="acme")
 
     assert {repo.name for repo in repos} == {"Repo With Spaces", "répo"}
     assert {repo.remote for repo in repos} == {"acme/space", "acme/unicode"}
@@ -85,17 +120,54 @@ def test_discovery_keeps_only_github_repos_and_handles_multiple_remotes(
 
 def test_cache_round_trip_drops_deleted_paths(tmp_path: Path) -> None:
     existing = tmp_path / "existing"
-    existing.mkdir()
+    _init_repo(existing, ("origin", "https://github.com/acme/existing.git"))
     deleted = tmp_path / "deleted"
     cache = tmp_path / "repos.json"
+    existing_entry = RepoEntry(
+        existing.name,
+        str(existing.resolve()),
+        repo_picker._branch(existing),
+        "acme/existing",
+        4.0,
+    )
     repos = [
-        RepoEntry("existing", str(existing), "main", "acme/existing", 4.0),
+        existing_entry,
         RepoEntry("deleted", str(deleted), "main", "acme/deleted", 8.0),
     ]
 
     save_cached_repos(repos, cache)
 
-    assert load_cached_repos(cache) == [repos[0]]
+    assert load_cached_repos(cache, github_user="acme") == [existing_entry]
+
+
+def test_cache_rebuilds_stale_display_metadata_from_git(tmp_path: Path) -> None:
+    repository = tmp_path / "actual-name"
+    _init_repo(repository, ("origin", "git@github.com:acme/actual.git"))
+    cache = tmp_path / "repos.json"
+    save_cached_repos(
+        [
+            RepoEntry(
+                "fabricated-name",
+                str(repository),
+                "fabricated-branch",
+                "evil/not-the-remote",
+                3.0,
+            )
+        ],
+        cache,
+    )
+
+    loaded = load_cached_repos(cache, github_user="acme")
+
+    assert loaded == [
+        RepoEntry(
+            "actual-name",
+            str(repository.resolve()),
+            repo_picker._branch(repository),
+            "acme/actual",
+            3.0,
+        )
+    ]
 
 
 def test_fuzzy_match_prefers_tighter_match_and_recent_when_empty(
@@ -151,22 +223,29 @@ def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(
     tmp_path: Path,
 ) -> None:
     cached_path = tmp_path / "cached"
-    cached_path.mkdir()
+    _init_repo(cached_path, ("origin", "https://github.com/acme/cached.git"))
     explicit_root = tmp_path / "explicit-root"
     explicit_root.mkdir()
     wanted_path = explicit_root / "wanted"
     wanted_path.mkdir()
     cache = tmp_path / "repos.json"
 
-    cached = RepoEntry("cached", str(cached_path), "main", "acme/cached", 9.0)
+    cached = RepoEntry(
+        cached_path.name,
+        str(cached_path.resolve()),
+        repo_picker._branch(cached_path),
+        "acme/cached",
+        9.0,
+    )
     wanted = RepoEntry("wanted", str(wanted_path), "main", "acme/wanted")
     save_cached_repos([cached], cache)
 
     scanned: list[tuple[Path, ...]] = []
     launched: list[RepoEntry] = []
 
-    def fake_discover(roots: tuple[Path, ...]) -> list[RepoEntry]:
+    def fake_discover(roots: tuple[Path, ...], *, github_user: str) -> list[RepoEntry]:
         scanned.append(roots)
+        assert github_user == "acme"
         return [wanted]
 
     def fake_launch(repo: RepoEntry) -> None:
@@ -174,6 +253,7 @@ def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(
         raise RuntimeError("launch intercepted")
 
     monkeypatch.setattr(repo_picker, "cache_path", lambda: cache)
+    monkeypatch.setattr(repo_picker, "github_authenticated_user", lambda: "acme")
     monkeypatch.setattr(repo_picker, "discover_repos", fake_discover)
     monkeypatch.setattr(repo_picker, "choose_repo", lambda repos, _query: repos[0])
     monkeypatch.setattr(repo_picker, "launch_repo", fake_launch)
@@ -183,4 +263,4 @@ def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(
 
     assert scanned == [(explicit_root,)]
     assert launched == [wanted]
-    assert load_cached_repos(cache) == [cached]
+    assert load_cached_repos(cache, github_user="acme") == [cached]

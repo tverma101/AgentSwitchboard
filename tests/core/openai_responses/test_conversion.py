@@ -206,6 +206,69 @@ def test_responses_messages_tools_and_tool_results_convert() -> None:
     assert payload["tool_choice"] == {"type": "tool", "name": "echo"}
 
 
+def test_responses_tool_result_image_output_converts_to_anthropic_image() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "deepseek/deepseek-chat",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_screenshot",
+                    "name": "computer",
+                    "arguments": '{"action":"screenshot"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_screenshot",
+                    "output": [
+                        {"type": "input_text", "text": "Screenshot captured."},
+                        {
+                            "type": "input_image",
+                            "image_url": _PNG_DATA_URL,
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_screenshot",
+                    "name": "computer",
+                    "input": {"action": "screenshot"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_screenshot",
+                    "content": [
+                        {"type": "text", "text": "Screenshot captured."},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": _PNG_DATA_URL.removeprefix(
+                                    "data:image/png;base64,"
+                                ),
+                            },
+                        },
+                    ],
+                }
+            ],
+        },
+    ]
+
+
 def test_responses_tool_choice_none_disables_forwarded_tools() -> None:
     payload = _to_anthropic_payload(
         {

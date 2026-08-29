@@ -29,9 +29,37 @@ This layer is advisory and is never the sole enforcement mechanism.
 ## Layer 2: hard context governor
 
 Oversized text-only tool results may be redirected to a private local artifact
-and replaced with a truthful bounded locator/excerpt. Exact structured/media
-state that cannot be safely transformed must fail explicitly rather than be
-silently truncated.
+and replaced with a truthful bounded locator/excerpt. Complete media blocks are
+preserved for a routed vision-capable model by default; exact structured/media
+state is never silently truncated. Structured values that cannot be safely
+transformed still fail explicitly.
+
+### Claude Code MCP boundary
+
+`fcc-claude` also gives the launched Claude process a bounded MCP result
+budget: it sets Claude Code's public `MAX_MCP_OUTPUT_TOKENS` to `12000` when
+the user has not already set that variable. An explicit user value is
+preserved. This protects the shared Claude conversation from a verbose local
+or remote MCP result without flattening FCC Computer Use screenshots.
+
+The FCC Computer Use server has a separate fail-closed `16 KiB` maximum for
+its deterministic `tools/list` schema. A schema change that exceeds that
+budget stops registration rather than silently adding another context-heavy
+tool contract. This guard covers the FCC-owned server only; global third-party
+servers remain registered under their existing Claude scopes, while the
+launched Claude process applies the result budget to their returned MCP
+content as well.
+
+`fcc-claude` also enables Claude Code's deferred MCP tool presentation with
+`ENABLE_TOOL_SEARCH=true` unless the user has already set that variable. This
+keeps the ordinary named tools available while keeping their full definitions
+out of the client's initial rendered context. Claude's search controller is an
+Anthropic-host feature, not an OpenAI-compatible provider function, so FCC
+filters its `tool_search_*` definitions and `tool_reference` history blocks at
+the provider boundary instead of forwarding them as fake tools or JSON text.
+The provider still receives the ordinary MCP definitions needed for direct
+tool calls; this is a client registration/context optimization, not a claim
+that every upstream provider implements Anthropic server-side tool search.
 
 Preferred action order:
 
@@ -62,7 +90,9 @@ hash, excerpt strategy, and a bounded retrieval path.
 Never blindly truncate protocol-significant JSON/tool state, tool ids/results,
 opaque reasoning/signature state, patch/apply status, required failure context,
 media/binary content, or secrets. Secret-bearing visible excerpts and artifacts
-must use the same redaction policy.
+must use the same redaction policy. `FCC_CONTEXT_GOVERNOR_PRESERVE_MEDIA=false`
+restores strict oversized-media rejection for environments that explicitly
+prefer that boundary.
 
 ## Verification
 

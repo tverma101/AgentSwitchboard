@@ -6,10 +6,13 @@ Copyright (c) 2023 Ted Conbeer
 See THIRD_PARTY_NOTICES.md.
 """
 
+from contextlib import suppress
+
 from textual.app import App
 from textual.binding import ActiveBinding
 from textual.screen import Screen
 
+from .control_preferences import DEFAULT_THEME, load_theme, save_theme
 from .harlequin_theme import HARLEQUIN_TEXTUAL_THEME
 
 
@@ -28,9 +31,22 @@ class HarlequinAppBase(App, inherit_bindings=False):
     """Small vendored subset of Harlequin's ``AppBase`` for the control shell."""
 
     def __init__(self) -> None:
+        self._persist_theme = False
         super().__init__()
         self.register_theme(HARLEQUIN_TEXTUAL_THEME)
-        self.theme = "harlequin"
+        saved_theme = load_theme()
+        self.theme = (
+            saved_theme if saved_theme in self.available_themes else DEFAULT_THEME
+        )
+        self._persist_theme = True
+
+    def _watch_theme(self, theme_name: str) -> None:
+        """Apply Textual's theme and retain command-palette changes locally."""
+
+        super()._watch_theme(theme_name)
+        if self._persist_theme:
+            with suppress(OSError, ValueError):
+                save_theme(theme_name)
 
     def get_default_screen(self) -> Screen:
         return ScreenBase(id="_default")

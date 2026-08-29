@@ -19,11 +19,16 @@ from .env_files import (
 from .model_aliases import parse_model_aliases
 from .model_catalog import ModelCatalogMode
 from .nim import NimSettings
-from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
+from .provider_catalog import (
+    BAI_DEFAULT_BASE,
+    BEDROCK_DEFAULT_BASE,
+    SUPPORTED_PROVIDER_IDS,
+)
 from .reasoning import ReasoningPreference
 
 _PROVIDER_POLICY_MODES = frozenset({"strict", "allow-listed", "diagnostic"})
 _CAPABILITY_ROUTING_MODES = frozenset({"strict", "smart_local", "smart_go", "custom"})
+_COMPUTER_USE_APPROVAL_MODES = frozenset({"auto", "decline"})
 
 
 class Settings(BaseSettings):
@@ -39,6 +44,13 @@ class Settings(BaseSettings):
 
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
+
+    # ==================== B.AI Config ====================
+    bai_api_key: str = Field(default="", validation_alias="BAI_API_KEY")
+    bai_base_url: str = Field(
+        default=BAI_DEFAULT_BASE,
+        validation_alias="BAI_BASE_URL",
+    )
 
     # ==================== Mistral La Plateforme ====================
     mistral_api_key: str = Field(default="", validation_alias="MISTRAL_API_KEY")
@@ -173,6 +185,14 @@ class Settings(BaseSettings):
         default="", validation_alias="MODEL_CATALOG_ALLOWLIST"
     )
     model_aliases: str = Field(default="", validation_alias="MODEL_ALIASES")
+    # The public catalog supplies metadata only; it never authorizes a provider
+    # or makes a hidden model visible to clients.
+    model_metadata_catalog_enabled: bool = Field(
+        default=True, validation_alias="MODEL_METADATA_CATALOG_ENABLED"
+    )
+    model_metadata_catalog_ttl_hours: float = Field(
+        default=24.0, validation_alias="MODEL_METADATA_CATALOG_TTL_HOURS"
+    )
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -206,6 +226,10 @@ class Settings(BaseSettings):
         default="",
         validation_alias="FCC_ALLOWED_HELPERS",
     )
+    computer_use_approval: str = Field(
+        default="auto",
+        validation_alias="FCC_COMPUTER_USE_APPROVAL",
+    )
     paid_fallback: bool = Field(
         default=False,
         validation_alias="FCC_PAID_FALLBACK",
@@ -214,6 +238,9 @@ class Settings(BaseSettings):
     # ==================== Context-pressure governor ====================
     context_governor_enabled: bool = Field(
         default=True, validation_alias="FCC_CONTEXT_GOVERNOR_ENABLED"
+    )
+    context_governor_preserve_media: bool = Field(
+        default=True, validation_alias="FCC_CONTEXT_GOVERNOR_PRESERVE_MEDIA"
     )
     context_governor_tool_result_max_bytes: int = Field(
         default=16 * 1024,
@@ -227,6 +254,9 @@ class Settings(BaseSettings):
     claude_known_good_version: str = Field(
         default="2.1.228", validation_alias="FCC_CLAUDE_KNOWN_GOOD_VERSION"
     )
+    claude_known_good_binary: str = Field(
+        default="", validation_alias="FCC_CLAUDE_KNOWN_GOOD_BINARY"
+    )
     claude_allow_uncertified: bool = Field(
         default=False, validation_alias="FCC_CLAUDE_ALLOW_UNCERTIFIED"
     )
@@ -239,6 +269,7 @@ class Settings(BaseSettings):
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
+    bai_proxy: str = Field(default="", validation_alias="BAI_PROXY")
     mistral_proxy: str = Field(default="", validation_alias="MISTRAL_PROXY")
     codestral_proxy: str = Field(default="", validation_alias="CODESTRAL_PROXY")
     lmstudio_proxy: str = Field(default="", validation_alias="LMSTUDIO_PROXY")
@@ -457,12 +488,33 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("computer_use_approval")
+    @classmethod
+    def validate_computer_use_approval(cls, value: str) -> str:
+        if value not in _COMPUTER_USE_APPROVAL_MODES:
+            raise ValueError(
+                "FCC_COMPUTER_USE_APPROVAL must be one of "
+                f"{sorted(_COMPUTER_USE_APPROVAL_MODES)}, got {value!r}"
+            )
+        return value
+
     @field_validator("model_catalog_mode", mode="before")
     @classmethod
     def parse_model_catalog_mode(cls, value: Any) -> Any:
         """Treat an empty Admin select as the legacy compatibility mode."""
 
         return None if value == "" else value
+
+    @field_validator("model_metadata_catalog_ttl_hours")
+    @classmethod
+    def validate_model_metadata_catalog_ttl_hours(cls, value: float) -> float:
+        """Keep refreshes bounded while allowing deliberate local refreshes."""
+
+        if not 0.25 <= value <= 720.0:
+            raise ValueError(
+                "MODEL_METADATA_CATALOG_TTL_HOURS must be between 0.25 and 720"
+            )
+        return value
 
     @field_validator("model_aliases")
     @classmethod

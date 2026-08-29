@@ -3,6 +3,10 @@
 import json
 from typing import Any
 
+from .content import (
+    is_tool_search_metadata_block,
+    without_tool_search_metadata,
+)
 from .models import MessagesRequest
 
 _MESSAGES_REQUEST_FIELDS = (
@@ -40,6 +44,7 @@ def dump_messages_request(request: MessagesRequest) -> dict[str, Any]:
 
 def serialize_tool_result_content(content: Any) -> str:
     """Serialize Anthropic ``tool_result.content`` into provider-safe text."""
+    content = without_tool_search_metadata(content)
     if content is None:
         return ""
     if isinstance(content, str):
@@ -49,6 +54,8 @@ def serialize_tool_result_content(content: Any) -> str:
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
+            if is_tool_search_metadata_block(item):
+                continue
             if isinstance(item, dict) and item.get("type") == "text":
                 parts.append(str(item.get("text", "")))
             elif isinstance(item, dict):
@@ -67,6 +74,8 @@ def tool_result_media_block_types(content: Any) -> tuple[str, ...]:
     or document cannot disappear behind a successful-looking JSON request.
     """
     found: set[str] = set()
+
+    content = without_tool_search_metadata(content)
 
     def visit(value: Any) -> None:
         if isinstance(value, dict):

@@ -18,6 +18,19 @@ CLAUDE_CONTEXT_CAP_MAX = 1_000_000
 CLAUDE_CONTEXT_CAP_ENV = "FCC_CLAUDE_CONTEXT_TOKENS"
 CLAUDE_BINARY_NAME = "claude"
 
+# Claude Code applies this public limit to MCP tool results. Keep the default
+# below the client warning threshold so a verbose local server cannot consume
+# the whole conversation; preserve an explicit user value unchanged.
+CLAUDE_MCP_OUTPUT_TOKENS_DEFAULT = 12_000
+CLAUDE_MCP_OUTPUT_TOKENS_ENV = "MAX_MCP_OUTPUT_TOKENS"
+
+# Claude Code disables deferred MCP tool loading when it is pointed at a
+# non-first-party base URL. FCC handles the search-only protocol blocks at its
+# provider boundary, so opt the child client back into deferred registration by
+# default while preserving an explicit client setting.
+CLAUDE_TOOL_SEARCH_DEFAULT = "true"
+CLAUDE_TOOL_SEARCH_ENV = "ENABLE_TOOL_SEARCH"
+
 # Keys Claude Code applies from its settings.json ``env`` block over the
 # process environment. FCC's launcher owns these for a proxy session; when a
 # user settings file sets any of them, Claude Code would silently override the
@@ -304,6 +317,11 @@ def build_claude_proxy_env(
     env[CLAUDE_PROCESS_WRAPPER_ENV] = process_wrapper_path or str(
         default_process_wrapper_path(base_env)
     )
+
+    if not env.get(CLAUDE_MCP_OUTPUT_TOKENS_ENV, "").strip():
+        env[CLAUDE_MCP_OUTPUT_TOKENS_ENV] = str(CLAUDE_MCP_OUTPUT_TOKENS_DEFAULT)
+    if not env.get(CLAUDE_TOOL_SEARCH_ENV, "").strip():
+        env[CLAUDE_TOOL_SEARCH_ENV] = CLAUDE_TOOL_SEARCH_DEFAULT
 
     env["DISABLE_AUTOUPDATER"] = "1"
     env["DISABLE_FEEDBACK_COMMAND"] = "1"

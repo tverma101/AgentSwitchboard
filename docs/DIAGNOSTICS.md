@@ -57,8 +57,9 @@ The API ingress emits `free_claude_code.api.visual_input.admitted` after image
 validation and capability admission. Its receipt contains only image counts,
 inline byte totals, validated attachment metadata, and the selected provider
 reference; it never includes image URLs or base64 data. Invalid inline bytes,
-unsupported source types, unsafe URL schemes, and missing vision evidence fail
-before provider construction.
+unsupported source types, unsafe URL schemes, and explicit non-vision metadata
+fail before provider construction. Unknown capability metadata is preserved for
+the provider protocol to decide.
 Request-shape and
 stable-prefix hashes deliberately exclude `metadata` and the Responses
 `prompt_cache_key`: those values partition cache state or carry client

@@ -306,7 +306,6 @@ def _app_server_args(paths: CodexComputerUsePaths, work_dir: Path) -> list[str]:
         "memories.generate_memories=false",
         "features.remote_plugin=false",
         "features.plugins=false",
-        "features.remote_control=false",
         "features.hooks=false",
         "analytics.enabled=false",
         'otel.exporter="none"',
@@ -391,7 +390,7 @@ class CodexComputerUseBroker:
             },
             timeout_seconds=15.0,
         )
-        self._notify("initialized")
+        self._notify("initialized", {})
         started = self._request(
             "thread/start",
             {
@@ -498,8 +497,12 @@ class CodexComputerUseBroker:
             if len(self._stderr) < 64:
                 self._stderr.append(raw.rstrip())
 
-    def _notify(self, method: str) -> None:
-        self._write({"method": method})
+    def _notify(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._write({"method": method, "params": dict(params or {})})
 
     def _write(self, message: Mapping[str, Any]) -> None:
         proc = self._proc

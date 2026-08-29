@@ -1,9 +1,18 @@
 """Convert Anthropic Messages into an upstream OpenAI Responses request."""
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
-from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
+from free_claude_code.core.anthropic.content import (
+    get_block_attr,
+    get_block_type,
+    is_tool_search_metadata_block,
+    is_tool_search_tool_definition,
+    is_tool_search_tool_name,
+    normalize_image_source,
+    without_tool_search_metadata,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.request_serialization import (
@@ -80,8 +89,11 @@ def build_responses_provider_request(
         body["top_p"] = request.top_p
     if request.metadata is not None:
         body["metadata"] = request.metadata
-    if request.tools:
-        body["tools"] = [
+    provider_tools: list[dict[str, Any]] = []
+    for tool in request.tools or ():
+        if is_tool_search_tool_definition(tool):
+            continue
+        provider_tools.append(
             {
                 "type": "function",
                 "name": tool_names.encode(tool.name),
@@ -89,8 +101,9 @@ def build_responses_provider_request(
                 "parameters": tool.input_schema or {"type": "object", "properties": {}},
                 "strict": False,
             }
-            for tool in request.tools
-        ]
+        )
+    if provider_tools:
+        body["tools"] = provider_tools
     if request.tool_choice is not None:
         body["tool_choice"] = _tool_choice(request.tool_choice, tool_names=tool_names)
     if reasoning_config := _reasoning_config(
@@ -125,7 +138,11 @@ def _validate_supported_request(request: MessagesRequest) -> None:
             f"{sorted(str(key) for key in request.model_extra)}."
         )
     provider_tool_types = sorted(
-        {tool.type for tool in request.tools or () if tool.type is not None}
+        {
+            tool.type
+            for tool in request.tools or ()
+            if tool.type is not None and not is_tool_search_tool_definition(tool)
+        }
     )
     if provider_tool_types:
         raise ResponsesConversionError(
@@ -264,6 +281,8 @@ def _assistant_items(
 
     for block in content:
         block_type = get_block_type(block)
+        if is_tool_search_metadata_block(block):
+            continue
         if block_type == "text":
             text_parts.append(
                 {
@@ -328,6 +347,8 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
 
     for block in content:
         block_type = get_block_type(block)
+        if is_tool_search_metadata_block(block):
+            continue
         if block_type == "text":
             message_parts.append(
                 {
@@ -340,19 +361,15 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
         elif block_type == "tool_result":
             tool_use_id = str(get_block_attr(block, "tool_use_id", ""))
             tool_content = get_block_attr(block, "content")
-            media_types = tool_result_media_block_types(tool_content)
-            if media_types:
-                raise ResponsesConversionError(
-                    "OpenAI Responses cannot represent structured media blocks "
-                    f"{media_types} inside tool_result {tool_use_id!r}; refusing "
-                    "lossy text serialization."
-                )
             flush_message()
             items.append(
                 {
                     "type": "function_call_output",
                     "call_id": tool_use_id,
-                    "output": serialize_tool_result_content(tool_content),
+                    "output": _tool_result_output(
+                        tool_content,
+                        tool_use_id=tool_use_id,
+                    ),
                 }
             )
         elif block_type == "document":
@@ -367,8 +384,72 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _tool_result_output(
+    content: Any,
+    *,
+    tool_use_id: str,
+) -> str | list[dict[str, Any]]:
+    """Convert one Anthropic tool result to a Responses output value.
+
+    Responses function-call outputs support a list of text, image, or file
+    input parts. Preserve supported image observations in that native shape so
+    Computer Use screenshots reach the model instead of being rejected or
+    flattened into text. Unknown nested media remains fail-closed because its
+    exact semantics cannot be reconstructed safely.
+    """
+    content = without_tool_search_metadata(content)
+    media_types = tool_result_media_block_types(content)
+    if not media_types:
+        return serialize_tool_result_content(content)
+    if isinstance(content, list):
+        blocks = content
+    elif isinstance(content, Mapping) and get_block_type(content) in {"text", "image"}:
+        # Claude/MCP bridges sometimes emit one content block directly instead
+        # of wrapping it in the usual list. It is still losslessly representable
+        # by Responses, so normalize that shape before converting it.
+        blocks = [content]
+    else:
+        raise ResponsesConversionError(
+            "OpenAI Responses cannot preserve structured media blocks "
+            f"{media_types} inside tool_result {tool_use_id!r} unless content is "
+            "an Anthropic content-block list; refusing lossy serialization."
+        )
+
+    output: list[dict[str, Any]] = []
+    for block in blocks:
+        block_type = get_block_type(block)
+        if is_tool_search_metadata_block(block):
+            continue
+        if block_type == "text":
+            output.append(
+                {
+                    "type": "input_text",
+                    "text": str(get_block_attr(block, "text", "")),
+                }
+            )
+            continue
+        if block_type == "image":
+            output.append(_image_part(block))
+            continue
+        if block_type == "document":
+            raise ResponsesConversionError(
+                "OpenAI Responses cannot represent document blocks inside "
+                f"tool_result {tool_use_id!r} without a supported file source; "
+                "refusing lossy serialization."
+            )
+        if tool_result_media_block_types(block):
+            raise ResponsesConversionError(
+                "OpenAI Responses cannot represent nested structured media blocks "
+                f"inside tool_result {tool_use_id!r}; refusing lossy serialization."
+            )
+        serialized = serialize_tool_result_content(block)
+        if serialized:
+            output.append({"type": "input_text", "text": serialized})
+    return output
+
+
 def _image_part(block: Any) -> dict[str, Any]:
-    source = get_block_attr(block, "source", {})
+    source = normalize_image_source(block)
     source_type = get_block_attr(source, "type")
     if source_type == "url":
         url = get_block_attr(source, "url")
@@ -430,6 +511,8 @@ def _tool_choice(
         name = choice.get("name")
         if not isinstance(name, str) or not name:
             raise ResponsesConversionError("Forced tool choice requires a tool name.")
+        if is_tool_search_tool_name(name):
+            return "auto"
         return {"type": "function", "name": tool_names.encode(name)}
     raise ResponsesConversionError(f"Unsupported tool_choice type {choice_type!r}.")
 

@@ -14,6 +14,7 @@ from free_claude_code.runtime.codex_computer_use_native_contract import (
 )
 from free_claude_code.runtime.codex_computer_use_skill import (
     CLAUDE_SKILL_NAME,
+    claude_config_dir_from_env,
     install_native_computer_use_skill,
     remove_native_computer_use_skill,
 )
@@ -38,6 +39,19 @@ def _paths(tmp_path: Path) -> tuple[CodexComputerUsePaths, Path]:
     client.parent.mkdir(parents=True)
     client.write_text("", encoding="utf-8")
     return CodexComputerUsePaths(codex=codex, app=app, client=client), skill.parent
+
+
+def test_claude_config_dir_uses_child_environment_and_default_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "profile" / "claude"
+    assert (
+        claude_config_dir_from_env({"CLAUDE_CONFIG_DIR": str(configured)}) == configured
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert claude_config_dir_from_env({}) == tmp_path / ".claude"
 
 
 def test_install_links_exact_official_skill_directory(tmp_path: Path) -> None:

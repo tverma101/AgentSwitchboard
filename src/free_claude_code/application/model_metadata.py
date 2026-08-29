@@ -1,7 +1,9 @@
 """Application-owned model metadata."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from math import isfinite
 
 
 class ReasoningCapabilityStatus(StrEnum):
@@ -30,6 +32,65 @@ class CapabilityVerificationStatus(StrEnum):
     FAIL = "fail"
     SKIPPED = "skipped"
     UNVERIFIED = "unverified"
+
+
+def normalize_model_pricing(value: object) -> tuple[tuple[str, float], ...]:
+    """Normalize provider/catalog price maps without retaining raw payloads.
+
+    Catalog sources use both ``cost`` (per-million-token values) and
+    ``pricing`` (often per-token string values).  The UI only needs a stable,
+    JSON-safe representation and whether every reported charge is zero, so
+    units are intentionally left to the source metadata.
+    """
+
+    if not isinstance(value, Mapping):
+        return ()
+    prices: dict[str, float] = {}
+    for raw_name, raw_value in value.items():
+        name = str(raw_name).strip()
+        if (
+            not name
+            or isinstance(raw_value, bool)
+            or not isinstance(raw_value, str | int | float)
+        ):
+            continue
+        try:
+            price = float(raw_value)
+        except TypeError, ValueError:
+            continue
+        if not isfinite(price) or price < 0:
+            continue
+        prices[name] = price
+    return tuple(sorted(prices.items()))
+
+
+def pricing_is_free(pricing: tuple[tuple[str, float], ...]) -> bool | None:
+    """Return free/paid when pricing is complete enough to make that claim."""
+
+    if not pricing:
+        return None
+    names = {name.casefold().replace("-", "_") for name, _ in pricing}
+    has_input_price = bool(
+        names
+        & {
+            "input",
+            "input_tokens",
+            "prompt",
+            "prompt_tokens",
+        }
+    )
+    has_output_price = bool(
+        names
+        & {
+            "completion",
+            "completion_tokens",
+            "output",
+            "output_tokens",
+        }
+    )
+    if not has_input_price or not has_output_price:
+        return None
+    return all(value == 0.0 for _, value in pricing)
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +229,62 @@ class ReasoningCapabilityEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelCatalogMetadata:
+    """Detailed, non-secret metadata imported from a model catalog."""
+
+    display_name: str | None = None
+    description: str | None = None
+    family: str | None = None
+    input_modalities: tuple[str, ...] = ()
+    output_modalities: tuple[str, ...] = ()
+    context_window: int | None = None
+    max_input_tokens: int | None = None
+    max_output_tokens: int | None = None
+    release_date: str | None = None
+    last_updated: str | None = None
+    status: str | None = None
+    open_weights: bool | None = None
+    supports_tools: bool | None = None
+    supports_structured_output: bool | None = None
+    supports_temperature: bool | None = None
+    supports_reasoning: bool | None = None
+    is_free: bool | None = None
+    pricing: tuple[tuple[str, float], ...] = ()
+    catalog_provider: str | None = None
+    source: str = "unknown"
+    source_version: str | None = None
+    observed_at: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-safe diagnostic/API representation."""
+
+        return {
+            "display_name": self.display_name,
+            "description": self.description,
+            "family": self.family,
+            "input_modalities": list(self.input_modalities),
+            "output_modalities": list(self.output_modalities),
+            "context_window": self.context_window,
+            "max_input_tokens": self.max_input_tokens,
+            "max_output_tokens": self.max_output_tokens,
+            "release_date": self.release_date,
+            "last_updated": self.last_updated,
+            "status": self.status,
+            "open_weights": self.open_weights,
+            "supports_tools": self.supports_tools,
+            "supports_structured_output": self.supports_structured_output,
+            "supports_temperature": self.supports_temperature,
+            "supports_reasoning": self.supports_reasoning,
+            "is_free": self.is_free,
+            "pricing": dict(self.pricing),
+            "catalog_provider": self.catalog_provider,
+            "source": self.source,
+            "source_version": self.source_version,
+            "observed_at": self.observed_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderModelInfo:
     """Provider model metadata used to shape the application model catalog."""
 
@@ -175,6 +292,8 @@ class ProviderModelInfo:
     supports_thinking: bool | None = None
     supports_vision: bool | None = None
     accepted_image_types: tuple[str, ...] = ()
+    is_free: bool | None = None
+    pricing: tuple[tuple[str, float], ...] = ()
     reasoning: ReasoningCapabilityEvidence = field(
         default_factory=ReasoningCapabilityEvidence
     )
@@ -182,6 +301,40 @@ class ProviderModelInfo:
     capability_verification: CapabilityVerification = field(
         default_factory=CapabilityVerification
     )
+    catalog_metadata: ModelCatalogMetadata | None = None
+
+    def effective_supports_vision(self) -> bool | None:
+        """Resolve vision support from explicit metadata and capability evidence."""
+
+        if self.supports_vision is not None:
+            return self.supports_vision
+        status = self.capability_evidence.status_for("vision_input")
+        if status is CapabilityEvidenceStatus.UNSUPPORTED:
+            return False
+        if status in {
+            CapabilityEvidenceStatus.SUPPORTED,
+            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+        }:
+            return True
+        if self.catalog_metadata is not None:
+            modalities = self.catalog_metadata.input_modalities
+            if modalities:
+                return "image" in {modality.casefold() for modality in modalities}
+        return None
+
+    def effective_is_free(self) -> bool | None:
+        """Resolve free/paid state from explicit or catalog pricing evidence."""
+
+        if self.is_free is not None:
+            return self.is_free
+        status = pricing_is_free(self.pricing)
+        if status is not None:
+            return status
+        if self.catalog_metadata is not None:
+            if self.catalog_metadata.is_free is not None:
+                return self.catalog_metadata.is_free
+            return pricing_is_free(self.catalog_metadata.pricing)
+        return None
 
     def with_observed_at(self, observed_at: str) -> ProviderModelInfo:
         """Stamp the catalog observation time on general capability evidence."""

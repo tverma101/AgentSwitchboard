@@ -90,8 +90,10 @@ def validate_visual_capability(
 ) -> VisualInputReceipt | None:
     """Reject known-incompatible image input before provider construction/I/O.
 
-    Image input fails closed unless the model catalog explicitly confirms vision
-    support. Text and tool-only requests do not require visual metadata.
+    Explicit negative metadata remains fail-closed. Missing or unconfirmed
+    metadata is not treated as a negative claim: provider preflight and the
+    upstream protocol own the final compatibility decision. Text and tool-only
+    requests do not require visual metadata.
     """
 
     visual_input = validate_visual_input(request)
@@ -99,23 +101,18 @@ def validate_visual_capability(
     if not required.requires(Capability.VISION_INPUT):
         return visual_input
     image_blocks = tuple(_iter_image_blocks(request.messages))
-    if model_info is None:
+    supports_vision = (
+        model_info.effective_supports_vision() if model_info is not None else None
+    )
+    if supports_vision is False:
         raise VisualCapabilityError(
-            f"Model {model_ref!r} has vision capability metadata unavailable; "
-            "the request was rejected before upstream I/O."
-        )
-    if model_info.supports_vision is not True:
-        if model_info.supports_vision is False:
-            message = f"Model {model_ref!r} does not support image input; "
-        else:
-            message = (
-                f"Model {model_ref!r} has vision capability metadata not confirmed; "
-            )
-        raise VisualCapabilityError(
-            message + "the request was rejected before upstream I/O."
+            f"Model {model_ref!r} does not support image input; the request was "
+            "rejected before upstream I/O."
         )
 
-    accepted_types = frozenset(model_info.accepted_image_types)
+    accepted_types = frozenset(
+        model_info.accepted_image_types if model_info is not None else ()
+    )
     if not accepted_types:
         return visual_input
     unsupported_types = sorted(

@@ -59,6 +59,8 @@ def _make_settings(**overrides):
     mock.azure_openai_base_url = "https://test-resource.openai.azure.com/openai/v1/"
     mock.nvidia_nim_api_key = "test_key"
     mock.open_router_api_key = "test_openrouter_key"
+    mock.bai_api_key = "test_bai_key"
+    mock.bai_base_url = "https://api.b.ai/v1"
     mock.mistral_api_key = "test_mistral_key"
     mock.codestral_api_key = "test_codestral_key"
     mock.deepseek_api_key = "test_deepseek_key"
@@ -78,6 +80,7 @@ def _make_settings(**overrides):
     mock.ollama_api_key = "test_ollama_cloud_key"
     mock.nvidia_nim_proxy = ""
     mock.open_router_proxy = ""
+    mock.bai_proxy = ""
     mock.lmstudio_proxy = ""
     mock.llamacpp_proxy = ""
     mock.mistral_proxy = ""
@@ -486,6 +489,7 @@ def test_create_provider_instantiates_each_builtin():
         "openai": OpenAICodexProvider,
         "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
+        "bai": OpenAIChatProvider,
         "mistral": MistralProvider,
         "mistral_codestral": OpenAIChatProvider,
         "deepseek": DeepSeekProvider,

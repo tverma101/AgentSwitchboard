@@ -173,10 +173,16 @@ def _launch_claude_from_control(
     """Adapt the terminal client callback to the Claude launcher entry points."""
 
     from free_claude_code.cli.launchers.claude import launch, launch_danger
+    from free_claude_code.cli.launchers.common import ClientLaunchError
 
     launcher = launch_danger if danger else launch
     try:
-        launcher(tuple(argv), cwd=cwd)
+        launcher(tuple(argv), cwd=cwd, raise_for_control=True)
     except SystemExit as exc:
-        if exc.code not in {None, 0}:
-            print(f"Claude exited with status {exc.code}.")
+        if exc.code in {None, 0}:
+            return
+        code = exc.code if isinstance(exc.code, int) else 1
+        raise ClientLaunchError(
+            f"Claude exited with status {exc.code}.",
+            code,
+        ) from None

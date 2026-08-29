@@ -322,6 +322,55 @@ def test_convert_tools():
     assert result[1]["function"]["description"] == ""  # Check default empty string
 
 
+def test_convert_tools_omits_anthropic_tool_search_controller() -> None:
+    tools = [
+        MockBlock(
+            name="tool_search_tool_regex",
+            type="tool_search_tool_regex_20251119",
+            description="Search deferred tools",
+            input_schema={"type": "object"},
+        ),
+        MockTool("click", "Click a visible control", {"type": "object"}),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_tools(tools)
+
+    assert [tool["function"]["name"] for tool in result] == ["click"]
+
+
+def test_convert_tools_keeps_ordinary_tool_search_name() -> None:
+    result = AnthropicToOpenAIConverter.convert_tools(
+        [MockTool("tool_search", "An ordinary MCP tool", {"type": "object"})]
+    )
+
+    assert result[0]["function"]["name"] == "tool_search"
+
+
+def test_build_base_request_omits_search_only_tool_surface() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "name": "tool_search_tool_regex",
+                    "type": "tool_search_tool_regex_20251119",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "tool_choice": {
+                "type": "tool",
+                "name": "tool_search_tool_regex",
+            },
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert "tools" not in body
+    assert body["tool_choice"] == "auto"
+
+
 def test_convert_tool_without_input_schema_uses_empty_object_schema():
     tools = [MockTool("web_search", None)]
 
@@ -358,6 +407,15 @@ def test_convert_tool_without_input_schema_uses_empty_object_schema():
 def test_convert_tool_choice(tool_choice, expected):
     result = AnthropicToOpenAIConverter.convert_tool_choice(tool_choice)
     assert result == expected
+
+
+def test_convert_tool_choice_downgrades_search_controller_to_auto() -> None:
+    assert (
+        AnthropicToOpenAIConverter.convert_tool_choice(
+            {"type": "tool", "name": "tool_search_tool_regex"}
+        )
+        == "auto"
+    )
 
 
 # --- Message Conversion Tests: User ---
@@ -410,6 +468,162 @@ def test_convert_user_message_tool_result_list():
     assert result[0]["role"] == "tool"
     assert result[0]["tool_call_id"] == "tool_456"
     assert result[0]["content"] == "Line 1\nLine 2"
+
+
+def test_convert_tool_search_metadata_is_not_serialized_as_provider_text() -> None:
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_reference", tool_name="mcp__computer__click")],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="tool_search",
+                    content=[
+                        {
+                            "type": "tool_reference",
+                            "tool_name": "mcp__computer__click",
+                        },
+                        {"type": "text", "text": "deferred tool metadata removed"},
+                    ],
+                )
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert "tool_reference" not in json.dumps(result)
+    assert result[-1] == {
+        "role": "tool",
+        "tool_call_id": "tool_search",
+        "content": "deferred tool metadata removed",
+    }
+
+
+def test_convert_search_server_tool_use_is_not_treated_as_provider_tool() -> None:
+    result = AnthropicToOpenAIConverter.convert_messages(
+        [
+            MockMessage(
+                "assistant",
+                [
+                    MockBlock(
+                        type="server_tool_use",
+                        id="search_1",
+                        name="tool_search_tool_regex",
+                        input={"q": "click"},
+                    )
+                ],
+            )
+        ]
+    )
+
+    assert result == [{"role": "assistant", "content": " "}]
+
+
+def test_convert_native_mcp_tool_result_image_outside_chat_tool_message() -> None:
+    """Keep MCP's direct image shape visible without putting media in role=tool."""
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(
+                    type="tool_use",
+                    id="tool_image",
+                    name="screenshot",
+                    input={},
+                )
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="tool_image",
+                    content=[
+                        {"type": "text", "text": "Screenshot captured."},
+                        {
+                            "type": "image",
+                            "data": VALID_PNG_BASE64,
+                            "mimeType": "image/png",
+                        },
+                    ],
+                )
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert result[1] == {
+        "role": "tool",
+        "tool_call_id": "tool_image",
+        "content": "Screenshot captured.",
+    }
+    assert result[3]["content"][-1] == {
+        "type": "image_url",
+        "image_url": {"url": f"data:image/png;base64,{VALID_PNG_BASE64}"},
+    }
+
+
+def test_convert_mcp_result_envelope_image_outside_chat_tool_message() -> None:
+    """Unwrap a complete MCP result before moving its image to a user turn."""
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(
+                    type="tool_use",
+                    id="tool_enveloped_image",
+                    name="screenshot",
+                    input={},
+                )
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="tool_enveloped_image",
+                    content={
+                        "content": [
+                            {"type": "text", "text": "Screenshot captured."},
+                            {
+                                "type": "image",
+                                "data": VALID_PNG_BASE64,
+                                "mimeType": "image/png",
+                            },
+                        ],
+                        "isError": False,
+                        "_meta": {"request_id": "metadata-is-not-model-content"},
+                    },
+                )
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result[1] == {
+        "role": "tool",
+        "tool_call_id": "tool_enveloped_image",
+        "content": "Screenshot captured.",
+    }
+    assert result[3]["content"][-1] == {
+        "type": "image_url",
+        "image_url": {"url": f"data:image/png;base64,{VALID_PNG_BASE64}"},
+    }
 
 
 def test_convert_user_message_rejects_media_inside_tool_result() -> None:

@@ -16,6 +16,7 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.content import get_block_attr
 from free_claude_code.core.anthropic.models import (
+    ContentBlockImage,
     Message,
     MessagesRequest,
     TokenCountRequest,
@@ -198,6 +199,7 @@ async def test_messages_handler_rejects_image_for_known_nonvision_model() -> Non
     )
     request = MessagesRequest(
         model="nvidia_nim/test-model",
+        stream=True,
         messages=[
             Message(
                 role="user",
@@ -222,7 +224,9 @@ async def test_messages_handler_rejects_image_for_known_nonvision_model() -> Non
 
 
 @pytest.mark.asyncio
-async def test_messages_handler_rejects_image_when_model_metadata_is_missing() -> None:
+async def test_messages_handler_delegates_image_when_model_metadata_is_missing() -> (
+    None
+):
     provider = FakeProvider()
     provider_resolver = MagicMock(return_value=provider)
     handler = MessagesHandler(
@@ -231,6 +235,7 @@ async def test_messages_handler_rejects_image_when_model_metadata_is_missing() -
     )
     request = MessagesRequest(
         model="nvidia_nim/test-model",
+        stream=True,
         messages=[
             Message(
                 role="user",
@@ -247,10 +252,98 @@ async def test_messages_handler_rejects_image_when_model_metadata_is_missing() -
         ],
     )
 
-    with pytest.raises(InvalidRequestError, match="metadata unavailable"):
-        await handler.create(request)
+    response = await handler.create(request)
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
 
-    provider_resolver.assert_not_called()
+    provider_resolver.assert_called_once_with("nvidia_nim")
+    assert len(provider.preflight_calls) == 1
+    assert len(provider.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_preserves_the_complete_image_by_default() -> None:
+    """Unknown metadata must not turn an image into a text-only request."""
+
+    provider = FakeProvider()
+    settings = Settings().model_copy(
+        update={"context_governor_tool_result_max_bytes": 512}
+    )
+    handler = MessagesHandler(settings, provider_resolver=lambda _: provider)
+    image = {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": _PNG_DATA,
+        },
+    }
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        stream=True,
+        messages=[
+            Message(
+                role="user", content=[image, {"type": "text", "text": "Inspect it."}]
+            )
+        ],
+    )
+
+    response = await handler.create(request)
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
+
+    routed_image = provider.requests[0].messages[0].content[0]
+    assert isinstance(routed_image, ContentBlockImage)
+    assert routed_image.model_dump(mode="json") == image
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_preserves_large_image_tool_result_for_vision_model() -> (
+    None
+):
+    provider = FakeProvider()
+    settings = Settings().model_copy(
+        update={"context_governor_tool_result_max_bytes": 4096}
+    )
+    handler = MessagesHandler(
+        settings,
+        provider_resolver=lambda _: provider,
+        model_info_resolver=lambda _provider, _model: ProviderModelInfo(
+            "test-model", supports_vision=True
+        ),
+    )
+    image_url = "https://example.test/screenshot.png?" + ("x" * 8_000)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "screenshot",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {"type": "url", "url": image_url},
+                            }
+                        ],
+                    }
+                ],
+            )
+        ],
+    )
+
+    response = await handler.create(request)
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
+
+    routed_content = get_block_attr(
+        provider.requests[0].messages[0].content[0], "content"
+    )
+    assert isinstance(routed_content, list)
+    assert get_block_attr(routed_content[0], "source")["url"] == image_url
 
 
 @pytest.mark.asyncio
@@ -382,7 +475,16 @@ async def test_responses_handler_admits_input_image_and_emits_receipt() -> None:
 
     assert len(provider.requests) == 1
     image_block = provider.requests[0].messages[0].content[0]
+    assert isinstance(image_block, ContentBlockImage)
     assert get_block_attr(image_block, "type") == "image"
+    assert image_block.model_dump(mode="json") == {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": _PNG_DATA,
+        },
+    }
     receipts = _trace_events(trace, "free_claude_code.api.visual_input.admitted")
     assert len(receipts) == 1
     assert receipts[0]["wire_api"] == "responses"

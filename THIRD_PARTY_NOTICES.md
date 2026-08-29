@@ -22,6 +22,59 @@ The modified derivative files retain their source headers and are wrapped by
 AgentSwitchboard privacy admission, authorization, validation, receipt, and
 persistence policy.
 
+## Retired Claude Codex Computer Use bridge (migration only)
+
+AgentSwitchboard includes a modified vendored copy of the standalone JSON-RPC
+bridge from **songkeys/claude-codex-computer-use**:
+
+- **Local path:** src/free_claude_code/cli/_vendor/claude_codex_computer_use/computer-use-mcp-bridge.mjs
+- **Source:** songkeys/claude-codex-computer-use at commit 61a2ad3a02a2baa5adf703673bb1cffa36adf4fb
+- **License:** MIT
+- **Modification:** vendored into the FCC wheel as a migration identity for
+  older FCC registrations. It is no longer the active Claude MCP command;
+  the active command is the Python app-server-backed FCC MCP server. The
+  signed-launcher, JSON-lines proxy, idle-release, and reinitialization
+  behavior is retained only so an existing FCC-owned entry can be recognized
+  and replaced safely.
+
+The bridge contains no OpenAI binaries or credentials. It is not used for new
+launches. The active server launches the user-installed signed Codex
+`app-server`, which in turn uses the official bundled Computer Use launcher.
+
+## Codex Computer Use app-server reference
+
+The active app-server/session shape was cross-checked against
+**fitchmultz/macuse** at commit `447df5214c143c7e88e644295451fc81fee71d70`:
+
+- **Source:** [fitchmultz/macuse](https://github.com/fitchmultz/macuse)
+- **License:** MIT
+- **Use in AgentSwitchboard:** behavioral and protocol reference only; no
+  macuse source or binary is distributed. FCC keeps its own Python MCP
+  boundary, policy checks, native-contract validation, screenshot preservation,
+  and bounded read-only recovery.
+
+MIT License
+
+Copyright (c) 2026 Songkeys
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## Attribution rule for future ports
 
 Any future copied or adapted implementation must record its source repository,

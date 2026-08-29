@@ -11,7 +11,11 @@ from typing import Any
 
 from free_claude_code.core.diagnostics import redact_sensitive_error_text
 
-from .content import get_block_attr, get_block_type
+from .content import (
+    get_block_attr,
+    get_block_type,
+    normalize_tool_result_content,
+)
 from .models import Message, MessagesRequest
 
 DEFAULT_TOOL_RESULT_MAX_BYTES = 16 * 1024
@@ -30,6 +34,9 @@ class ContextGovernorConfig:
 
     enabled: bool = True
     tool_result_max_bytes: int = DEFAULT_TOOL_RESULT_MAX_BYTES
+    # Media is protocol-significant input. Preserve it unless a caller
+    # explicitly opts into strict oversized-media rejection.
+    preserve_media: bool = True
     artifact_dir: Path = field(
         default_factory=lambda: Path.home() / ".fcc" / "context-artifacts"
     )
@@ -94,9 +101,11 @@ def govern_messages_request(
 
     FCC can only govern a tool result once the client sends it back to the
     gateway. Text-only results can be redirected to a local artifact. Images,
-    thinking/signature state, and structured JSON are never truncated: an
-    oversized value is rejected explicitly so protocol state cannot be
-    silently corrupted.
+    thinking/signature state, and structured JSON are never truncated. When
+    ``preserve_media`` is enabled by the application route, media-containing
+    results pass through unchanged so a vision model receives the original
+    image rather than a lossy excerpt. Other oversized structured values are
+    rejected explicitly so protocol state cannot be silently corrupted.
     """
 
     if not config.enabled:
@@ -117,9 +126,16 @@ def govern_messages_request(
                 blocks.append(block)
                 continue
 
-            content = get_block_attr(block, "content", "")
+            original_content = get_block_attr(block, "content", "")
+            content = normalize_tool_result_content(original_content)
+            if content is not original_content:
+                block = _copy_block_with_content(block, content)
+                message_changed = True
             text = _text_only_content(content)
             if text is None:
+                if config.preserve_media and _contains_media_content(content):
+                    blocks.append(block)
+                    continue
                 if _serialized_size(content) > config.tool_result_max_bytes:
                     tool_use_id = str(get_block_attr(block, "tool_use_id", "unknown"))
                     raise ContextGovernanceError(
@@ -199,6 +215,26 @@ def _text_only_content(content: object) -> str | None:
             return None
         parts.append(text)
     return "".join(parts)
+
+
+_MEDIA_BLOCK_TYPES = frozenset({"audio", "document", "image", "video"})
+
+
+def _contains_media_content(value: object) -> bool:
+    """Return whether a value contains a protocol media block."""
+
+    if get_block_type(value) in _MEDIA_BLOCK_TYPES:
+        return True
+    if isinstance(value, dict):
+        return any(_contains_media_content(child) for child in value.values())
+    if isinstance(value, list | tuple):
+        return any(_contains_media_content(child) for child in value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="python")
+        if isinstance(dumped, dict):
+            return _contains_media_content(dumped)
+    return False
 
 
 def _serialized_size(value: object) -> int:
@@ -347,7 +383,7 @@ def _clip_utf8(text: str, max_bytes: int, *, from_end: bool) -> str:
     return clipped.decode("utf-8", errors="ignore")
 
 
-def _copy_block_with_content(block: object, content: str) -> object:
+def _copy_block_with_content(block: object, content: Any) -> object:
     model_copy = getattr(block, "model_copy", None)
     if callable(model_copy):
         return model_copy(update={"content": content})

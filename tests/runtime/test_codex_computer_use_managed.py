@@ -2,6 +2,7 @@
 
 import os
 import queue
+from itertools import pairwise
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -55,8 +56,10 @@ def test_managed_args_enable_current_host_features_and_disable_model() -> None:
     assert 'model_provider="computer_use_disabled"' in rendered
     assert "features.multi_agent=false" in rendered
     assert "features.memories=false" in rendered
+    assert "features.remote_control=false" not in rendered
     assert "history.persistence=" in rendered
     assert args.count("--enable") == len(managed.FEATURE_FLAGS)
+    assert all(not (left == right == "-c") for left, right in pairwise(args))
     for feature in managed.FEATURE_FLAGS:
         assert feature in args
 
@@ -78,20 +81,98 @@ def test_managed_config_prefers_bundled_launcher(tmp_path: Path) -> None:
     assert config["enabled"] is True
 
 
-def test_managed_config_falls_back_to_verified_direct_client(tmp_path: Path) -> None:
+def test_managed_config_rejects_retired_direct_client_fallback(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
 
-    config = managed.managed_mcp_config(paths)
+    with pytest.raises(
+        managed.CodexComputerUseError,
+        match="refusing the retired direct SkyComputerUseClient path",
+    ):
+        managed.managed_mcp_config(paths)
 
-    assert config["command"] == str(paths.client)
-    assert config["args"] == ["mcp"]
-    assert config["enabled"] is True
+
+def test_install_claude_launcher_copies_official_script_into_profile_namespace(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    plugin = paths.codex.parent / managed.PLUGIN_RELATIVE_PATH
+    source = plugin / managed.LAUNCHER_RELATIVE_PATH
+    source.parent.mkdir(parents=True)
+    source_bytes = b'#!/bin/sh\nset -eu\nexec native-client "$@"\n'
+    source.write_bytes(source_bytes)
+    os.chmod(source, 0o755)
+
+    destination = managed.install_claude_native_launcher(
+        paths,
+        claude_config_dir=tmp_path / "claude-profile",
+    )
+
+    assert destination == (
+        tmp_path / "claude-profile" / managed.CLAUDE_LAUNCHER_RELATIVE_PATH
+    )
+    assert destination.read_bytes() == source_bytes
+    assert destination.stat().st_mode & 0o111
+    assert (destination.parent.parent / ".fcc-managed").read_text(
+        encoding="utf-8"
+    ) == managed.CLAUDE_LAUNCHER_MARKER
+
+
+def test_install_claude_launcher_refreshes_only_our_copy(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    plugin = paths.codex.parent / managed.PLUGIN_RELATIVE_PATH
+    source = plugin / managed.LAUNCHER_RELATIVE_PATH
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"#!/bin/sh\nfirst\n")
+    os.chmod(source, 0o755)
+    claude_config_dir = tmp_path / "claude-profile"
+
+    destination = managed.install_claude_native_launcher(
+        paths,
+        claude_config_dir=claude_config_dir,
+    )
+    source.write_bytes(b"#!/bin/sh\nupdated\n")
+
+    refreshed = managed.install_claude_native_launcher(
+        paths,
+        claude_config_dir=claude_config_dir,
+    )
+
+    assert refreshed == destination
+    assert destination.read_bytes() == b"#!/bin/sh\nupdated\n"
+
+
+def test_install_claude_launcher_refuses_user_owned_destination(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    plugin = paths.codex.parent / managed.PLUGIN_RELATIVE_PATH
+    source = plugin / managed.LAUNCHER_RELATIVE_PATH
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"#!/bin/sh\n")
+    os.chmod(source, 0o755)
+    claude_config_dir = tmp_path / "claude-profile"
+    destination = claude_config_dir / managed.CLAUDE_LAUNCHER_RELATIVE_PATH
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"user launcher\n")
+
+    with pytest.raises(managed.CodexComputerUseError, match="non-FCC file"):
+        managed.install_claude_native_launcher(
+            paths,
+            claude_config_dir=claude_config_dir,
+        )
+
+    assert destination.read_bytes() == b"user launcher\n"
 
 
 def test_thread_start_is_ephemeral_on_request_and_only_registers_computer_use(
     tmp_path: Path,
 ) -> None:
     paths = _paths(tmp_path)
+    plugin = paths.codex.parent / managed.PLUGIN_RELATIVE_PATH
+    launcher = plugin / managed.LAUNCHER_RELATIVE_PATH
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    os.chmod(launcher, 0o755)
     params = managed.managed_thread_start_params(paths, tmp_path / "work")
 
     assert params["ephemeral"] is True
@@ -273,6 +354,7 @@ def test_mutating_transport_timeout_is_indeterminate(tmp_path: Path) -> None:
     broker._messages = queue.Queue()
 
     with (
+        patch.object(broker, "_refresh_before_mutation") as refresh,
         patch.object(broker, "close") as close,
         pytest.raises(
             managed.CodexComputerUseIndeterminateError,
@@ -285,6 +367,11 @@ def test_mutating_transport_timeout_is_indeterminate(tmp_path: Path) -> None:
             timeout_seconds=0.001,
         )
 
+    refresh.assert_called_once_with(
+        "click",
+        {"app": "TextEdit", "x": 10, "y": 10},
+        timeout_seconds=0.001,
+    )
     close.assert_called_once()
 
 
@@ -307,3 +394,140 @@ def test_read_only_transport_timeout_is_not_indeterminate(tmp_path: Path) -> Non
         captured.value,
         managed.CodexComputerUseIndeterminateError,
     )
+
+
+def test_read_only_remote_connection_is_restarted_once(tmp_path: Path) -> None:
+    broker = managed.ManagedCodexComputerUseBroker(_paths(tmp_path))
+    proc = MagicMock()
+    proc.poll.return_value = None
+    broker._proc = proc
+    broker._thread_id = "thread-1"
+    disconnected = {
+        "content": [{"type": "text", "text": "remoteConnection"}],
+        "isError": True,
+    }
+    recovered = {"content": [{"type": "text", "text": "apps"}], "isError": False}
+
+    with (
+        patch.object(
+            broker, "_request_managed", side_effect=[disconnected, recovered]
+        ) as request,
+        patch.object(broker, "close") as close,
+        patch.object(broker, "start") as start,
+    ):
+        result = broker.call("list_apps", {})
+
+    assert result == recovered
+    assert request.call_count == 2
+    close.assert_called_once_with()
+    start.assert_called_once_with()
+
+
+def test_read_only_transport_error_is_restarted_once(tmp_path: Path) -> None:
+    broker = managed.ManagedCodexComputerUseBroker(_paths(tmp_path))
+    proc = MagicMock()
+    proc.poll.return_value = None
+    broker._proc = proc
+    broker._thread_id = "thread-1"
+    recovered = {"content": [{"type": "text", "text": "apps"}], "isError": False}
+
+    with (
+        patch.object(
+            broker,
+            "_request_managed",
+            side_effect=[
+                cu.CodexComputerUseError("Codex app-server exited during list_apps"),
+                recovered,
+            ],
+        ) as request,
+        patch.object(broker, "close") as close,
+        patch.object(broker, "start") as start,
+    ):
+        result = broker.call("list_apps", {})
+
+    assert result == recovered
+    assert request.call_count == 2
+    close.assert_called_once_with()
+    start.assert_called_once_with()
+
+
+def test_mutating_call_refreshes_state_and_normalizes_element_alias(
+    tmp_path: Path,
+) -> None:
+    broker = managed.ManagedCodexComputerUseBroker(_paths(tmp_path))
+    proc = MagicMock()
+    proc.poll.return_value = None
+    broker._proc = proc
+    broker._thread_id = "thread-1"
+    state = {"content": [{"type": "text", "text": "state"}], "isError": False}
+    result = {"content": [{"type": "text", "text": "clicked"}], "isError": False}
+
+    with patch.object(
+        broker, "_request_managed", side_effect=[state, result]
+    ) as request:
+        assert (
+            broker.call(
+                "click",
+                {"app": "Calculator", "element": 9},
+            )
+            == result
+        )
+
+    assert request.call_count == 2
+    assert request.call_args_list[0].args[0] == "mcpServer/tool/call"
+    assert request.call_args_list[0].args[1]["tool"] == "get_app_state"
+    assert request.call_args_list[0].args[1]["arguments"] == {"app": "Calculator"}
+    assert request.call_args_list[1].args[1]["tool"] == "click"
+    assert request.call_args_list[1].args[1]["arguments"] == {
+        "app": "Calculator",
+        "element_index": "9",
+    }
+
+
+def test_mutating_remote_connection_is_explained_without_replay(
+    tmp_path: Path,
+) -> None:
+    broker = managed.ManagedCodexComputerUseBroker(_paths(tmp_path))
+    proc = MagicMock()
+    proc.poll.return_value = None
+    broker._proc = proc
+    broker._thread_id = "thread-1"
+    result_with_image = {
+        "content": [
+            {"type": "text", "text": "remoteConnection"},
+            {"type": "image", "data": "encoded", "mimeType": "image/jpeg"},
+        ],
+        "isError": True,
+        "_meta": {"native": "preserved"},
+    }
+
+    with (
+        patch.object(broker, "_refresh_before_mutation") as refresh,
+        patch.object(
+            broker, "_request_managed", return_value=result_with_image
+        ) as request,
+        patch.object(broker, "close") as close,
+        patch.object(broker, "start") as start,
+    ):
+        result = broker.call(
+            "click",
+            {"app": "Calculator", "element_index": "9"},
+        )
+
+    assert request.call_count == 1
+    refresh.assert_called_once_with(
+        "click",
+        {"app": "Calculator", "element_index": "9"},
+        timeout_seconds=broker.timeout_seconds,
+    )
+    close.assert_not_called()
+    start.assert_not_called()
+    assert result["isError"] is True
+    assert "outcome is unknown" in result["content"][0]["text"]
+    assert "did not replay" in result["content"][0]["text"]
+    assert result["content"][1] == {
+        "type": "image",
+        "data": "encoded",
+        "mimeType": "image/jpeg",
+    }
+    assert result["_meta"] == {"native": "preserved"}

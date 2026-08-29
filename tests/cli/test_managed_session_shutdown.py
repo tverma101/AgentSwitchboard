@@ -34,6 +34,15 @@ def _completed_process(pid: int) -> MagicMock:
     return process
 
 
+@pytest.fixture(autouse=True)
+def _ignore_host_claude_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep session tests independent of the installed Claude version."""
+    monkeypatch.setattr(
+        "free_claude_code.cli.managed.session.shutil.which",
+        lambda _name: None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_stop_is_idempotent_without_a_live_process() -> None:
     session = ManagedClaudeSession("/tmp", "http://127.0.0.1:8082")
@@ -225,7 +234,7 @@ async def test_launch_publication_wins_before_concurrent_stop() -> None:
         stream_task = asyncio.create_task(
             _collect_session_events(session, "launch wins")
         )
-        await launch_entered.wait()
+        await asyncio.wait_for(launch_entered.wait(), timeout=1.0)
         stop_task = asyncio.create_task(session.stop())
         await asyncio.sleep(0)
         stopped_before_publication = stop_task.done()
@@ -272,7 +281,7 @@ async def test_concurrent_stop_wins_before_launch_publication() -> None:
         patch("free_claude_code.cli.managed.session.trace_event") as trace,
     ):
         stop_task = asyncio.create_task(session.stop())
-        await stop_entered.wait()
+        await asyncio.wait_for(stop_entered.wait(), timeout=1.0)
         stream_task = asyncio.create_task(_collect_session_events(session, "stop wins"))
         await asyncio.sleep(0)
 
@@ -356,7 +365,7 @@ async def test_cancelled_stop_keeps_pid_registered_and_can_be_retried() -> None:
         patch("free_claude_code.cli.managed.session.unregister_pid") as unregister,
     ):
         stopping = asyncio.create_task(session.stop())
-        await wait_entered.wait()
+        await asyncio.wait_for(wait_entered.wait(), timeout=1.0)
         stopping.cancel()
         with pytest.raises(asyncio.CancelledError):
             await stopping

@@ -25,6 +25,9 @@ from free_claude_code.providers.openai_codex import (
 )
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.factory import ProviderFactory, create_provider
+from free_claude_code.providers.runtime.model_metadata_catalog import (
+    ModelMetadataCatalog,
+)
 from free_claude_code.runtime.codex_computer_use_helper import (
     CodexComputerUseHelperAdapter,
 )
@@ -61,6 +64,7 @@ def build_asgi_app(
         runtime_factory=runtime_factory,
         connected_provider_ids=openai_auth.connected_provider_ids,
         model_catalog_publisher=CodexModelCatalogPublisher(),
+        model_metadata_catalog=ModelMetadataCatalog.from_settings(settings),
     )
     runtime = ApplicationRuntime(
         provider_manager,

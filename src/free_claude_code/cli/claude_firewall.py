@@ -2,6 +2,7 @@
 
 from free_claude_code.core.claude_compatibility import (
     CLAUDE_ALLOW_UNCERTIFIED_ENV,
+    CLAUDE_KNOWN_GOOD_BINARY_ENV,
     CLAUDE_KNOWN_GOOD_VERSION_ENV,
     CLAUDE_PROCESS_WRAPPER_ENV,
     CLAUDE_PROCESS_WRAPPER_PATH_ENV,
@@ -10,12 +11,15 @@ from free_claude_code.core.claude_compatibility import (
     default_process_wrapper_path,
     enforce_claude_compatibility,
     ensure_process_wrapper,
+    find_known_good_claude_binary,
     inspect_claude_compatibility,
+    install_known_good_claude_binary,
     write_compatibility_receipt,
 )
 
 __all__ = [
     "CLAUDE_ALLOW_UNCERTIFIED_ENV",
+    "CLAUDE_KNOWN_GOOD_BINARY_ENV",
     "CLAUDE_KNOWN_GOOD_VERSION_ENV",
     "CLAUDE_PROCESS_WRAPPER_ENV",
     "CLAUDE_PROCESS_WRAPPER_PATH_ENV",
@@ -24,6 +28,8 @@ __all__ = [
     "default_process_wrapper_path",
     "enforce_claude_compatibility",
     "ensure_process_wrapper",
+    "find_known_good_claude_binary",
     "inspect_claude_compatibility",
+    "install_known_good_claude_binary",
     "write_compatibility_receipt",
 ]

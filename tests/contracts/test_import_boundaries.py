@@ -4,6 +4,7 @@ import ast
 import subprocess
 import sys
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +60,30 @@ IMPORT_EXCEPTIONS: dict[tuple[str, str], str] = {
     ): (
         "Owner: explicit Claude MCP process entry point. "
         "Reason: this fixed stdio surface owns the runtime adapter lifecycle boundary."
+    ),
+    (
+        "free_claude_code.cli.launchers.claude",
+        "free_claude_code.runtime.codex_computer_use",
+    ): (
+        "Owner: installed Claude launcher. "
+        "Reason: the launcher verifies the signed Computer Use installation "
+        "before spawning Claude."
+    ),
+    (
+        "free_claude_code.cli.launchers.claude",
+        "free_claude_code.runtime.codex_computer_use_skill",
+    ): (
+        "Owner: installed Claude launcher. "
+        "Reason: the launcher installs the official skill link and registers "
+        "the local MCP surface before spawning Claude."
+    ),
+    (
+        "free_claude_code.cli.launchers.claude",
+        "free_claude_code.runtime.codex_computer_use_managed",
+    ): (
+        "Owner: installed Claude launcher. "
+        "Reason: the launcher copies the official native launcher into the "
+        "active Claude profile before registering its local MCP surface."
     ),
 }
 
@@ -239,7 +264,7 @@ def test_google_reasoning_wire_fields_have_one_owner() -> None:
         for path in root.rglob("*.py"):
             if path == owner:
                 continue
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = _parse_module(path)
             offenders.extend(
                 f"{path.relative_to(_REPO_ROOT).as_posix()}:{node.lineno}: {node.value}"
                 for node in ast.walk(tree)
@@ -259,7 +284,7 @@ def test_cli_local_http_transport_has_one_owner() -> None:
     for path in cli_root.rglob("*.py"):
         if path == owner:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = _parse_module(path)
         relative_path = path.relative_to(_REPO_ROOT).as_posix()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module == "urllib.request":
@@ -461,7 +486,7 @@ def test_anthropic_request_boundaries_use_the_protocol_model() -> None:
 
     for root in roots:
         for path in root.rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = _parse_module(path)
             relative = path.relative_to(_REPO_ROOT).as_posix()
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -538,7 +563,7 @@ def test_providers_do_not_own_wire_error_type_literals() -> None:
     }
     offenders: list[str] = []
     for path in (_PACKAGE_ROOT / "providers").rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = _parse_module(path)
         offenders.extend(
             f"{path.relative_to(_REPO_ROOT).as_posix()}:{node.lineno}: {node.value}"
             for node in ast.walk(tree)
@@ -627,9 +652,20 @@ def test_message_tree_mutability_stays_behind_its_facade() -> None:
 
 
 def _module_paths(package_root: Path) -> dict[str, Path]:
-    return {
-        _module_name(package_root, path): path for path in package_root.rglob("*.py")
-    }
+    return dict(_cached_module_paths(package_root))
+
+
+@cache
+def _cached_module_paths(package_root: Path) -> tuple[tuple[str, Path], ...]:
+    return tuple(
+        sorted(
+            (
+                (_module_name(package_root, path), path)
+                for path in package_root.rglob("*.py")
+            ),
+            key=lambda item: item[0],
+        )
+    )
 
 
 def _module_name(package_root: Path, path: Path) -> str:
@@ -643,6 +679,11 @@ def _module_name(package_root: Path, path: Path) -> str:
 
 
 def _scan_imports(package_root: Path) -> list[ImportRecord]:
+    return list(_cached_scan_imports(package_root))
+
+
+@cache
+def _cached_scan_imports(package_root: Path) -> tuple[ImportRecord, ...]:
     module_paths = _module_paths(package_root)
     modules = set(module_paths)
     records: list[ImportRecord] = []
@@ -653,9 +694,14 @@ def _scan_imports(package_root: Path) -> list[ImportRecord]:
             modules=modules,
             path=path.relative_to(package_root.parent).as_posix(),
         )
-        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        visitor.visit(_parse_module(path))
         records.extend(visitor.records)
-    return records
+    return tuple(records)
+
+
+@cache
+def _parse_module(path: Path) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
 def _resolve_import_from_base(
@@ -712,7 +758,7 @@ def _provider_backchannel_offenders(provider_root: Path) -> list[str]:
     offenders: list[str] = []
     for path in sorted(provider_root.rglob("*.py")):
         relative_path = path.relative_to(provider_root).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = _parse_module(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 arguments = (

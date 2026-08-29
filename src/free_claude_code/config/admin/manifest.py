@@ -227,6 +227,31 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "MODEL_METADATA_CATALOG_ENABLED",
+        "Public Model Metadata",
+        "models",
+        "boolean",
+        settings_attr="model_metadata_catalog_enabled",
+        default="true",
+        advanced=True,
+        restart_required=True,
+        description=(
+            "Enrich discovered models from models.dev without enabling providers "
+            "or changing model visibility."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_METADATA_CATALOG_TTL_HOURS",
+        "Metadata Refresh Interval (hours)",
+        "models",
+        "number",
+        settings_attr="model_metadata_catalog_ttl_hours",
+        default="24",
+        advanced=True,
+        restart_required=True,
+        description="Refresh the persisted public model metadata snapshot at most once per interval.",
+    ),
+    ConfigFieldSpec(
         "FCC_PROVIDER_POLICY_MODE",
         "Provider Policy Mode",
         "runtime",
@@ -276,6 +301,24 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         description=(
             "Comma- or newline-separated IDs from the frozen startup registry. "
             "An installed binary or credential never authorizes a helper."
+        ),
+    ),
+    ConfigFieldSpec(
+        "FCC_COMPUTER_USE_APPROVAL",
+        "Computer Use App Approval",
+        "runtime",
+        "select",
+        settings_attr="computer_use_approval",
+        default="auto",
+        options=(
+            ConfigOptionSpec("auto", "Automatic when helper is allow-listed"),
+            ConfigOptionSpec("decline", "Decline native app access"),
+        ),
+        session_sensitive=True,
+        restart_required=True,
+        description=(
+            "The native host prompt is accepted only after codex-computer-use "
+            "is explicitly allow-listed; decline keeps the helper fail-closed."
         ),
     ),
     ConfigFieldSpec(
