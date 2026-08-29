@@ -15,22 +15,42 @@ control center exits. If an unrelated process owns the port, FCC reports that
 conflict without emitting a Uvicorn bind traceback. Use `--headless` or a
 non-TTY invocation for the prior blocking server-only behavior.
 
-The control center keeps the surface intentionally small: Enter/C launches
-`fcc-claude`, D launches `fccdanger`, O selects a locally discovered repository,
-F selects or manages the next-launch learning profile (including explicit
-bundle preview/transfer), P opens provider status and explicit configuration,
-testing, local reachability, or FCC connected-account login actions, and lets
-the user add, edit, test, enable/disable, or remove custom providers through
-the canonical Admin API. A opens the independent Codex Tool Accounts command
-surface; X prints the same separation and the safe `fcc accounts` commands
-without launching OAuth. M lists cached models and opens the shared filterable
-picker for an explicit model change, U shows local usage, N runs metadata-only
-route diagnostics, S edits Model and Reasoning Policy through the canonical
-loopback Admin API, L previews/filters the existing structured server log, R
-restarts only an FCC supervisor owned by this terminal, and Q exits. Locked
-Admin fields remain read-only. Repository and profile selection are local-only;
-they are passed to the child launch and do not change a live server/session
-namespace.
+The control center is a Textual application with a persistent sidebar and a
+main pane. Navigate with the arrow keys, mouse, or Enter. The Claude and Danger
+buttons launch the selected next-launch profile and repository; the application
+returns to the control center when that child exits or reports a launch error.
+Launch failures remain in a persistent red error card with the actionable
+diagnostic and exit status. When the FCC Claude compatibility firewall blocks a
+version, the launcher automatically tries an exact known-good executable from
+the configured path, PATH, or FCC's private npm offline cache; it never enables
+uncertified mode or substitutes an unverified older binary. The error screen
+also exposes visible `Repair & start` buttons, so a missing fallback can be
+repaired and retried without quitting `fcc-server`.
+If `fcc-claude` starts its own server owner, it launches the original Claude
+arguments after the server is ready and then returns to this same control
+center.
+
+Each page exposes explicit buttons for its actions. Profiles can be created and
+selected without nested shell prompts. Models use full-width rows: Space or a
+click toggles a pending selection, while `Enable selected`, `Disable selected`,
+and `Disable all` are separate actions. `Disable all` clears the curated
+allowlist but retains the discovered inventory so it can be searched and
+re-enabled. The Models page provides provider, search, and `Free first`/
+`Free only`/`All prices` filters; filters never enable a model implicitly.
+The discovery response is reused while filtering or searching, so typing does
+not issue a provider request for every key. Use `Refresh` to explicitly fetch a
+new discovery snapshot.
+
+Repository rows are rebuilt from live local Git roots and GitHub remotes owned by
+the currently authenticated `gh` account; stale or fabricated cache display data
+is ignored. If that account cannot be verified, the page shows no repositories
+and tells the user to run `gh auth login`. Repository and profile selection is
+local-only: it applies to the next child launch and does not change a live
+server/session namespace. Locked Admin fields remain read-only. Provider,
+account, usage, diagnostics, policy, logs, and settings actions report failures
+in the page summary and an error notification instead of silently flashing away.
+The command palette's theme selection is persisted in
+`~/.fcc/control-center.json`.
 
 The home screen is deliberately local-only: it uses the startup settings
 snapshot and supervisor state and does not request Admin/provider data on every
@@ -58,6 +78,6 @@ uses `~/.fcc/auth/openai.json`; `fcc accounts` uses `$CODEX_HOME/auth.json` and
 and forgets private local Codex auth snapshots without logging out an upstream
 account; selections apply only to new Codex/helper sessions.
 
-From the terminal control-center home, press `A` (or enter `accounts` or
-`subscriptions`) to open that same account surface; `P` remains the provider
-menu.
+The Accounts and Providers pages are separate sidebar destinations. FCC account
+login/switching never changes the Codex Tool Account store, and Codex account
+switching never changes FCC provider authentication.

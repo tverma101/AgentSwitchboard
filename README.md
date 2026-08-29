@@ -37,7 +37,7 @@ terminal-browser presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.58.0`; examples below describe this checkout, not every feature proposed in
+`4.60.3`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -97,6 +97,38 @@ The repository installers remain available for a full machine setup:
 them before running. Re-run the editable uv command after local changes so the
 installed `fcc-server`, `fcc-claude`, and `fccdanger` commands use this release
 head.
+
+### Local test loop
+
+The local test configuration runs pytest in one process so a full run leaves
+normal CPU capacity available on a developer Mac. Use the fast loop for
+the ordinary edit/check cycle:
+
+```bash
+./scripts/ci.sh --fast
+```
+
+It uses quiet pytest output and excludes tests marked `integration`, `live`,
+`interactive`, or `installer`. The pytest process is also launched with a
+small macOS utility-QoS/priority reduction (or `nice -n 5` on other POSIX
+systems), and child processes inherit that policy. Run the complete local sequence with
+`./scripts/ci.sh`; it runs the lightweight set serially and then runs
+the safe marked tier serially. Installer and uninstaller tests are intentionally
+not part of that routine loop because they exercise process discovery and
+machine-install surfaces. Run them only when needed with:
+
+```bash
+./scripts/ci.sh --only pytest --installers
+```
+
+Run the explicit marked integration/live/interactive tier alone with:
+
+```bash
+./scripts/ci.sh --only pytest --integration
+```
+
+Use `--only pytest` when iterating on tests without rerunning formatting,
+linting, or type checks.
 
 ### 2. Start FCC
 
@@ -199,6 +231,16 @@ discovery. Optional stable client-facing aliases use
 gateway while receipts and provider dispatch retain the exact target ref. See
 [Configuration](docs/CONFIGURATION.md) for the complete policy.
 
+Discovered models are enriched from one cached `models.dev` snapshot per TTL
+window. The metadata includes modalities, context/output limits, and pricing
+signals and is stored at `~/.fcc/model-metadata-catalog.json`; it never enables
+providers or changes model visibility. The terminal Models page can order free
+models first or show only models with explicit free evidence. Missing pricing
+stays unknown and is excluded from `Free only`; model names are never treated as
+proof of a free offer. Disable it with
+`MODEL_METADATA_CATALOG_ENABLED=false` or tune
+`MODEL_METADATA_CATALOG_TTL_HOURS` in `~/.fcc/.env`.
+
 ### 4. Run Your Coding Agent
 
 Claude Code:
@@ -300,28 +342,15 @@ completes a Bash marker through FCC/OpenCode Go/Muse. The earlier
 is retained as historical failed-probe evidence. The complete
 PASS/UNVERIFIED/SKIPPED map is in the
 [Claude compatibility matrix](smoke/receipts/claude-compatibility-matrix-2026-08-24.json).
-### Emergency AgentSwitchboard CI on Codespaces
+### CI execution
 
-Protected push, pull-request, and merge-group CI uses GitHub-hosted
-`ubuntu-latest` runners. It does not depend on a Mac runner or the
-`HARNESS_RUNNER` repository variable.
-
-The optional `fcc burst` command is a separate emergency path. It adds compute
-through a temporary runner hosted by the minimal private repository
-`tverma101/Rumple`:
-
-```bash
-fcc burst --ref fix/my-branch
-```
-
-It reuses or creates the Rumple Codespace, defaults to GitHub's
-`basicLinux32gb` machine (2 cores), waits for the `harness-burst` runner,
-dispatches CI, watches the run, and stops the Codespace afterward. The branch
-must already be pushed because GitHub Actions runs against the remote ref.
-Configure the `GH_OWNER`, `GH_REPOSITORY`, and `GH_TOKEN` Codespaces secrets
-described in the [Rumple setup](https://github.com/tverma101/Rumple) first.
-Use `fcc burst stop` to stop the selected Rumple Codespace on demand. This
-explicit burst path does not change the normal GitHub-hosted CI routing.
+Protected push, pull-request, merge-group, and manual-dispatch CI uses only
+GitHub-hosted `ubuntu-latest` runners. It does not depend on a Mac runner,
+Codespaces, a self-hosted label, or the `HARNESS_RUNNER` repository variable.
+The historical `fcc burst` path is not part of this repository's CI policy and
+must not be used to validate or merge changes. For local development, the
+default `scripts/ci.sh` pytest tier is serial and excludes subprocess-heavy
+installer, integration, live, and interactive tests; those tiers are explicit.
 
 ### Inspect usage and model labels
 
@@ -353,6 +382,7 @@ catalog at `~/.fcc/codex-model-catalog.json` when a client needs discovery.
 | [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | FCC connected-account state | `openai/<model-id>` |
 | [Azure OpenAI](https://learn.microsoft.com/azure/foundry/openai/how-to/chatgpt) | `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_BASE_URL` | `azure_openai/<deployment-name>` |
 | [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | `open_router/openrouter/free` |
+| [B.AI](https://docs.b.ai/llmservice/api/) | `BAI_API_KEY` | `bai/deepseek-v4-flash` |
 | [Google AI Studio (Gemini)](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | `gemini/models/gemini-3.1-flash-lite` |
 | [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai) | `VERTEX_PROJECT_ID` + ADC | `vertex/google/gemini-3.5-flash` |
 | [DeepSeek](https://platform.deepseek.com/api_keys) | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat` |
@@ -400,6 +430,12 @@ catalog at `~/.fcc/codex-model-catalog.json` when a client needs discovery.
   [Kimi's community guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
 - OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use the explicit
   `opencode_zen/` and `opencode_go/` model prefixes.
+- B.AI uses `BAI_API_KEY` with its OpenAI-compatible API at
+  `https://api.b.ai/v1`. FCC discovers exact B.AI model IDs from the provider's
+  `/v1/models` response. If that response omits pricing, FCC shows the model as
+  unknown rather than claiming it is free. B.AI's time-limited promotions are
+  intentionally not hardcoded; `Free only` requires explicit zero-price or
+  `is_free` metadata.
 - For Amazon Bedrock, set `BEDROCK_BASE_URL` to the URL for the same region as
   the API key and select one of the listed models.
 - Vertex AI uses Google Application Default Credentials instead of an API key.
@@ -488,9 +524,14 @@ own environment rather than using the FCC launcher firewall.
 
 FCC validates PNG, JPEG, and WebP image bytes before forwarding them and exposes
 metadata-only attachment receipts (hash, dimensions, size, and media type). The
-model catalog exposes explicit vision support and accepted image types; a
-non-vision model or a model without confirmed vision metadata rejects image
-input before provider I/O. Text/tool requests do not require visual metadata.
+model catalog exposes explicit vision support and accepted image types. Vision
+capable models receive the complete original image block by default, including
+images nested in tool results; unknown metadata is preserved and delegated to
+the provider rather than treated as a rejection. An explicitly non-vision model
+is rejected before provider I/O. Set
+`FCC_CONTEXT_GOVERNOR_PRESERVE_MEDIA=false` only when you explicitly want
+oversized media to fail closed. Text/tool requests do not require visual
+metadata.
 The terminal fallback is a compact `[img ... · attached]` card; Kitty and iTerm2
 capability detection is available to the wrapper without emitting escape codes
 to unsupported terminals. `fcc-appshot` exposes a demand-only macOS

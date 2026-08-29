@@ -10,18 +10,14 @@ def test_ci_workflow_uses_hosted_runner_for_normal_ci() -> None:
         encoding="utf-8"
     )
 
-    expected_runs_on = (
-        "runs-on: ${{ github.event_name == 'workflow_dispatch' "
-        "&& inputs.runner_label || 'ubuntu-latest' }}"
-    )
-    assert workflow.count(expected_runs_on) == 2
+    assert workflow.count("runs-on: ubuntu-latest") == 2
     assert "workflow_dispatch:" in workflow
-    assert "default: ubuntu-latest" in workflow
-    assert "- harness-burst" in workflow
+    assert "runner_label" not in workflow
+    assert "harness-burst" not in workflow
     assert "vars.HARNESS_RUNNER" not in workflow
     assert "harness-local" not in workflow
     assert "self-hosted" not in workflow
-    assert "enable-cache: false" in workflow
+    assert "enable-cache: true" in workflow
     assert "cache-python: false" in workflow
     assert workflow.count("uv run --no-sync") == 4
     assert workflow.count("uv sync --locked") == 1

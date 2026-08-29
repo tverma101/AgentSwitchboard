@@ -310,28 +310,11 @@ def test_supported_adapters_preserve_order_and_media_count(
     )
 
 
-@pytest.mark.parametrize(
-    ("builder", "error_type"),
-    [
-        (build_base_request_body, OpenAIConversionError),
-        (
-            lambda request: build_responses_provider_request(
-                request,
-                reasoning=DEFAULT_REASONING_POLICY,
-            ),
-            ResponsesConversionError,
-        ),
-    ],
-)
-def test_openai_bridges_reject_tool_result_media_before_upstream(
-    builder: Any,
-    error_type: type[Exception],
-) -> None:
+def test_openai_chat_bridge_preserves_tool_result_image_without_tool_media() -> None:
     request = _tool_result_image_request()
     before_count, before_hash = media_metadata(request.model_dump(mode="python"))
 
-    with pytest.raises(error_type, match="media"):
-        builder(request)
+    body = build_base_request_body(request)
 
     assert before_count == 1
     assert before_hash is not None
@@ -339,6 +322,45 @@ def test_openai_bridges_reject_tool_result_media_before_upstream(
     assert request_data["messages"][1]["content"][0]["tool_use_id"] == (
         "call_screenshot"
     )
+    tool_message = next(
+        message for message in body["messages"] if message["role"] == "tool"
+    )
+    assert isinstance(tool_message["content"], str)
+    assert "image" not in tool_message["content"]
+    assert ("image_url", "image/png") in _wire_media(body)
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        lambda request: build_responses_provider_request(
+            request,
+            reasoning=DEFAULT_REASONING_POLICY,
+        ),
+        _go_responses_body,
+    ],
+)
+def test_responses_bridges_preserve_tool_result_image_before_upstream(
+    builder: Any,
+) -> None:
+    request = _tool_result_image_request(model="gpt-5.6-luna")
+    before_count, before_hash = media_metadata(request.model_dump(mode="python"))
+
+    body = builder(request)
+
+    output = next(
+        item for item in body["input"] if item["type"] == "function_call_output"
+    )
+    assert output["call_id"] == "call_screenshot"
+    assert output["output"] == [
+        {"type": "input_text", "text": "Screenshot captured."},
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64," + _encoded_image("image/png"),
+        },
+    ]
+    assert before_count == 1
+    assert before_hash is not None
 
 
 def test_native_routes_preserve_tool_result_image_association() -> None:

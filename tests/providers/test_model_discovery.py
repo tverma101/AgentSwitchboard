@@ -1,5 +1,8 @@
 import asyncio
+import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -30,6 +33,9 @@ from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
+from free_claude_code.providers.runtime.model_metadata_catalog import (
+    ModelMetadataCatalog,
+)
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 from tests.providers.support import immediate_admission, profiled_provider
 
@@ -71,11 +77,14 @@ def _settings(
 def _manager(
     settings: Settings,
     providers: dict[str, BaseProvider] | None = None,
+    *,
+    model_metadata_catalog: ModelMetadataCatalog | None = None,
 ) -> ProviderRuntimeManager:
     providers = providers or {}
     return ProviderRuntimeManager(
         settings,
         runtime_factory=lambda snapshot: ProviderRuntime(snapshot, dict(providers)),
+        model_metadata_catalog=model_metadata_catalog,
     )
 
 
@@ -381,6 +390,52 @@ async def test_model_listing_propagates_upstream_errors() -> None:
         pytest.raises(RuntimeError, match="upstream unavailable"),
     ):
         await provider.list_model_infos()
+
+
+@pytest.mark.asyncio
+async def test_runtime_discovery_enriches_models_before_caching(tmp_path: Path) -> None:
+    async def fetch_payload() -> bytes:
+        return json.dumps(
+            {
+                "opencode": {
+                    "models": {
+                        "mimo-v2.5-free": {
+                            "name": "MiMo V2.5 Free",
+                            "modalities": {
+                                "input": ["text", "image"],
+                                "output": ["text"],
+                            },
+                            "limit": {"context": 200000, "output": 32000},
+                            "reasoning": True,
+                        }
+                    }
+                }
+            }
+        ).encode()
+
+    settings = _settings(
+        model="opencode_zen/mimo-v2.5-free",
+        opencode_api_key="opencode-key",
+    )
+    catalog = ModelMetadataCatalog(
+        tmp_path / "model-metadata-catalog.json",
+        fetch_payload=fetch_payload,
+        now=lambda: datetime(2026, 8, 27, 20, 0, tzinfo=UTC),
+    )
+    runtime = _manager(
+        settings,
+        {"opencode_zen": FakeProvider(_infos("mimo-v2.5-free"))},
+        model_metadata_catalog=catalog,
+    )
+
+    result = await runtime.refresh_model_list_cache()
+
+    assert "opencode_zen" in result.refreshed_provider_ids
+    info = runtime.cached_model_info("opencode_zen", "mimo-v2.5-free")
+    assert info is not None
+    assert info.supports_vision is True
+    assert info.catalog_metadata is not None
+    assert info.catalog_metadata.context_window == 200000
 
 
 class FakeProvider(BaseProvider):

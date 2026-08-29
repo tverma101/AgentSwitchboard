@@ -22,6 +22,15 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/."
         ),
     },
+    "BAI_API_KEY": {
+        "label": "B.AI API Key",
+        "description": "B.AI API key for the OpenAI-compatible API at api.b.ai/v1.",
+    },
+    "BAI_BASE_URL": {
+        "description": (
+            "B.AI OpenAI-compatible API base URL. The default is https://api.b.ai/v1."
+        ),
+    },
     "NVIDIA_NIM_API_KEY": {
         "label": "NVIDIA NIM API Key",
         "description": "Used by NVIDIA NIM chat and optional NIM voice transcription.",

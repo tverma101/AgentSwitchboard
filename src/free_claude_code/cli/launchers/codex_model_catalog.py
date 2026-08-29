@@ -39,6 +39,9 @@ class _CatalogCandidate:
     provider_model_ref: str
     display_name: str
     force_no_thinking: bool
+    description: str
+    input_modalities: tuple[str, ...]
+    context_window: int
 
 
 def build_codex_model_catalog(models_response: Mapping[str, Any]) -> dict[str, Any]:
@@ -104,6 +107,7 @@ def _catalog_candidates(
         candidate = _candidate_from_model_id(
             model_id,
             display_name=_string_value(item.get("display_name")) or model_id,
+            catalog_metadata=_mapping_value(item.get("catalog_metadata")),
         )
         if candidate is not None:
             candidates.append(candidate)
@@ -111,7 +115,10 @@ def _catalog_candidates(
 
 
 def _candidate_from_model_id(
-    model_id: str, *, display_name: str
+    model_id: str,
+    *,
+    display_name: str,
+    catalog_metadata: Mapping[str, Any] | None = None,
 ) -> _CatalogCandidate | None:
     prefix, separator, remainder = model_id.partition("/")
     if not separator:
@@ -125,6 +132,7 @@ def _candidate_from_model_id(
             provider_model_ref=remainder,
             display_name=display_name,
             force_no_thinking=False,
+            **_catalog_metadata_fields(catalog_metadata),
         )
 
     if prefix == NO_THINKING_GATEWAY_MODEL_ID_PREFIX:
@@ -135,6 +143,7 @@ def _candidate_from_model_id(
             provider_model_ref=remainder,
             display_name=display_name,
             force_no_thinking=True,
+            **_catalog_metadata_fields(catalog_metadata),
         )
 
     if prefix in SUPPORTED_PROVIDER_IDS and remainder:
@@ -143,6 +152,7 @@ def _candidate_from_model_id(
             provider_model_ref=model_id,
             display_name=display_name,
             force_no_thinking=False,
+            **_catalog_metadata_fields(catalog_metadata),
         )
 
     return None
@@ -154,7 +164,7 @@ def _codex_catalog_entry(
     return {
         "slug": candidate.slug,
         "display_name": candidate.display_name,
-        "description": "Free Claude Code provider model",
+        "description": candidate.description,
         "default_reasoning_level": "medium",
         "supported_reasoning_levels": SUPPORTED_REASONING_LEVELS,
         "shell_type": "shell_command",
@@ -172,12 +182,12 @@ def _codex_catalog_entry(
         "web_search_tool_type": "text_and_image",
         "truncation_policy": {"mode": "tokens", "limit": 10000},
         "supports_parallel_tool_calls": True,
-        "supports_image_detail_original": True,
-        "context_window": 200000,
-        "max_context_window": 200000,
+        "supports_image_detail_original": "image" in candidate.input_modalities,
+        "context_window": candidate.context_window,
+        "max_context_window": candidate.context_window,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
-        "input_modalities": ["text"],
+        "input_modalities": list(candidate.input_modalities),
         "supports_search_tool": True,
         "use_responses_lite": False,
     }
@@ -190,3 +200,47 @@ def _is_provider_model_ref(value: str) -> bool:
 
 def _string_value(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _mapping_value(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _catalog_metadata_fields(
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if metadata is None:
+        return {
+            "description": "Free Claude Code provider model",
+            "input_modalities": ("text",),
+            "context_window": 200000,
+        }
+
+    modalities = metadata.get("input_modalities")
+    input_modalities = (
+        tuple(
+            dict.fromkeys(
+                value.strip()
+                for value in modalities
+                if isinstance(value, str) and value.strip()
+            )
+        )
+        if isinstance(modalities, list | tuple)
+        else ("text",)
+    )
+    return {
+        "description": (
+            _string_value(metadata.get("description"))
+            or "Free Claude Code provider model"
+        ),
+        "input_modalities": input_modalities or ("text",),
+        "context_window": _positive_int(metadata.get("context_window")) or 200000,
+    }
+
+
+def _positive_int(value: Any) -> int | None:
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else None
+    )

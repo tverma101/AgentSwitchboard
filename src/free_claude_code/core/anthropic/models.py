@@ -41,6 +41,21 @@ class ContentBlockToolResult(_AnthropicBlockBase):
     content: str | list[Any] | dict[str, Any]
 
 
+class ContentBlockToolReference(_AnthropicBlockBase):
+    """Anthropic tool-search reference returned by Claude Code."""
+
+    type: Literal["tool_reference"]
+    tool_name: str
+
+
+class ContentBlockToolSearchToolResult(_AnthropicBlockBase):
+    """Anthropic tool-search controller result kept for protocol round trips."""
+
+    type: Literal["tool_search_tool_result"]
+    tool_use_id: str
+    content: Any
+
+
 class ContentBlockThinking(_AnthropicBlockBase):
     type: Literal["thinking"]
     thinking: str
@@ -88,6 +103,8 @@ class Message(BaseModel):
             | ContentBlockDocument
             | ContentBlockToolUse
             | ContentBlockToolResult
+            | ContentBlockToolReference
+            | ContentBlockToolSearchToolResult
             | ContentBlockThinking
             | ContentBlockRedactedThinking
             | ContentBlockServerToolUse
@@ -176,6 +193,8 @@ class MessagesResponse(BaseModel):
     content: list[
         ContentBlockText
         | ContentBlockToolUse
+        | ContentBlockToolReference
+        | ContentBlockToolSearchToolResult
         | ContentBlockThinking
         | ContentBlockRedactedThinking
         | dict[str, Any]

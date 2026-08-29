@@ -5,7 +5,12 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .content import get_block_attr, get_block_type
+from .content import (
+    get_block_attr,
+    get_block_type,
+    is_tool_search_tool_definition,
+    is_tool_search_tool_name,
+)
 from .models import MessagesRequest
 
 OPENAI_TOOL_NAME_MAX_LENGTH = 64
@@ -81,6 +86,8 @@ class OpenAIToolNameCodec:
 
 def _request_tool_names(request: MessagesRequest) -> Iterable[str]:
     for tool in request.tools or ():
+        if is_tool_search_tool_definition(tool):
+            continue
         yield tool.name
 
     tool_choice = request.tool_choice
@@ -88,13 +95,13 @@ def _request_tool_names(request: MessagesRequest) -> Iterable[str]:
         choice_type = tool_choice.get("type")
         if choice_type == "tool":
             name = tool_choice.get("name")
-            if isinstance(name, str):
+            if isinstance(name, str) and not is_tool_search_tool_name(name):
                 yield name
         elif choice_type == "function":
             function = tool_choice.get("function")
             if isinstance(function, dict):
                 name = function.get("name")
-                if isinstance(name, str):
+                if isinstance(name, str) and not is_tool_search_tool_name(name):
                     yield name
 
     for message in request.messages:
@@ -104,7 +111,7 @@ def _request_tool_names(request: MessagesRequest) -> Iterable[str]:
             if get_block_type(block) != "tool_use":
                 continue
             name = get_block_attr(block, "name")
-            if isinstance(name, str):
+            if isinstance(name, str) and not is_tool_search_tool_name(name):
                 yield name
 
 

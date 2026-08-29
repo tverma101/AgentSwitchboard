@@ -1,11 +1,15 @@
 import pytest
 
+from free_claude_code.application.context_governance import (
+    should_preserve_media_for_model,
+)
 from free_claude_code.application.errors import VisualCapabilityError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.visual_capabilities import (
     validate_visual_capability,
     validate_visual_input,
 )
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import MessagesRequest
 
 _PNG_DATA = (
@@ -81,36 +85,69 @@ def test_known_image_types_are_enforced_without_rejecting_urls() -> None:
     )
 
 
-def test_unknown_capability_metadata_fails_closed() -> None:
-    with pytest.raises(VisualCapabilityError, match="metadata not confirmed"):
-        validate_visual_capability(
-            _request(
-                content=[
-                    {
-                        "type": "image",
-                        "source": {"type": "url", "url": "https://example.test/a"},
-                    }
-                ]
-            ),
-            model_info=ProviderModelInfo("provider-model"),
-            model_ref="provider/provider-model",
-        )
+def test_unknown_capability_metadata_is_delegated_to_provider_preflight() -> None:
+    receipt = validate_visual_capability(
+        _request(
+            content=[
+                {
+                    "type": "image",
+                    "source": {"type": "url", "url": "https://example.test/a"},
+                }
+            ]
+        ),
+        model_info=ProviderModelInfo("provider-model"),
+        model_ref="provider/provider-model",
+    )
+
+    assert receipt is not None
+    assert receipt.image_count == 1
 
 
-def test_missing_model_metadata_fails_closed() -> None:
-    with pytest.raises(VisualCapabilityError, match="metadata unavailable"):
-        validate_visual_capability(
-            _request(
-                content=[
-                    {
-                        "type": "image",
-                        "source": {"type": "url", "url": "https://example.test/a"},
-                    }
-                ]
-            ),
-            model_info=None,
-            model_ref="provider/provider-model",
+def test_missing_model_metadata_is_not_treated_as_nonvision() -> None:
+    receipt = validate_visual_capability(
+        _request(
+            content=[
+                {
+                    "type": "image",
+                    "source": {"type": "url", "url": "https://example.test/a"},
+                }
+            ]
+        ),
+        model_info=None,
+        model_ref="provider/provider-model",
+    )
+
+    assert receipt is not None
+    assert receipt.image_count == 1
+
+
+@pytest.mark.parametrize(
+    "model_info",
+    [
+        None,
+        ProviderModelInfo("provider-model", supports_vision=True),
+    ],
+)
+def test_media_preservation_is_on_for_vision_or_unknown_routes(
+    model_info: ProviderModelInfo | None,
+) -> None:
+    assert should_preserve_media_for_model(Settings(), model_info) is True
+
+
+def test_media_preservation_can_be_disabled_explicitly() -> None:
+    assert (
+        should_preserve_media_for_model(
+            Settings().model_copy(update={"context_governor_preserve_media": False}),
+            ProviderModelInfo("provider-model", supports_vision=True),
         )
+        is False
+    )
+    assert (
+        should_preserve_media_for_model(
+            Settings(), ProviderModelInfo("provider-model", supports_vision=False)
+        )
+        is False
+    )
 
 
 def test_tool_result_image_is_not_silently_missed() -> None:

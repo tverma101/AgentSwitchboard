@@ -15,10 +15,16 @@ from free_claude_code.application.helpers import (
 )
 from free_claude_code.cli.codex_computer_use_mcp import (
     CLAUDE_COMPUTER_USE_TOOLS,
+    CLAUDE_MCP_TOOL_SCHEMA_MAX_BYTES,
     CodexComputerUseMcpServer,
+    _elicitation_handler,
     _PendingCall,
+    _serialized_tool_list_bytes,
 )
-from free_claude_code.runtime.codex_computer_use import COMPUTER_USE_METHODS
+from free_claude_code.runtime.codex_computer_use import (
+    COMPUTER_USE_METHODS,
+    CodexComputerUseError,
+)
 
 
 def _server(
@@ -73,6 +79,12 @@ def test_tool_list_is_fixed_order_and_has_native_read_action_annotations() -> No
     assert _annotations(by_name["get_app_state"])["readOnlyHint"] is True
     assert _annotations(by_name["click"])["readOnlyHint"] is False
     assert _annotations(by_name["type_text"])["idempotentHint"] is False
+
+
+def test_tool_schema_stays_within_its_context_budget() -> None:
+    assert _serialized_tool_list_bytes(CLAUDE_COMPUTER_USE_TOOLS) <= (
+        CLAUDE_MCP_TOOL_SCHEMA_MAX_BYTES
+    )
 
 
 def test_initialize_and_tools_list_are_local_and_deterministic(
@@ -132,6 +144,78 @@ def test_native_result_returns_content_and_metadata_only_receipt(
     assert "content" not in receipt
 
 
+def test_native_result_preserves_structured_image_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bridge must forward native screenshot blocks without flattening them."""
+    server, output = _server(monkeypatch)
+    native_content = [
+        {"type": "text", "text": "Current app state."},
+        {"type": "image", "data": "encoded-image", "mimeType": "image/jpeg"},
+    ]
+    try:
+        server._write_native_result(
+            "image-1",
+            {"content": native_content, "isError": False},
+            receipt=_success_result("get_app_state").receipt.as_dict(),
+        )
+    finally:
+        server.close()
+
+    message = _messages(output)[0]
+    assert message["id"] == "image-1"
+    assert message["result"]["content"] == native_content
+    assert message["result"]["isError"] is False
+
+
+def test_tools_call_queue_returns_one_correlated_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the stdio server's real enqueue/worker/write path."""
+
+    class EventOutput(io.StringIO):
+        def __init__(self) -> None:
+            super().__init__()
+            self.written = threading.Event()
+
+        def write(self, value: str) -> int:
+            count = super().write(value)
+            self.written.set()
+            return count
+
+    monkeypatch.setenv(
+        "FCC_CONTROLLER_MODEL_REF",
+        "opencode_go/muse-spark-1.2-contributor",
+    )
+    output = EventOutput()
+    server = CodexComputerUseMcpServer(stdin=io.StringIO(), stdout=output)
+
+    class FakeExecutor:
+        def execute_planned(self, *args: Any, **kwargs: Any) -> HelperExecutionResult:
+            return _success_result(str(kwargs["operation"]))
+
+    server._executor = cast(Any, FakeExecutor())
+    try:
+        server._handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": "list-apps-1",
+                "method": "tools/call",
+                "params": {"name": "list_apps", "arguments": {}},
+            }
+        )
+        assert output.written.wait(timeout=2.0)
+    finally:
+        server.close()
+
+    messages = _messages(output)
+    assert len(messages) == 1
+    assert messages[0]["id"] == "list-apps-1"
+    assert messages[0]["result"]["content"] == [
+        {"type": "text", "text": "ok:list_apps"}
+    ]
+
+
 def test_cancelled_mutation_is_reported_indeterminate_not_replayed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -172,6 +256,50 @@ def test_cancelled_mutation_is_reported_indeterminate_not_replayed(
     assert "must not be replayed automatically" in text
 
 
+def test_helper_failure_preserves_actionable_native_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, output = _server(monkeypatch)
+    receipt = HelperExecutionReceipt(
+        helper_id="codex-computer-use",
+        provider_family="computer",
+        operation="list_apps",
+        status=HelperExecutionStatus.FAILED,
+        duration_ms=2,
+        attempts=1,
+        local=True,
+        billable=False,
+        failure_owner="codex-computer-use",
+    )
+
+    class FailingExecutor:
+        def execute_planned(self, *args: Any, **kwargs: Any) -> HelperExecutionResult:
+            raise HelperExecutionError(
+                "helper execution failed: codex-computer-use",
+                receipt,
+            ) from CodexComputerUseError(
+                "the signed Computer Use app-server launcher is unavailable"
+            )
+
+    server._executor = cast(Any, FailingExecutor())
+    pending = _PendingCall(
+        request_id="native-failure-1",
+        operation="list_apps",
+        arguments={},
+        cancelled=threading.Event(),
+    )
+    try:
+        server._execute_call(pending)
+    finally:
+        server.close()
+
+    result = _messages(output)[0]["result"]
+    assert result["isError"] is True
+    assert result["content"][0]["text"] == (
+        "Computer Use failed: the signed Computer Use app-server launcher is unavailable"
+    )
+
+
 def test_unknown_tool_is_rejected_before_queue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -204,3 +332,26 @@ def test_policy_counts_computer_use_as_local_not_openai(
         assert server._policy.egress_guard.receipt()["counts"] == {}
     finally:
         server.close()
+
+
+def test_native_app_access_auto_approval_requires_explicit_helper_allowlist() -> None:
+    approved = _elicitation_handler(
+        approval_mode="auto",
+        allowed_helper_ids="local-vision, codex-computer-use",
+    )({"message": "Allow Chrome?"})
+    assert approved["action"] == "accept"
+
+    declined = _elicitation_handler(
+        approval_mode="auto",
+        allowed_helper_ids="local-vision",
+    )({"message": "Allow Chrome?"})
+    assert declined["action"] == "decline"
+
+
+def test_native_app_access_decline_mode_is_fail_closed() -> None:
+    response = _elicitation_handler(
+        approval_mode="decline",
+        allowed_helper_ids="codex-computer-use",
+    )({"message": "Allow Chrome?"})
+
+    assert response == {"action": "decline", "content": None, "_meta": None}

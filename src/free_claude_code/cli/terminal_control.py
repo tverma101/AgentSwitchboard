@@ -71,12 +71,11 @@ from free_claude_code.learning.store import LearningStore, project_identity
 from . import codex_accounts
 from .repo_picker import (
     RepoEntry,
-    cache_is_fresh,
     cache_path,
     choose_repo,
     default_roots,
     discover_repos,
-    load_cached_repos,
+    github_authenticated_user,
     save_cached_repos,
 )
 from .selection import SelectionItem, choose_item
@@ -260,7 +259,7 @@ def _print_home(
     print(f"Server    {status} ({owner})")
     print(f"Repo      {displayed_repo}")
     print(f"Model     {displayed_model}")
-    print(f"Profile   {displayed_profile} (next launch)")
+    print(f"FCC Learning profile  {displayed_profile} (next launch)")
     print(f"FCC Account  {fcc_account}")
     print(f"Codex Tools  {codex_account}")
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
@@ -564,10 +563,19 @@ def _run_reviewer_menu(profile: str) -> None:
 
 
 def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
-    """Select a repository from the local discovery cache or explicit refresh."""
+    """Select a repository from the live authenticated local inventory."""
 
     cache = cache_path()
-    repos = load_cached_repos(cache)
+    github_user = github_authenticated_user()
+    repos = (
+        discover_repos(default_roots(), github_user=github_user)
+        if github_user is not None
+        else []
+    )
+    if github_user is not None:
+        save_cached_repos(repos, cache)
+    if current is not None and current.path not in {repo.path for repo in repos}:
+        current = None
     while True:
         print()
         print("Repositories")
@@ -576,10 +584,10 @@ def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
             print(f"Current: {current.display_path}")
         elif repos:
             print("Current: terminal working directory")
+        elif github_user is None:
+            print("No active GitHub CLI account. Run `gh auth login`.")
         else:
-            print("No cached repositories.")
-        if repos and not cache_is_fresh(cache):
-            print("Cache is stale; choose Refresh to rescan local roots.")
+            print(f"No local GitHub repositories found for {github_user}.")
         print("[S] Select  [R] Refresh local roots  [B] Back")
         try:
             choice = input("Repos> ").strip().casefold()
@@ -589,10 +597,15 @@ def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
         if choice in {"b", "back", "q", "quit"}:
             return current
         if choice in {"r", "refresh"}:
-            roots = default_roots()
-            repos = discover_repos(roots)
+            github_user = github_authenticated_user()
+            if github_user is None:
+                repos = []
+                current = None
+                print("No active GitHub CLI account. Run `gh auth login`.")
+                continue
+            repos = discover_repos(default_roots(), github_user=github_user)
             save_cached_repos(repos, cache)
-            print(f"Discovered {len(repos)} local GitHub-backed repos.")
+            print(f"Discovered {len(repos)} local GitHub repos for {github_user}.")
             continue
         if choice in {"s", "select", ""}:
             if not repos:
@@ -790,7 +803,7 @@ def _run_settings_menu(settings: Settings) -> str | None:
             "Reasoning       "
             f"{_field_value(reasoning, settings.reasoning_policy.value)}"
         )
-        print(f"Profile         {configured_profile()}")
+        print(f"FCC Learning profile  {configured_profile()}")
         print(f"Context         {context_cap_tokens(os.environ):,} tokens")
         print()
         print("[M] Model   [R] Reasoning   [B] Back")
@@ -1549,8 +1562,8 @@ def _run_logs_menu() -> None:
 
 def _print_profile() -> None:
     print()
-    print("Profile")
-    print("-------")
+    print("FCC Learning profile")
+    print("--------------------")
     print(f"Name  {configured_profile()}")
     print(f"State {profile_home()}")
     print("Use fcc-learning or the canonical Admin/profile surface to change it.")

@@ -4,6 +4,10 @@ set -eu
 CHECK_ORDER="suppressions ruff-format ruff-check ty pytest"
 
 dry_run=0
+fast=0
+integration=0
+installers=0
+full=0
 only_checks=""
 skip_checks=""
 
@@ -20,11 +24,15 @@ Checks (in order):
   ruff-format    uv run ruff format
   ruff-check     uv run ruff check --fix
   ty             uv run ty check
-  pytest         uv run pytest -v --tb=short
+  pytest         uv run pytest -q --tb=short
 
 Options:
   --only ID                Run only the given check (repeatable)
   --skip ID                Skip the given check (repeatable)
+  --fast                    Run the safe deterministic pytest tier (the default).
+  --integration              Include local integration, live, and interactive pytest items.
+  --installers              Run installer/uninstaller pytest items serially; opt-in.
+  --full                    Run deterministic, integration, and installer pytest tiers.
   --dry-run                Print commands without running them.
   --help                   Show this help text.
 USAGE
@@ -151,9 +159,45 @@ run_ty() {
     run uv run ty check
 }
 
+run_local_pytest() {
+    if command -v taskpolicy >/dev/null 2>&1; then
+        run nice -n 5 taskpolicy -c utility uv run pytest "$@"
+    elif command -v nice >/dev/null 2>&1; then
+        run nice -n 5 uv run pytest "$@"
+    else
+        run uv run pytest "$@"
+    fi
+}
+
 run_pytest() {
     step "pytest"
-    run uv run pytest -v --tb=short
+    if [ "$fast" -eq 1 ] && [ "$installers" -eq 1 ]; then
+        fail "--fast and --installers cannot be combined."
+    fi
+    if [ "$fast" -eq 1 ] && [ "$integration" -eq 1 ]; then
+        fail "--fast and --integration cannot be combined."
+    fi
+    if [ "$full" -eq 1 ] && {
+        [ "$fast" -eq 1 ] || [ "$integration" -eq 1 ] || [ "$installers" -eq 1 ];
+    }; then
+        fail "--full cannot be combined with --fast, --integration, or --installers."
+    fi
+
+    if [ "$full" -eq 1 ]; then
+        run_local_pytest -q --tb=short -n 0 -m 'not integration and not live and not interactive and not installer'
+        run_local_pytest -q --tb=short -n 0 -m 'integration or live or interactive'
+        run_local_pytest -q --tb=short -n 0 --run-installer-tests -m 'installer'
+    elif [ "$installers" -eq 1 ]; then
+        run_local_pytest -q --tb=short -n 0 --run-installer-tests -m 'installer'
+    elif [ "$integration" -eq 1 ]; then
+        run_local_pytest -q --tb=short -n 0 -m 'not integration and not live and not interactive and not installer'
+        run_local_pytest -q --tb=short -n 0 -m 'integration or live or interactive'
+    else
+        # The default must be safe for an active developer workstation. Slow
+        # tiers are explicit because they may spawn subprocesses or touch
+        # real services; hosted CI remains the full enforcement boundary.
+        run_local_pytest -q --tb=short -n 0 -m 'not integration and not live and not interactive and not installer'
+    fi
 }
 
 run_check() {
@@ -182,6 +226,18 @@ parse_args() {
                 validate_check_id "$1"
                 skip_checks="${skip_checks} $1"
                 ;;
+            --fast)
+                fast=1
+                ;;
+            --integration)
+                integration=1
+                ;;
+            --installers)
+                installers=1
+                ;;
+            --full)
+                full=1
+                ;;
             --dry-run)
                 dry_run=1
                 ;;
@@ -199,6 +255,17 @@ parse_args() {
 }
 
 parse_args "$@"
+if [ "$fast" -eq 1 ] && [ "$installers" -eq 1 ]; then
+    fail "--fast and --installers cannot be combined."
+fi
+if [ "$fast" -eq 1 ] && [ "$integration" -eq 1 ]; then
+    fail "--fast and --integration cannot be combined."
+fi
+if [ "$full" -eq 1 ] && {
+    [ "$fast" -eq 1 ] || [ "$integration" -eq 1 ] || [ "$installers" -eq 1 ];
+}; then
+    fail "--full cannot be combined with --fast, --integration, or --installers."
+fi
 if selected_checks_need_uv; then
     assert_uv_available
 fi

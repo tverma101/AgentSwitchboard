@@ -1,6 +1,15 @@
 """Anthropic protocol helpers shared across API, providers, and integrations."""
 
-from .content import extract_text_from_content, get_block_attr, get_block_type
+from .content import (
+    extract_text_from_content,
+    get_block_attr,
+    get_block_type,
+    is_tool_search_metadata_block,
+    is_tool_search_tool_definition,
+    is_tool_search_tool_name,
+    normalize_tool_result_content,
+    without_tool_search_metadata,
+)
 from .context_artifact import (
     ContextArtifactError,
     ContextArtifactSlice,
@@ -33,7 +42,9 @@ from .models import (
     ContentBlockServerToolUse,
     ContentBlockText,
     ContentBlockThinking,
+    ContentBlockToolReference,
     ContentBlockToolResult,
+    ContentBlockToolSearchToolResult,
     ContentBlockToolUse,
     ContentBlockWebFetchToolResult,
     ContentBlockWebSearchToolResult,
@@ -76,7 +87,9 @@ __all__ = [
     "ContentBlockServerToolUse",
     "ContentBlockText",
     "ContentBlockThinking",
+    "ContentBlockToolReference",
     "ContentBlockToolResult",
+    "ContentBlockToolSearchToolResult",
     "ContentBlockToolUse",
     "ContentBlockWebFetchToolResult",
     "ContentBlockWebSearchToolResult",
@@ -119,9 +132,14 @@ __all__ = [
     "get_token_count",
     "govern_messages_request",
     "is_synthetic_openai_tool_turn_boundary",
+    "is_tool_search_metadata_block",
+    "is_tool_search_tool_definition",
+    "is_tool_search_tool_name",
     "map_stop_reason",
+    "normalize_tool_result_content",
     "read_context_artifact_slice",
     "serialize_tool_result_content",
     "set_if_not_none",
     "tool_result_media_block_types",
+    "without_tool_search_metadata",
 ]

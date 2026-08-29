@@ -23,12 +23,30 @@ Settings.model_config = {**Settings.model_config, "env_file": None}
 set_process_identity("CI pytest", os.environ.get("PYTEST_XDIST_WORKER"))
 
 
-@pytest.fixture(autouse=True)
-def _isolate_from_dotenv(monkeypatch):
-    """Prevent Pydantic BaseSettings from reading the .env file during tests."""
-    monkeypatch.setattr(
-        Settings, "model_config", {**Settings.model_config, "env_file": None}
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-installer-tests",
+        action="store_true",
+        help="run subprocess-heavy installer and uninstaller tests locally",
     )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Keep machine-install tests out of ordinary local pytest invocations."""
+    if (
+        config.getoption("--run-installer-tests")
+        or os.environ.get("GITHUB_ACTIONS") == "true"
+    ):
+        return
+
+    skip_installer = pytest.mark.skip(
+        reason="installer tests are opt-in locally; use --run-installer-tests"
+    )
+    for item in items:
+        if "installer" in item.keywords:
+            item.add_marker(skip_installer)
 
 
 @pytest.fixture
@@ -201,8 +219,12 @@ def incoming_message_factory():
 
 
 @pytest.fixture(autouse=True)
-def _propagate_loguru_to_caplog():
-    """Route loguru logs to stdlib logging so pytest caplog captures them."""
+def _propagate_loguru_to_caplog(request: pytest.FixtureRequest):
+    """Bridge Loguru only for tests that request pytest's log capture."""
+    if "caplog" not in request.fixturenames:
+        yield
+        return
+
     from loguru import logger as loguru_logger
 
     class _PropagateHandler:

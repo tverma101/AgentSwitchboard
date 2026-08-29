@@ -20,12 +20,14 @@ def _launcher_settings(
     *,
     port: int = 8082,
     token: str = "freecc",
+    allowed_helpers: str = "",
 ) -> Settings:
     return Settings.model_construct(
         host="0.0.0.0",
         port=port,
         anthropic_auth_token=token,
         model="nvidia_nim/test-model",
+        allowed_helper_ids=allowed_helpers,
     )
 
 
@@ -587,6 +589,27 @@ def test_launch_danger_adds_skip_permissions_once() -> None:
     ]
 
 
+def test_fcc_claude_help_does_not_start_proxy_or_control_center() -> None:
+    from free_claude_code.cli.launchers import claude
+
+    with (
+        patch.object(
+            claude, "resolve_client_binary", return_value="resolved-claude.cmd"
+        ) as resolve,
+        patch.object(claude, "run_client_process") as run_client,
+        patch.object(claude, "preflight_proxy") as preflight,
+    ):
+        claude.launch(["--help"])
+
+    resolve.assert_called_once()
+    run_client.assert_called_once()
+    assert run_client.call_args.kwargs["command"] == [
+        "resolved-claude.cmd",
+        "--help",
+    ]
+    preflight.assert_not_called()
+
+
 def test_launch_claude_allows_unrelated_settings_env_keys(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -683,6 +706,151 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["KEEP_ME"] == "yes"
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
+
+
+def test_launch_claude_prepares_enabled_computer_use_before_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers import claude
+
+    settings = _launcher_settings(
+        port=9191,
+        token="proxy-token",
+        allowed_helpers="codex-computer-use",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+
+    with (
+        patch.object(claude, "get_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value=None),
+        patch.object(claude, "ensure_learning_hooks"),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-claude.cmd",
+        ),
+        patch.object(claude, "_prepare_computer_use_session") as prepare,
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        claude.launch(["--model", "sonnet"], cwd=tmp_path)
+
+    assert exc_info.value.code == 0
+    prepare.assert_called_once()
+    assert prepare.call_args.args == (settings,)
+    assert prepare.call_args.kwargs["claude_binary"] == "resolved-claude.cmd"
+    assert prepare.call_args.kwargs["cwd"] == tmp_path
+    assert prepare.call_args.kwargs["raise_for_control"] is False
+    child_env = prepare.call_args.kwargs["base_env"]
+    assert child_env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:9191"
+    assert child_env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "claude")
+
+
+def test_prepare_computer_use_session_skips_unallowlisted_helper(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers import claude
+
+    settings = _launcher_settings()
+    with patch.object(claude, "resolve_official_computer_use") as resolve:
+        claude._prepare_computer_use_session(
+            settings,
+            claude_binary="claude",
+            cwd=tmp_path,
+            base_env={},
+            raise_for_control=True,
+        )
+
+    resolve.assert_not_called()
+
+
+def test_prepare_computer_use_session_uses_active_profile_and_registers_mcp(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers import claude
+
+    settings = _launcher_settings(allowed_helpers="codex-computer-use")
+    paths = object()
+    bundled_launcher = tmp_path / "bundled-launcher"
+    config_dir = tmp_path / "profile" / "claude"
+    project_dir = tmp_path / "project"
+    environment = {
+        "HOME": str(tmp_path / "home"),
+        "CLAUDE_CONFIG_DIR": str(config_dir),
+    }
+    old_profile_launcher = (
+        config_dir / "fcc/codex-computer-use/bin/computer-use-client-launcher"
+    )
+
+    with (
+        patch.object(
+            claude, "resolve_official_computer_use", return_value=paths
+        ) as resolve,
+        patch.object(claude, "install_native_computer_use_skill") as install,
+        patch.object(
+            claude,
+            "managed_launcher",
+            return_value=(tmp_path, bundled_launcher),
+        ) as managed,
+        patch.object(claude, "ensure_claude_local_computer_use_mcp") as register,
+    ):
+        claude._prepare_computer_use_session(
+            settings,
+            claude_binary="claude",
+            cwd=project_dir,
+            base_env=environment,
+            raise_for_control=True,
+        )
+
+    resolve.assert_called_once_with(home=Path(environment["HOME"]))
+    install.assert_called_once_with(paths, claude_config_dir=config_dir)
+    managed.assert_called_once_with(paths)
+    register.assert_called_once_with(
+        claude_binary="claude",
+        cwd=project_dir.resolve(),
+        base_env=environment,
+        node_executable=None,
+        bridge_path=None,
+        python_executable=sys.executable,
+        native_launcher=old_profile_launcher,
+        legacy_native_launcher=bundled_launcher,
+    )
+
+
+def test_prepare_computer_use_session_reports_actionable_failure(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers import claude
+
+    settings = _launcher_settings(allowed_helpers="codex-computer-use")
+    config_dir = tmp_path / "claude"
+
+    with (
+        patch.object(
+            claude,
+            "resolve_official_computer_use",
+            side_effect=claude.CodexComputerUseError("signed client is missing"),
+        ),
+        pytest.raises(claude.ClientLaunchError) as exc_info,
+    ):
+        claude._prepare_computer_use_session(
+            settings,
+            claude_binary="claude",
+            cwd=tmp_path,
+            base_env={"CLAUDE_CONFIG_DIR": str(config_dir)},
+            raise_for_control=True,
+        )
+
+    message = str(exc_info.value)
+    assert exc_info.value.exit_code == 78
+    assert "signed client is missing" in message
+    assert str(config_dir) in message
+    assert "FCC_ALLOWED_HELPERS" in message
 
 
 def test_launch_claude_applies_model_context_window_override(

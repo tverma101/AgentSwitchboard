@@ -2,14 +2,19 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import TypedDict
 
 MCP_SERVER_NAME = "fcc-codex-computer-use"
 MCP_SERVER_MODULE = "free_claude_code.cli.codex_computer_use_mcp"
+MCP_SERVER_BRIDGE_RELATIVE_PATH = Path(
+    "_vendor/claude_codex_computer_use/computer-use-mcp-bridge.mjs"
+)
 MCP_COMMAND_TIMEOUT_SECONDS = 20.0
 
 
@@ -23,14 +28,68 @@ class ClaudeMcpRegistrationError(RuntimeError):
     """Raised when FCC cannot safely own its namespaced Claude MCP entry."""
 
 
-def local_mcp_spec(*, python_executable: str | Path = sys.executable) -> _LocalMcpSpec:
-    """Return the deterministic stdio server config persisted by Claude itself."""
+def local_mcp_spec(
+    *,
+    python_executable: str | Path = sys.executable,
+) -> _LocalMcpSpec:
+    """Return the app-server-backed stdio server persisted by Claude itself."""
 
-    executable = str(Path(python_executable).expanduser().resolve())
     return {
         "type": "stdio",
-        "command": executable,
+        "command": _absolute_path_without_resolving(python_executable),
         "args": ["-m", MCP_SERVER_MODULE],
+    }
+
+
+def legacy_local_mcp_spec(
+    *, python_executable: str | Path | None = None
+) -> _LocalMcpSpec:
+    """Return the historical Python registration for migration compatibility."""
+
+    return local_mcp_spec(python_executable=python_executable or sys.executable)
+
+
+def bridge_mcp_spec(
+    *,
+    node_executable: str | Path | None = None,
+    bridge_path: str | Path | None = None,
+) -> _LocalMcpSpec:
+    """Return the retired raw-client bridge identity for safe migration only."""
+
+    node = os.fspath(node_executable) if node_executable is not None else None
+    if node is None:
+        node = shutil.which("node")
+    if node is None:
+        raise ClaudeMcpRegistrationError(
+            "FCC Computer Use migration requires Node.js to identify the retired bridge"
+        )
+    bridge = (
+        Path(__file__).resolve().parent / MCP_SERVER_BRIDGE_RELATIVE_PATH
+        if bridge_path is None
+        else Path(bridge_path).expanduser()
+    )
+    if not bridge.is_file():
+        raise ClaudeMcpRegistrationError(
+            f"retired FCC Computer Use bridge is missing: {bridge}"
+        )
+    return {
+        "type": "stdio",
+        "command": _absolute_path_without_resolving(node),
+        "args": [_absolute_path_without_resolving(bridge)],
+    }
+
+
+def native_mcp_spec(launcher: str | Path) -> _LocalMcpSpec:
+    """Return a direct native launcher spec kept for migration diagnostics.
+
+    The direct launcher is kept only so old FCC-owned registrations can be
+    identified and migrated safely.
+    """
+
+    return {
+        "type": "stdio",
+        "command": _absolute_path_without_resolving(launcher),
+        "args": ["mcp"],
     }
 
 
@@ -39,20 +98,159 @@ def ensure_claude_local_computer_use_mcp(
     claude_binary: str,
     cwd: str | Path,
     base_env: Mapping[str, str] | None = None,
-    python_executable: str | Path = sys.executable,
+    node_executable: str | Path | None = None,
+    bridge_path: str | Path | None = None,
+    python_executable: str | Path | None = None,
+    native_launcher: str | Path | None = None,
+    legacy_native_launcher: str | Path | None = None,
 ) -> bool:
-    """Ensure the current project has exactly FCC's private local MCP entry."""
+    """Ensure Claude uses FCC's app-server-backed Computer Use MCP.
 
-    expected = local_mcp_spec(python_executable=python_executable)
+    The Python MCP server owns the Claude-facing boundary and delegates native
+    actions through Codex app-server. Node/bridge and native-launcher arguments
+    are accepted only as old FCC-owned registration identities for migration.
+    """
+
+    expected = local_mcp_spec(
+        python_executable=python_executable or sys.executable,
+    )
+    legacy_candidates: list[_LocalMcpSpec] = []
+    with suppress(ClaudeMcpRegistrationError):
+        legacy_candidates.append(
+            bridge_mcp_spec(
+                node_executable=node_executable,
+                bridge_path=bridge_path,
+            )
+        )
+    if python_executable is not None:
+        legacy_candidates.append(
+            legacy_local_mcp_spec(python_executable=python_executable)
+        )
+    if native_launcher is not None:
+        legacy_candidates.append(native_mcp_spec(native_launcher))
+    if legacy_native_launcher is not None:
+        legacy_candidates.append(native_mcp_spec(legacy_native_launcher))
     existing = _get_registration(
         claude_binary=claude_binary,
         cwd=cwd,
         base_env=base_env,
     )
     if existing is not None:
-        _require_owned_registration(existing, expected)
-        return False
+        legacy = _require_owned_registration(
+            existing,
+            expected,
+            legacy_expected=legacy_candidates,
+        )
+        if not legacy:
+            return False
+        migration_expected = _migration_expected(
+            existing,
+            legacy_expected=legacy_candidates,
+        )
+        _remove_registration(
+            claude_binary=claude_binary,
+            cwd=cwd,
+            base_env=base_env,
+        )
+        try:
+            _add_registration(
+                claude_binary=claude_binary,
+                cwd=cwd,
+                base_env=base_env,
+                expected=expected,
+            )
+        except ClaudeMcpRegistrationError as error:
+            _restore_legacy_registration(
+                claude_binary=claude_binary,
+                cwd=cwd,
+                base_env=base_env,
+                expected=migration_expected or expected,
+                original_error=error,
+            )
+            raise
+        _verify_installed_registration(
+            claude_binary=claude_binary,
+            cwd=cwd,
+            base_env=base_env,
+            expected=expected,
+        )
+        return True
 
+    _add_registration(
+        claude_binary=claude_binary,
+        cwd=cwd,
+        base_env=base_env,
+        expected=expected,
+    )
+    _verify_installed_registration(
+        claude_binary=claude_binary,
+        cwd=cwd,
+        base_env=base_env,
+        expected=expected,
+    )
+    return True
+
+
+def remove_claude_local_computer_use_mcp(
+    *,
+    claude_binary: str,
+    cwd: str | Path,
+    base_env: Mapping[str, str] | None = None,
+    node_executable: str | Path | None = None,
+    bridge_path: str | Path | None = None,
+    python_executable: str | Path | None = None,
+    native_launcher: str | Path | None = None,
+    legacy_native_launcher: str | Path | None = None,
+) -> bool:
+    """Remove only the exact FCC-owned local registration for this project."""
+
+    expected = local_mcp_spec(
+        python_executable=python_executable or sys.executable,
+    )
+    legacy_candidates: list[_LocalMcpSpec] = []
+    with suppress(ClaudeMcpRegistrationError):
+        legacy_candidates.append(
+            bridge_mcp_spec(
+                node_executable=node_executable,
+                bridge_path=bridge_path,
+            )
+        )
+    if python_executable is not None:
+        legacy_candidates.append(
+            legacy_local_mcp_spec(python_executable=python_executable)
+        )
+    if native_launcher is not None:
+        legacy_candidates.append(native_mcp_spec(native_launcher))
+    if legacy_native_launcher is not None:
+        legacy_candidates.append(native_mcp_spec(legacy_native_launcher))
+    existing = _get_registration(
+        claude_binary=claude_binary,
+        cwd=cwd,
+        base_env=base_env,
+    )
+    if existing is None:
+        return False
+    _require_owned_registration(
+        existing,
+        expected,
+        legacy_expected=legacy_candidates,
+    )
+
+    _remove_registration(
+        claude_binary=claude_binary,
+        cwd=cwd,
+        base_env=base_env,
+    )
+    return True
+
+
+def _add_registration(
+    *,
+    claude_binary: str,
+    cwd: str | Path,
+    base_env: Mapping[str, str] | None,
+    expected: _LocalMcpSpec,
+) -> None:
     encoded = json.dumps(
         expected,
         ensure_ascii=True,
@@ -78,38 +276,13 @@ def ensure_claude_local_computer_use_mcp(
             + _safe_subprocess_detail(result)
         )
 
-    installed = _get_registration(
-        claude_binary=claude_binary,
-        cwd=cwd,
-        base_env=base_env,
-    )
-    if installed is None:
-        raise ClaudeMcpRegistrationError(
-            "Claude reported MCP registration success but the local entry is absent"
-        )
-    _require_owned_registration(installed, expected)
-    return True
 
-
-def remove_claude_local_computer_use_mcp(
+def _remove_registration(
     *,
     claude_binary: str,
     cwd: str | Path,
-    base_env: Mapping[str, str] | None = None,
-    python_executable: str | Path = sys.executable,
-) -> bool:
-    """Remove only the exact FCC-owned local registration for this project."""
-
-    expected = local_mcp_spec(python_executable=python_executable)
-    existing = _get_registration(
-        claude_binary=claude_binary,
-        cwd=cwd,
-        base_env=base_env,
-    )
-    if existing is None:
-        return False
-    _require_owned_registration(existing, expected)
-
+    base_env: Mapping[str, str] | None,
+) -> None:
     result = _run_claude_mcp(
         [
             claude_binary,
@@ -127,7 +300,65 @@ def remove_claude_local_computer_use_mcp(
             "Claude failed to remove the FCC Computer Use MCP server: "
             + _safe_subprocess_detail(result)
         )
-    return True
+
+
+def _verify_installed_registration(
+    *,
+    claude_binary: str,
+    cwd: str | Path,
+    base_env: Mapping[str, str] | None,
+    expected: _LocalMcpSpec,
+) -> None:
+    installed = _get_registration(
+        claude_binary=claude_binary,
+        cwd=cwd,
+        base_env=base_env,
+    )
+    if installed is None:
+        raise ClaudeMcpRegistrationError(
+            "Claude reported MCP registration success but the local entry is absent"
+        )
+    _require_owned_registration(installed, expected)
+
+
+def _restore_legacy_registration(
+    *,
+    claude_binary: str,
+    cwd: str | Path,
+    base_env: Mapping[str, str] | None,
+    expected: _LocalMcpSpec,
+    original_error: ClaudeMcpRegistrationError,
+) -> None:
+    legacy: _LocalMcpSpec = {
+        "type": expected["type"],
+        "command": _resolved_path(expected["command"]),
+        "args": list(expected["args"]),
+    }
+    try:
+        _add_registration(
+            claude_binary=claude_binary,
+            cwd=cwd,
+            base_env=base_env,
+            expected=legacy,
+        )
+    except ClaudeMcpRegistrationError as restore_error:
+        raise ClaudeMcpRegistrationError(
+            f"{original_error}; FCC could not restore the previous legacy "
+            f"registration: {restore_error}"
+        ) from original_error
+
+
+def _absolute_path_without_resolving(path: str | Path) -> str:
+    """Normalize an executable path while preserving symlink identity."""
+
+    expanded = os.path.expanduser(os.fspath(path))
+    return os.path.abspath(expanded)
+
+
+def _resolved_path(path: str | Path) -> str:
+    """Return the old registration form for narrowly-scoped migration."""
+
+    return str(Path(path).expanduser().resolve())
 
 
 def _get_registration(
@@ -143,7 +374,10 @@ def _get_registration(
     )
     combined = f"{result.stdout}\n{result.stderr}"
     if result.returncode != 0:
-        if "No MCP server found" in combined:
+        normalized = combined.casefold()
+        if "no mcp server" in normalized and (
+            "found" in normalized or "named" in normalized
+        ):
             return None
         raise ClaudeMcpRegistrationError(
             "Claude could not inspect the FCC Computer Use MCP registration: "
@@ -169,20 +403,56 @@ def _get_registration(
 def _require_owned_registration(
     actual: Mapping[str, str],
     expected: _LocalMcpSpec,
-) -> None:
+    *,
+    legacy_expected: Sequence[_LocalMcpSpec] = (),
+) -> bool:
+    if _registration_matches(actual, expected, allow_resolved=False):
+        return False
+    if _registration_matches(actual, expected, allow_resolved=True):
+        return True
+    if (
+        _migration_expected(
+            actual,
+            legacy_expected=legacy_expected,
+        )
+        is not None
+    ):
+        return True
+    raise ClaudeMcpRegistrationError(
+        f"Claude MCP name {MCP_SERVER_NAME!r} already exists but is not "
+        "the exact FCC-owned local Computer Use server; refusing to overwrite it"
+    )
+
+
+def _migration_expected(
+    actual: Mapping[str, str],
+    *,
+    legacy_expected: Sequence[_LocalMcpSpec],
+) -> _LocalMcpSpec | None:
+    for candidate in legacy_expected:
+        if _registration_matches(actual, candidate, allow_resolved=True):
+            return candidate
+    return None
+
+
+def _registration_matches(
+    actual: Mapping[str, str],
+    expected: _LocalMcpSpec,
+    *,
+    allow_resolved: bool,
+) -> bool:
     expected_args = " ".join(expected["args"])
     scope = actual.get("scope", "")
-    matches = (
+    if not (
         scope.casefold().startswith("local")
         and actual.get("type", "").casefold() == "stdio"
-        and actual.get("command") == expected["command"]
         and actual.get("args") == expected_args
-    )
-    if not matches:
-        raise ClaudeMcpRegistrationError(
-            f"Claude MCP name {MCP_SERVER_NAME!r} already exists but is not "
-            "the exact FCC-owned local Computer Use server; refusing to overwrite it"
-        )
+    ):
+        return False
+    command = actual.get("command")
+    if command == expected["command"]:
+        return True
+    return allow_resolved and command == _resolved_path(expected["command"])
 
 
 def _run_claude_mcp(
@@ -214,10 +484,14 @@ def _safe_subprocess_detail(result: subprocess.CompletedProcess[str]) -> str:
 
 
 __all__ = [
+    "MCP_SERVER_BRIDGE_RELATIVE_PATH",
     "MCP_SERVER_MODULE",
     "MCP_SERVER_NAME",
     "ClaudeMcpRegistrationError",
+    "bridge_mcp_spec",
     "ensure_claude_local_computer_use_mcp",
+    "legacy_local_mcp_spec",
     "local_mcp_spec",
+    "native_mcp_spec",
     "remove_claude_local_computer_use_mcp",
 ]

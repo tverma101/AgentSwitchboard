@@ -1,6 +1,7 @@
 """Behavior tests for the terminal FCC server control surface."""
 
 import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -482,7 +483,7 @@ def test_profile_menu_selection_is_next_launch_only() -> None:
     assert selected == "coding"
 
 
-def test_repo_menu_uses_cached_repo_picker_and_records_last_use(
+def test_repo_menu_uses_live_authenticated_repo_picker_and_records_last_use(
     tmp_path: Path,
 ) -> None:
     from free_claude_code.cli import terminal_control
@@ -496,8 +497,11 @@ def test_repo_menu_uses_cached_repo_picker_and_records_last_use(
     )
     with (
         patch.object(terminal_control, "cache_path", return_value=cache),
-        patch.object(terminal_control, "load_cached_repos", return_value=[repo]),
-        patch.object(terminal_control, "cache_is_fresh", return_value=True),
+        patch.object(
+            terminal_control, "github_authenticated_user", return_value="acme"
+        ),
+        patch.object(terminal_control, "default_roots", return_value=()),
+        patch.object(terminal_control, "discover_repos", return_value=[repo]),
         patch.object(terminal_control, "choose_repo", return_value=repo),
         patch.object(terminal_control, "save_cached_repos") as save,
         patch("builtins.input", return_value="s"),
@@ -505,7 +509,8 @@ def test_repo_menu_uses_cached_repo_picker_and_records_last_use(
         selected = terminal_control._run_repo_menu(None)
 
     assert selected == repo
-    save.assert_called_once()
+    assert save.call_count == 2
+    assert save.call_args.args[0][0].last_used > 0
     assert save.call_args.args[1] == cache
 
 
@@ -607,6 +612,24 @@ def test_direct_claude_launch_uses_owned_control_center_when_proxy_is_down() -> 
     owner.assert_called_once_with(["--model", "muse"])
 
 
+def test_direct_claude_launch_preserves_explicit_profile_for_owned_control_center(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli.launchers import claude
+
+    settings = _settings()
+    monkeypatch.delenv("FCC_LEARNING_PROFILE", raising=False)
+    with (
+        patch.object(claude, "get_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value="connection refused"),
+        patch.object(claude, "_start_interactive_owner", return_value=True) as owner,
+    ):
+        claude.launch(("--profile", "coding", "--model", "muse"))
+
+    owner.assert_called_once_with(["--model", "muse"], profile="coding")
+    assert "FCC_LEARNING_PROFILE" not in os.environ
+
+
 def test_direct_danger_launch_preserves_skip_permissions_through_startup() -> None:
     from free_claude_code.cli.launchers import claude
 
@@ -621,8 +644,275 @@ def test_direct_danger_launch_preserves_skip_permissions_through_startup() -> No
     owner.assert_called_once_with(["--dangerously-skip-permissions"])
 
 
+def test_control_callback_returns_exit_status_instead_of_printing_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import entrypoints
+    from free_claude_code.cli.launchers import claude
+    from free_claude_code.cli.launchers.common import ClientLaunchError
+
+    with (
+        patch.object(claude, "launch_danger", side_effect=SystemExit(78)),
+        pytest.raises(ClientLaunchError) as exc_info,
+    ):
+        entrypoints._launch_claude_from_control(True, (), None)
+
+    assert exc_info.value.exit_code == 78
+    assert str(exc_info.value) == "Claude exited with status 78."
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_control_launcher_preserves_firewall_message_and_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.claude_firewall import ClaudeCompatibilityError
+    from free_claude_code.cli.launchers import claude
+    from free_claude_code.cli.launchers.common import ClientLaunchError
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
+    settings = _settings()
+    with (
+        patch.object(claude, "get_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value=None),
+        patch.object(claude, "ensure_learning_hooks"),
+        patch.object(claude, "resolve_client_binary", return_value=sys.executable),
+        patch.object(
+            claude,
+            "default_process_wrapper_path",
+            return_value=tmp_path / "wrapper",
+        ),
+        patch.object(
+            claude,
+            "ensure_process_wrapper",
+            return_value=tmp_path / "wrapper",
+        ),
+        patch.object(
+            claude,
+            "enforce_claude_compatibility",
+            side_effect=ClaudeCompatibilityError(
+                "Claude Code version 2.1.250 is quarantined for FCC."
+            ),
+        ),
+        pytest.raises(ClientLaunchError) as exc_info,
+    ):
+        claude.launch((), raise_for_control=True)
+
+    assert exc_info.value.exit_code == 78
+    assert str(exc_info.value) == (
+        "FCC Claude compatibility firewall blocked launch: "
+        "Claude Code version 2.1.250 is quarantined for FCC."
+    )
+
+
+def test_control_launcher_recovers_with_exact_known_good_binary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.claude_firewall import (
+        ClaudeCompatibilityError,
+        ensure_process_wrapper,
+    )
+    from free_claude_code.cli.launchers import claude
+
+    current = tmp_path / "current-claude"
+    current.write_text(
+        "#!/bin/sh\nprintf '%s\\n' '2.1.250 Claude Code'\n", encoding="utf-8"
+    )
+    current.chmod(0o700)
+    fallback = tmp_path / "known-good-claude"
+    fallback.write_text(
+        "#!/bin/sh\nprintf '%s\\n' '2.1.228 Claude Code'\n", encoding="utf-8"
+    )
+    fallback.chmod(0o700)
+    wrapper = ensure_process_wrapper(tmp_path / "wrapper")
+    settings = _settings()
+    monkeypatch.setenv("FCC_CLAUDE_KNOWN_GOOD_BINARY", str(fallback))
+
+    with (
+        patch.object(claude, "get_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value=None),
+        patch.object(claude, "ensure_learning_hooks"),
+        patch.object(claude, "resolve_client_binary", return_value=str(current)),
+        patch.object(claude, "default_process_wrapper_path", return_value=wrapper),
+        patch.object(claude, "ensure_process_wrapper", return_value=wrapper),
+        patch.object(
+            claude,
+            "enforce_claude_compatibility",
+            side_effect=[
+                ClaudeCompatibilityError(
+                    "Claude Code version 2.1.250 is quarantined for FCC."
+                ),
+                None,
+            ],
+        ) as enforce,
+        patch.object(claude, "run_client_process") as run_process,
+    ):
+        claude.launch((), raise_for_control=True)
+
+    assert enforce.call_count == 2
+    assert enforce.call_args_list[1].args[0] == str(fallback)
+    assert run_process.call_args.kwargs["command"] == [str(fallback)]
+
+
+def test_control_launcher_explains_missing_known_good_repair(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.claude_firewall import ClaudeCompatibilityError
+    from free_claude_code.cli.launchers import claude
+    from free_claude_code.cli.launchers.common import ClientLaunchError
+
+    current = tmp_path / "current-claude"
+    current.write_text(
+        "#!/bin/sh\nprintf '%s\\n' '2.1.250 Claude Code'\n", encoding="utf-8"
+    )
+    current.chmod(0o700)
+    wrapper = claude.ensure_process_wrapper(tmp_path / "wrapper")
+    settings = _settings()
+    monkeypatch.delenv("FCC_CLAUDE_KNOWN_GOOD_BINARY", raising=False)
+
+    with (
+        patch.object(claude, "get_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value=None),
+        patch.object(claude, "ensure_learning_hooks"),
+        patch.object(claude, "resolve_client_binary", return_value=str(current)),
+        patch.object(claude, "default_process_wrapper_path", return_value=wrapper),
+        patch.object(claude, "ensure_process_wrapper", return_value=wrapper),
+        patch.object(
+            claude,
+            "enforce_claude_compatibility",
+            side_effect=ClaudeCompatibilityError(
+                "Claude Code version 2.1.250 is quarantined for FCC."
+            ),
+        ),
+        patch.object(claude, "find_known_good_claude_binary", return_value=None),
+        patch.object(claude, "install_known_good_claude_binary", return_value=None),
+        pytest.raises(ClientLaunchError) as exc_info,
+    ):
+        claude.launch((), raise_for_control=True)
+
+    message = str(exc_info.value)
+    assert "FCC checked PATH and its private offline cache" in message
+    assert "npm install -g @anthropic-ai/claude-code@2.1.228" in message
+    assert "FCC_CLAUDE_KNOWN_GOOD_BINARY" in message
+    assert "Repair & start again" in message
+
+
+def test_control_tui_passes_launch_failure_to_the_next_screen() -> None:
+    from free_claude_code.cli import control_tui
+    from free_claude_code.cli.launchers.common import ClientLaunchError
+
+    first_app = MagicMock()
+    first_app.run.return_value = control_tui.ControlResult("launch", danger=True)
+    second_app = MagicMock()
+    second_app.run.return_value = control_tui.ControlResult("quit")
+    launch_error = ClientLaunchError(
+        "FCC Claude compatibility firewall blocked launch: quarantined", 78
+    )
+    launch = MagicMock(side_effect=launch_error)
+
+    with (
+        patch.object(
+            control_tui, "ControlCenterApp", side_effect=[first_app, second_app]
+        ) as app_class,
+        patch.object(control_tui, "configured_profile", return_value="default"),
+    ):
+        control_tui.run_control_tui(
+            _settings(),
+            supervisor=None,
+            launch_client=launch,
+        )
+
+    assert len(app_class.call_args_list) == 2
+    assert app_class.call_args_list[1].kwargs["startup_error"] == (
+        "Could not launch Claude:\n"
+        "FCC Claude compatibility firewall blocked launch: quarantined\n"
+        "Exit status: 78."
+    )
+
+
+def test_control_tui_does_not_adopt_a_child_profile_as_server_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli import control_tui
+    from free_claude_code.learning.config import PROFILE_ENV
+
+    first_app = MagicMock()
+    first_app.run.return_value = control_tui.ControlResult("launch", profile="coding")
+    second_app = MagicMock()
+    second_app.run.return_value = control_tui.ControlResult("launch", profile="coding")
+    third_app = MagicMock()
+    third_app.run.return_value = control_tui.ControlResult("quit")
+    launch = MagicMock(
+        side_effect=lambda _danger, _argv, _cwd: monkeypatch.setenv(
+            PROFILE_ENV, "coding"
+        )
+    )
+    monkeypatch.setenv(PROFILE_ENV, "default")
+
+    with patch.object(
+        control_tui,
+        "ControlCenterApp",
+        side_effect=[first_app, second_app, third_app],
+    ):
+        control_tui.run_control_tui(
+            _settings(),
+            supervisor=None,
+            launch_client=launch,
+        )
+
+    assert [call.args[1] for call in launch.call_args_list] == [
+        ("--profile", "coding"),
+        ("--profile", "coding"),
+    ]
+
+
+def test_owned_control_center_returns_initial_launch_failure_to_tui() -> None:
+    from free_claude_code.cli import control_tui_entry
+    from free_claude_code.cli.launchers.common import ClientLaunchError
+
+    settings = _settings()
+    supervisor = MagicMock()
+    supervisor.schedule_run.return_value = True
+    server_thread = MagicMock()
+    launch = MagicMock(
+        side_effect=ClientLaunchError(
+            "FCC Claude compatibility firewall blocked launch: quarantined", 78
+        )
+    )
+
+    with (
+        patch.object(control_tui_entry, "ServerSupervisor", return_value=supervisor),
+        patch.object(control_tui_entry.threading, "Thread", return_value=server_thread),
+        patch.object(control_tui_entry, "_wait_for_proxy", return_value=None),
+        patch.object(control_tui_entry, "run_control_tui") as run_control,
+    ):
+        control_tui_entry.run_owned_control_center(
+            settings,
+            initial_argv=("--model", "muse"),
+            launch_client=launch,
+        )
+
+    run_control.assert_called_once()
+    assert run_control.call_args.kwargs["startup_error"] == (
+        "Could not launch Claude:\n"
+        "FCC Claude compatibility firewall blocked launch: quarantined\n"
+        "Exit status: 78."
+    )
+    supervisor.request_stop.assert_called_once_with()
+    server_thread.join.assert_called_once_with()
+
+
 def test_direct_owner_starts_control_center_with_post_migration_settings() -> None:
-    from free_claude_code.cli import commands, server_startup, terminal_control
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        server_startup,
+        terminal_control,
+    )
     from free_claude_code.cli.launchers import claude
 
     settings = _settings(port=31338)
@@ -631,7 +921,7 @@ def test_direct_owner_starts_control_center_with_post_migration_settings() -> No
         patch.object(commands, "load_server_settings", return_value=settings) as load,
         patch.object(claude, "preflight_proxy", return_value="connection refused"),
         patch.object(server_startup, "server_port_is_occupied", return_value=False),
-        patch.object(terminal_control, "run_owned_control_center") as owner,
+        patch.object(control_tui_entry, "run_owned_control_center") as owner,
         patch.object(claude.get_settings, "cache_clear") as clear,
     ):
         started = claude._start_interactive_owner(("--model", "muse"))
@@ -647,7 +937,12 @@ def test_direct_owner_starts_control_center_with_post_migration_settings() -> No
 
 
 def test_direct_owner_reuses_post_migration_server_if_it_is_already_healthy() -> None:
-    from free_claude_code.cli import commands, server_startup, terminal_control
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        server_startup,
+        terminal_control,
+    )
     from free_claude_code.cli.launchers import claude
 
     settings = _settings(port=31340)
@@ -656,7 +951,7 @@ def test_direct_owner_reuses_post_migration_server_if_it_is_already_healthy() ->
         patch.object(commands, "load_server_settings", return_value=settings),
         patch.object(claude, "preflight_proxy", return_value=None),
         patch.object(server_startup, "server_port_is_occupied") as port_probe,
-        patch.object(terminal_control, "run_owned_control_center") as owner,
+        patch.object(control_tui_entry, "run_owned_control_center") as owner,
         patch.object(claude, "launch") as relaunch,
         patch.object(claude.get_settings, "cache_clear"),
     ):
@@ -701,7 +996,12 @@ def test_owned_control_center_launches_initial_client_after_health() -> None:
 
 
 def test_direct_owner_rejects_foreign_port_occupant() -> None:
-    from free_claude_code.cli import commands, server_startup, terminal_control
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        server_startup,
+        terminal_control,
+    )
     from free_claude_code.cli.launchers import claude
 
     settings = _settings(port=31339)
@@ -710,7 +1010,7 @@ def test_direct_owner_rejects_foreign_port_occupant() -> None:
         patch.object(commands, "load_server_settings", return_value=settings),
         patch.object(claude, "preflight_proxy", return_value="connection refused"),
         patch.object(server_startup, "server_port_is_occupied", return_value=True),
-        patch.object(terminal_control, "run_owned_control_center") as owner,
+        patch.object(control_tui_entry, "run_owned_control_center") as owner,
         patch.object(claude.get_settings, "cache_clear"),
         pytest.raises(SystemExit, match="1"),
     ):
@@ -720,7 +1020,12 @@ def test_direct_owner_rejects_foreign_port_occupant() -> None:
 
 
 def test_noninteractive_direct_launch_does_not_create_hidden_server_owner() -> None:
-    from free_claude_code.cli import commands, server_startup, terminal_control
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        server_startup,
+        terminal_control,
+    )
     from free_claude_code.cli.launchers import claude
 
     with (
@@ -729,7 +1034,7 @@ def test_noninteractive_direct_launch_does_not_create_hidden_server_owner() -> N
         ),
         patch.object(commands, "load_server_settings") as load,
         patch.object(server_startup, "server_port_is_occupied") as port_probe,
-        patch.object(terminal_control, "run_owned_control_center") as owner,
+        patch.object(control_tui_entry, "run_owned_control_center") as owner,
     ):
         started = claude._start_interactive_owner(())
 

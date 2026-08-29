@@ -1,12 +1,17 @@
 """Anthropic request parsing and public-field serialization."""
 
 from free_claude_code.core.anthropic import dump_messages_request
+from free_claude_code.core.anthropic.content import normalize_tool_result_content
 from free_claude_code.core.anthropic.models import (
     ContentBlockServerToolUse,
     ContentBlockText,
     ContentBlockWebSearchToolResult,
     Message,
     MessagesRequest,
+)
+from free_claude_code.core.anthropic.request_serialization import (
+    serialize_tool_result_content,
+    tool_result_media_block_types,
 )
 
 
@@ -102,3 +107,36 @@ def test_server_tool_history_remains_valid_anthropic_input() -> None:
     assert isinstance(blocks, list)
     assert isinstance(blocks[0], ContentBlockServerToolUse)
     assert isinstance(blocks[1], ContentBlockWebSearchToolResult)
+
+
+def test_normalize_tool_result_content_unwraps_mcp_envelope() -> None:
+    content = [
+        {"type": "text", "text": "ready"},
+        {"type": "image", "data": "encoded", "mimeType": "image/png"},
+    ]
+    envelope = {
+        "content": content,
+        "isError": False,
+        "_meta": {"request_id": "metadata-is-not-model-content"},
+    }
+
+    assert normalize_tool_result_content(envelope) == content
+
+
+def test_normalize_tool_result_content_leaves_application_mapping_untouched() -> None:
+    application_value = {
+        "content": [{"type": "text", "text": "business value"}],
+        "status": "ok",
+    }
+
+    assert normalize_tool_result_content(application_value) is application_value
+
+
+def test_tool_search_metadata_is_omitted_from_serialized_tool_results() -> None:
+    content = [
+        {"type": "tool_reference", "tool_name": "mcp__computer__click"},
+        {"type": "text", "text": "usable result"},
+    ]
+
+    assert serialize_tool_result_content(content) == "usable result"
+    assert tool_result_media_block_types(content) == ()

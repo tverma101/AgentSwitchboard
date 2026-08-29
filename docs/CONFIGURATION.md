@@ -66,6 +66,8 @@ MODEL_ALIASES=fast=opencode_go/minimax-m2.7
 MODEL_CATALOG_MODE=curated
 MODEL_CATALOG_ALLOWLIST=opencode_go/muse-spark-1.2-contributor,opencode_go/minimax-m2.7
 OPENCODE_GO_BASE_URL=""
+BAI_API_KEY=""
+BAI_BASE_URL="https://api.b.ai/v1"
 ```
 
 Aliases are client-facing names only. Receipts, provider dispatch, and upstream
@@ -73,17 +75,50 @@ requests retain the exact provider/model reference. `MODEL_CATALOG_MODE=all`
 exposes discovered models; `curated` applies the exact references and wildcard
 rules in [model_visibility.py](../src/free_claude_code/config/model_visibility.py).
 
+The loopback Admin model picker keeps the full cached discovery inventory
+separate from the client-visible list. It never treats every discovered model
+as user-selected: checkboxes are pending selections for the explicit
+allowlist, and `Enable selected`/`Disable selected` change only those rows.
+`Disable all` writes an empty curated allowlist while retaining the cached
+inventory, so disabled discoveries remain available to search and re-enable.
+Search and price/provider filters operate on that in-memory inventory without
+re-querying providers; use the page's `Refresh` action when a new discovery
+snapshot is wanted.
+The Models page also provides `Free first`, `Free only`, and `All prices`
+views. Free/paid state comes from explicit provider or catalog pricing; an
+OpenRouter `:free` variant is the narrow fallback when no price map is
+available. Missing pricing stays unknown and is never treated as free. These
+views only filter or order the display; they do not enable models or change
+the allowlist.
+
+B.AI uses `BAI_API_KEY` and the OpenAI-compatible `https://api.b.ai/v1`
+endpoint. Its `/v1/models` response is the source of truth for exact model
+IDs. B.AI may return model IDs without optional pricing or capability fields;
+those models remain `PRICE?`/unknown and are excluded from `Free only` until
+explicit zero-price or `is_free` metadata is available. Current promotional
+offers are not hardcoded because they can expire or vary by eligibility.
+
 The provider table and credential names are maintained in
 `src/free_claude_code/config/provider_catalog.py` and `.env.example`. Do not
 copy a model name from an old screenshot or design document without checking
 that source.
 
-`/v1/models` also exposes metadata-only `capability_evidence` for discovered
-models. Each claimed capability is `supported`, `unsupported`, or
-`accepted-but-unverified`, with the evidence source, observation timestamp,
-catalog version, and protocol when available. Missing metadata stays unknown;
-conflicting claims reject the provider model-list response instead of enabling
-a broader route.
+`/v1/models` also exposes metadata-only `capability_evidence` and
+`catalog_metadata` for discovered models. FCC refreshes the public
+`models.dev/api.json` snapshot once per TTL window, stores it at
+`~/.fcc/model-metadata-catalog.json`, and enriches all matching discovered
+models in memory. The snapshot includes input/output modalities, context and
+output limits, display metadata, release/update dates, tool/structured-output
+claims, pricing/free-state metadata, and provenance. It is a metadata source
+only: it does not authorize a provider, reveal credentials, or make a hidden
+model visible to clients.
+
+Set `MODEL_METADATA_CATALOG_ENABLED=false` to disable fetching, or tune
+`MODEL_METADATA_CATALOG_TTL_HOURS` between `0.25` and `720`. A catalog outage
+leaves provider discovery usable and preserves provider-native metadata.
+Provider-native claims take precedence over the public snapshot. Explicitly
+unsupported vision metadata remains a preflight rejection; missing or
+unconfirmed vision metadata is not treated as a negative claim.
 
 The local Admin Model Config view shows the same evidence for the selected
 model, including capability state, confidence, and provenance. A configured
@@ -173,6 +208,16 @@ request cannot silently start or replace a login.
 
 - `FCC_CLAUDE_CONTEXT_TOKENS` defaults to `256000` and accepts `32000` through
   `1000000`.
+- `fcc-claude` supplies Claude Code's `MAX_MCP_OUTPUT_TOKENS=12000` by
+  default, unless that public Claude setting is already present in the
+  environment. An explicit value is preserved so a user-owned MCP server can
+  opt into a different result budget.
+- `fcc-claude` supplies Claude Code's `ENABLE_TOOL_SEARCH=true` by default so
+  MCP definitions are deferred from the client's rendered context. An
+  explicit `false`, `auto`, or `auto:N` value is preserved. FCC removes only
+  Anthropic's search-controller definitions and reference blocks before
+  OpenAI-compatible provider conversion; every ordinary named MCP tool stays
+  available for direct calls.
 - `REASONING_POLICY=client` preserves the effort requested by the client.
   `off`, `low`, `medium`, `high`, `xhigh`, and `max` are explicit overrides.
 - `fcc-learning context-policy install` adds advisory tool-output discipline to
@@ -181,12 +226,18 @@ request cannot silently start or replace a login.
 - `FCC_CONTEXT_GOVERNOR_ENABLED` defaults to `true`. At the Messages/Responses
   ingress boundary, oversized text-only `tool_result` content is redirected to
   a local `0600` artifact and replaced with a bounded head/tail locator.
+- `FCC_CONTEXT_GOVERNOR_PRESERVE_MEDIA` defaults to `true`. After model
+  routing and visual-capability validation, complete image/document blocks are
+  preserved for vision-capable routes. Unknown capability metadata is also
+  preserved so FCC does not destroy an image before the provider can decide;
+  an explicit non-vision model is rejected before provider I/O.
 - `FCC_CONTEXT_GOVERNOR_TOOL_RESULT_MAX_BYTES` defaults to `16384` and accepts
   `512` through `1000000`. `FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR` optionally
   selects the private artifact directory; the default is
   `~/.fcc/context-artifacts`. Structured JSON, media, and opaque reasoning
-  state are never truncated; oversized values fail explicitly. Redirect
-  receipts include byte, line, and estimated-token counts. Retrieve more
+  state are never truncated when media preservation is enabled; oversized
+  structured values still fail explicitly. Redirect receipts include byte,
+  line, and estimated-token counts. Retrieve more
   text only through a bounded terminal slice rooted to that directory:
 
   ```bash
@@ -199,8 +250,13 @@ request cannot silently start or replace a login.
   artifact back into context.
 - FCC's Claude launcher pins the installed executable to the known-good
   `2.1.228` receipt by default. A newer or unparseable binary is quarantined
-  before launch; set `FCC_CLAUDE_ALLOW_UNCERTIFIED=1` only for an explicit
-  canary. The launcher installs a private absolute
+  before launch. After a version quarantine, FCC first checks
+  `FCC_CLAUDE_KNOWN_GOOD_BINARY`, PATH, and its private versioned install. If
+  no exact known-good executable is present, it may restore that exact version
+  from npm's local offline cache without changing the global `claude` command.
+  `FCC_CLAUDE_KNOWN_GOOD_BINARY` may point to an existing exact executable.
+  Set `FCC_CLAUDE_ALLOW_UNCERTIFIED=1` only for an explicit canary. The
+  launcher installs a private absolute
   `CLAUDE_CODE_PROCESS_WRAPPER` under `~/.fcc/bin/` for Claude self-spawns.
   The wrapper preserves arguments/environment, reasserts FCC's local policy,
   and fails closed if proxy auth or the context cap is missing.
@@ -248,17 +304,21 @@ instead of becoming implicit fallbacks, and each allowed or blocked decision is
 recorded as metadata-only `provider.egress.decision` trace evidence. This does
 not claim that optional browser, computer-use, or vision helpers are enabled.
 
-Image/document blocks are never silently discarded. Image requests require
-confirmed vision metadata; models with explicit non-vision metadata or missing
-vision confirmation are rejected at ingress. Provider adapters also fail before
-network I/O when their native protocol cannot consume the attachment. Text and
-tool requests do not require visual capability metadata. Conflicting explicit
-vision claims in a provider model-list response are rejected instead of being
-merged permissively; an unclaimed capability remains unknown.
+Image/document blocks are never silently discarded. Image requests with
+explicit non-vision metadata are rejected at ingress. Vision-capable and
+unknown routes preserve the complete media block; provider adapters still fail
+before network I/O when their native protocol cannot consume the attachment.
+Text and tool requests do not require visual capability metadata. Conflicting
+explicit vision claims in a provider model-list response are rejected instead
+of being merged permissively; an unclaimed capability remains unknown.
 Native Anthropic Messages preserves structured media inside a tool result. The
-OpenAI Chat and Responses bridges reject image/document blocks inside
-`tool_result` before upstream I/O because their converted tool-output shape is
-text-only; this is fail-closed behavior, not silent media loss.
+OpenAI Chat bridge still rejects image/document blocks inside `tool_result`
+before upstream I/O because its converted tool-output shape is text-only. The
+Responses bridge preserves supported Anthropic image blocks as native
+`function_call_output.output` content parts (`input_text`/`input_image`), so
+Computer Use screenshots reach a vision-capable model without flattening or
+truncation. Unsupported nested media shapes and document sources still fail
+closed before upstream I/O rather than being silently serialized as text.
 
 The application also records a deterministic required-capability set for
 Messages requests. The strict capability policy is controller-preserving and
@@ -274,6 +334,29 @@ helpers and unrelated credentials never authorize a route. Changes to these
 four values require a server restart so existing sessions keep one policy for
 their full lifetime. The terminal control center's `P` command prints the
 live metadata-only policy and egress receipt.
+
+`FCC_COMPUTER_USE_APPROVAL` controls the native Codex app-access form used by
+the Computer Use bridge. It defaults to `auto`, but the MCP process accepts the
+form only when `codex-computer-use` is also present in `FCC_ALLOWED_HELPERS`.
+Set it to `decline` to keep native app access fail-closed. This setting is
+captured at server/session startup and requires a restart.
+
+When `codex-computer-use` is explicitly allow-listed, `fcc-claude` validates
+the signed Codex Computer Use installation, exposes the official Computer Use
+skill through the active `CLAUDE_CONFIG_DIR`, and registers the fixed
+`fcc-codex-computer-use` stdio MCP name to the Python FCC module
+(`free_claude_code.cli.codex_computer_use_mcp`) before starting Claude. The
+server launches the signed Codex `app-server`, configures the official bundled
+Computer Use plugin launcher, waits for the ten native tools, preserves native
+JSON-RPC results including screenshots, and handles the app-access elicitation
+handshake. Read-only list/state calls can recover once from a lost native
+connection; mutating calls are never replayed after an uncertain result.
+Registration is idempotent, migrates FCC-owned raw-bridge/direct-launcher
+entries, and refuses to overwrite a different user or project entry. The
+native host remains lazy and starts only when Claude calls a Computer Use tool;
+launch setup does not capture the screen. If setup fails, the launch is
+blocked with the reason and exact config/project locations instead of returning
+an unexplained status code.
 
 Provider fault-attribution receipts also record `duration_ms` and
 `time_to_first_token_ms` when a provider stream is attempted. The first is the

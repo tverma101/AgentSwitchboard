@@ -42,6 +42,11 @@ class FakeRequestRuntime(RequestRuntimePort):
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         return self._cached_infos
 
+    def cached_discovered_prefixed_model_infos(
+        self,
+    ) -> tuple[ProviderModelInfo, ...]:
+        return self._cached_infos
+
 
 def _runtime() -> FakeRequestRuntime:
     settings = Settings().model_copy(update={"model": "nvidia_nim/configured"})

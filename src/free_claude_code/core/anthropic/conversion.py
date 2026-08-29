@@ -1,6 +1,7 @@
 """Message and tool format converters."""
 
 import json
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -12,7 +13,15 @@ from free_claude_code.core.visual_attachments import (
     validate_image_url,
 )
 
-from .content import get_block_attr, get_block_type
+from .content import (
+    get_block_attr,
+    get_block_type,
+    is_tool_search_metadata_block,
+    is_tool_search_tool_definition,
+    is_tool_search_tool_name,
+    normalize_image_source,
+    without_tool_search_metadata,
+)
 from .models import MessagesRequest
 from .request_serialization import (
     serialize_tool_result_content,
@@ -122,6 +131,21 @@ class _ToolTurnSegment:
 _TranscriptSegment = _PlainSegment | _ToolTurnSegment
 
 
+@dataclass
+class _OpenAIChatToolResult:
+    """A text-only Chat tool result plus images emitted in a user turn.
+
+    OpenAI-compatible Chat APIs generally require ``role=tool`` content to be
+    text.  MCP computer-use observations are real image blocks, so they must
+    not be JSON-flattened into that field.  Keep the tool-call dependency in
+    the tool message and carry the image in a following user message after all
+    results for the assistant turn have been emitted.
+    """
+
+    message: dict[str, Any]
+    observation_messages: list[dict[str, Any]] = field(default_factory=list)
+
+
 def _tool_call_ids(tool_calls: list[dict[str, Any]]) -> list[str]:
     ids: list[str] = []
     for tool_call in tool_calls:
@@ -158,6 +182,8 @@ def _deferred_post_tool_blocks(
 
 def _assert_no_forbidden_assistant_block(block: Any) -> None:
     block_type = get_block_type(block)
+    if is_tool_search_metadata_block(block):
+        return
     if block_type == "image":
         raise OpenAIConversionError(
             "Assistant image blocks are not supported for OpenAI chat conversion."
@@ -203,7 +229,7 @@ def _openai_system_text(
 
 def _openai_user_image_part(block: Any) -> dict[str, Any]:
     """Convert one Anthropic user image block without performing I/O."""
-    source = get_block_attr(block, "source", {})
+    source = normalize_image_source(block)
     source_type = get_block_attr(source, "type")
 
     if source_type == "base64":
@@ -234,6 +260,74 @@ def _openai_user_image_part(block: Any) -> dict[str, Any]:
         )
 
     return {"type": "image_url", "image_url": {"url": url}}
+
+
+def _openai_chat_tool_result(block: Any) -> _OpenAIChatToolResult:
+    """Convert a tool result without putting structured media in ``role=tool``."""
+
+    tool_use_id = get_block_attr(block, "tool_use_id")
+    tool_use_id_text = str(tool_use_id) if tool_use_id is not None else ""
+    content = without_tool_search_metadata(get_block_attr(block, "content", ""))
+    image_parts: list[dict[str, Any]] = []
+
+    if isinstance(content, list):
+        text_content: list[Any] = []
+        for item in content:
+            block_type = get_block_type(item)
+            if is_tool_search_metadata_block(item):
+                continue
+            if block_type == "image":
+                image_parts.append(_openai_user_image_part(item))
+                continue
+            if block_type == "document":
+                raise OpenAIConversionError(
+                    "OpenAI chat conversion cannot represent document blocks inside "
+                    f"tool_result {tool_use_id_text!r} without data loss."
+                )
+            nested_media = tool_result_media_block_types(item)
+            if nested_media:
+                raise OpenAIConversionError(
+                    "OpenAI chat conversion cannot represent nested structured media "
+                    f"blocks {nested_media} inside tool_result "
+                    f"{tool_use_id_text!r}; refusing lossy text serialization."
+                )
+            text_content.append(item)
+        serialized = serialize_tool_result_content(text_content)
+    elif isinstance(content, Mapping) and get_block_type(content) == "image":
+        image_parts.append(_openai_user_image_part(content))
+        serialized = ""
+    else:
+        nested_media = tool_result_media_block_types(content)
+        if nested_media:
+            raise OpenAIConversionError(
+                "OpenAI chat conversion cannot represent structured media blocks "
+                f"{nested_media} inside tool_result {tool_use_id_text!r}; refusing "
+                "lossy text serialization."
+            )
+        serialized = serialize_tool_result_content(content)
+
+    if image_parts and not serialized:
+        serialized = "Tool result included an image observation."
+    tool_message = {
+        "role": "tool",
+        "tool_call_id": tool_use_id,
+        "content": serialized if serialized else "",
+    }
+    observation_messages: list[dict[str, Any]] = []
+    if image_parts:
+        observation_messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "[Tool result image observation preserved for vision input.]",
+                    },
+                    *image_parts,
+                ],
+            }
+        )
+    return _OpenAIChatToolResult(tool_message, observation_messages)
 
 
 def _openai_user_content_parts(content: Any) -> list[dict[str, Any]]:
@@ -323,7 +417,7 @@ class _OpenAIChatHistoryLedger:
     def __init__(self) -> None:
         self._output: list[dict[str, Any]] = []
         self._segments: list[_TranscriptSegment] = []
-        self._tool_results: dict[str, dict[str, Any]] = {}
+        self._tool_results: dict[str, _OpenAIChatToolResult] = {}
 
     def add_plain(self, messages: list[dict[str, Any]]) -> None:
         if messages:
@@ -371,27 +465,18 @@ class _OpenAIChatHistoryLedger:
     def _record_tool_result(self, block: Any) -> None:
         tuid = get_block_attr(block, "tool_use_id")
         tuid_s = str(tuid) if tuid is not None else ""
-        tool_content = get_block_attr(block, "content", "")
-        media_types = tool_result_media_block_types(tool_content)
-        if media_types:
-            raise OpenAIConversionError(
-                "OpenAI chat conversion cannot represent structured media blocks "
-                f"{media_types} inside tool_result {tuid_s!r}; refusing lossy text "
-                "serialization."
-            )
         if not tuid_s:
             self.add_plain(AnthropicToOpenAIConverter._convert_user_message([block]))
             return
-        serialized = serialize_tool_result_content(tool_content)
-        tool_message = {
-            "role": "tool",
-            "tool_call_id": tuid,
-            "content": serialized if serialized else "",
-        }
+        tool_result = _openai_chat_tool_result(block)
         if self._has_pending_tool_id(tuid_s):
-            self._tool_results[tuid_s] = tool_message
+            if tuid_s in self._tool_results:
+                raise OpenAIConversionError(
+                    f"duplicate tool_result for tool_use id {tuid_s!r}"
+                )
+            self._tool_results[tuid_s] = tool_result
         else:
-            self.add_plain([tool_message])
+            self.add_plain([tool_result.message, *tool_result.observation_messages])
 
     def _drain_ready_segments(self) -> None:
         while self._segments:
@@ -414,8 +499,12 @@ class _OpenAIChatHistoryLedger:
                 break
 
             self._segments.pop(0)
+            observation_messages: list[dict[str, Any]] = []
             for tool_id in segment.required_tool_ids:
-                self._output.append(self._tool_results.pop(tool_id))
+                tool_result = self._tool_results.pop(tool_id)
+                self._output.append(tool_result.message)
+                observation_messages.extend(tool_result.observation_messages)
+            self._output.extend(observation_messages)
             deferred_messages = (
                 AnthropicToOpenAIConverter._deferred_post_tool_to_messages(segment)
             )
@@ -425,10 +514,13 @@ class _OpenAIChatHistoryLedger:
         if not segment.assistant_emitted:
             self._output.append(segment.assistant_message)
             segment.assistant_emitted = True
+        observation_messages: list[dict[str, Any]] = []
         for tool_id in segment.required_tool_ids:
             tool_result = self._tool_results.pop(tool_id, None)
             if tool_result is not None:
-                self._output.append(tool_result)
+                self._output.append(tool_result.message)
+                observation_messages.extend(tool_result.observation_messages)
+        self._output.extend(observation_messages)
         self._output.extend(
             AnthropicToOpenAIConverter._deferred_post_tool_to_messages(segment)
         )
@@ -640,6 +732,8 @@ class AnthropicToOpenAIConverter:
                 continue
             elif block_type == "tool_use":
                 tool_calls.append(_tool_call_from_tool_use(block))
+            elif is_tool_search_metadata_block(block):
+                continue
             else:
                 _assert_no_forbidden_assistant_block(block)
 
@@ -703,22 +797,10 @@ class AnthropicToOpenAIConverter:
                 content_parts.append(_openai_user_image_part(block))
             elif block_type == "tool_result":
                 flush_content()
-                tool_content = get_block_attr(block, "content", "")
-                media_types = tool_result_media_block_types(tool_content)
-                if media_types:
-                    raise OpenAIConversionError(
-                        "OpenAI chat conversion cannot represent structured media "
-                        f"blocks {media_types} inside tool_result; refusing lossy "
-                        "text serialization."
-                    )
-                serialized = serialize_tool_result_content(tool_content)
-                result.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": get_block_attr(block, "tool_use_id"),
-                        "content": serialized if serialized else "",
-                    }
-                )
+                tool_result = _openai_chat_tool_result(block)
+                result.extend([tool_result.message, *tool_result.observation_messages])
+            elif is_tool_search_metadata_block(block):
+                continue
 
         flush_content()
         return result
@@ -735,6 +817,7 @@ class AnthropicToOpenAIConverter:
                 },
             }
             for tool in tools
+            if not is_tool_search_tool_definition(tool)
         ]
 
     @staticmethod
@@ -746,6 +829,8 @@ class AnthropicToOpenAIConverter:
         if choice_type == "tool":
             name = tool_choice.get("name")
             if name:
+                if is_tool_search_tool_name(name):
+                    return "auto"
                 return {"type": "function", "function": {"name": name}}
         if choice_type == "any":
             return "required"
@@ -803,7 +888,9 @@ def build_base_request_body(
 
     tools = request_data.tools
     if tools:
-        body["tools"] = AnthropicToOpenAIConverter.convert_tools(tools)
+        converted_tools = AnthropicToOpenAIConverter.convert_tools(tools)
+        if converted_tools:
+            body["tools"] = converted_tools
     tool_choice = request_data.tool_choice
     if tool_choice:
         body["tool_choice"] = AnthropicToOpenAIConverter.convert_tool_choice(

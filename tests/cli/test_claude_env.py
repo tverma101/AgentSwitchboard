@@ -49,6 +49,8 @@ def test_build_claude_proxy_env_always_sets_default_256k() -> None:
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
     assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
     assert env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] == "1"
+    assert env["MAX_MCP_OUTPUT_TOKENS"] == "12000"
+    assert env["ENABLE_TOOL_SEARCH"] == "true"
 
 
 def test_build_claude_proxy_env_uses_explicit_override() -> None:
@@ -60,6 +62,26 @@ def test_build_claude_proxy_env_uses_explicit_override() -> None:
     )
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "192000"
     assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "192000"
+
+
+def test_build_claude_proxy_env_preserves_explicit_mcp_output_cap() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={"MAX_MCP_OUTPUT_TOKENS": "25000"},
+    )
+
+    assert env["MAX_MCP_OUTPUT_TOKENS"] == "25000"
+
+
+def test_build_claude_proxy_env_preserves_explicit_tool_search_setting() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={"ENABLE_TOOL_SEARCH": "auto:5"},
+    )
+
+    assert env["ENABLE_TOOL_SEARCH"] == "auto:5"
 
 
 def test_build_claude_proxy_env_propagates_absolute_process_wrapper() -> None:

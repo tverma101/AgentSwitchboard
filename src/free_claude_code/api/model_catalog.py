@@ -1,11 +1,12 @@
 """Model-list response construction for Claude-compatible clients."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from free_claude_code.application.model_metadata import (
     CapabilityEvidence,
+    ModelCatalogMetadata,
     ReasoningCapabilityEvidence,
 )
 from free_claude_code.application.ports import RequestRuntimePort
@@ -35,6 +36,7 @@ class ModelResponse(BaseModel):
     type: Literal["model"] = "model"
     supports_vision: bool | None = None
     accepted_image_types: tuple[str, ...] = ()
+    catalog_metadata: dict[str, Any] | None = None
     capability_evidence: dict[str, str] = Field(default_factory=dict)
     capability_evidence_source: str | None = None
     capability_evidence_observed_at: str | None = None
@@ -121,7 +123,9 @@ def build_models_list_response(
                 model_info.supports_thinking if model_info is not None else None
             ),
             supports_vision=(
-                model_info.supports_vision if model_info is not None else None
+                model_info.effective_supports_vision()
+                if model_info is not None
+                else None
             ),
             accepted_image_types=(
                 model_info.accepted_image_types if model_info is not None else ()
@@ -130,6 +134,9 @@ def build_models_list_response(
                 model_info.capability_evidence if model_info is not None else None
             ),
             reasoning=(model_info.reasoning if model_info is not None else None),
+            catalog_metadata=(
+                model_info.catalog_metadata if model_info is not None else None
+            ),
         )
 
     for alias, target in parse_model_aliases(
@@ -143,7 +150,9 @@ def build_models_list_response(
             display_name=f"{alias} → {target}",
             created_at=DISCOVERED_MODEL_CREATED_AT,
             supports_vision=(
-                target_info.supports_vision if target_info is not None else None
+                target_info.effective_supports_vision()
+                if target_info is not None
+                else None
             ),
             accepted_image_types=(
                 target_info.accepted_image_types if target_info is not None else ()
@@ -152,6 +161,10 @@ def build_models_list_response(
         _apply_capability_fields(
             alias_model,
             target_info.capability_evidence if target_info is not None else None,
+        )
+        _apply_catalog_metadata(
+            alias_model,
+            target_info.catalog_metadata if target_info is not None else None,
         )
         _apply_reasoning_fields(
             alias_model, target_info.reasoning if target_info is not None else None
@@ -166,10 +179,11 @@ def build_models_list_response(
             seen,
             model_info.model_id,
             supports_thinking=model_info.supports_thinking,
-            supports_vision=model_info.supports_vision,
+            supports_vision=model_info.effective_supports_vision(),
             accepted_image_types=model_info.accepted_image_types,
             capability_evidence=model_info.capability_evidence,
             reasoning=model_info.reasoning,
+            catalog_metadata=model_info.catalog_metadata,
         )
 
     for model in SUPPORTED_CLAUDE_MODELS:
@@ -191,6 +205,7 @@ def _discovered_model_response(
     accepted_image_types: tuple[str, ...] = (),
     capability_evidence: CapabilityEvidence | None = None,
     reasoning: ReasoningCapabilityEvidence | None = None,
+    catalog_metadata: ModelCatalogMetadata | None = None,
 ) -> ModelResponse:
     model = ModelResponse(
         id=model_id,
@@ -201,7 +216,16 @@ def _discovered_model_response(
     )
     _apply_capability_fields(model, capability_evidence)
     _apply_reasoning_fields(model, reasoning)
+    _apply_catalog_metadata(model, catalog_metadata)
     return model
+
+
+def _apply_catalog_metadata(
+    model: ModelResponse,
+    metadata: ModelCatalogMetadata | None,
+) -> None:
+    if metadata is not None:
+        model.catalog_metadata = metadata.as_dict()
 
 
 def _apply_capability_fields(
@@ -257,6 +281,7 @@ def _append_provider_model_variants(
     accepted_image_types: tuple[str, ...] = (),
     capability_evidence: CapabilityEvidence | None = None,
     reasoning: ReasoningCapabilityEvidence | None = None,
+    catalog_metadata: ModelCatalogMetadata | None = None,
 ) -> None:
     if supports_thinking is not False:
         _append_unique_model(
@@ -269,6 +294,7 @@ def _append_provider_model_variants(
                 accepted_image_types=accepted_image_types,
                 capability_evidence=capability_evidence,
                 reasoning=reasoning,
+                catalog_metadata=catalog_metadata,
             ),
         )
     _append_unique_model(
@@ -281,5 +307,6 @@ def _append_provider_model_variants(
             accepted_image_types=accepted_image_types,
             capability_evidence=capability_evidence,
             reasoning=reasoning,
+            catalog_metadata=catalog_metadata,
         ),
     )

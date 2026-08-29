@@ -541,7 +541,9 @@ def _model_options(
             services.requests.cached_prefixed_model_infos(),
         )
     )
+    catalog_infos = tuple(services.requests.cached_discovered_prefixed_model_infos())
     discovered = {info.model_id for info in discovered_infos}
+    catalog = configured | {info.model_id for info in catalog_infos}
     failed_provider_ids = (
         refresh_result.failed_provider_ids if refresh_result is not None else ()
     )
@@ -550,6 +552,9 @@ def _model_options(
         "model_labels": model_display_names(configured | discovered),
         "failed_providers": list(failed_provider_ids),
         "model_evidence": _model_evidence(configured, discovered_infos),
+        "catalog_models": sorted(catalog, key=str.casefold),
+        "catalog_model_labels": model_display_names(catalog),
+        "catalog_model_evidence": _model_evidence(configured, catalog_infos),
     }
 
 
@@ -594,6 +599,9 @@ def _model_evidence_for_info(
             "observed_at": None,
             "evidence_version": None,
             "evidence_protocol": None,
+            "catalog_metadata": None,
+            "is_free": None,
+            "pricing": {},
             "capabilities": {
                 capability.value: {
                     "state": CapabilityEvidenceStatus.UNKNOWN.value,
@@ -611,6 +619,13 @@ def _model_evidence_for_info(
         "observed_at": evidence.observed_at,
         "evidence_version": evidence.evidence_version,
         "evidence_protocol": evidence.evidence_protocol,
+        "catalog_metadata": (
+            info.catalog_metadata.as_dict()
+            if info.catalog_metadata is not None
+            else None
+        ),
+        "is_free": info.effective_is_free(),
+        "pricing": dict(info.pricing),
         "capabilities": {
             capability.value: _capability_evidence_for_info(capability, info)
             for capability in _MODEL_EVIDENCE_CAPABILITIES

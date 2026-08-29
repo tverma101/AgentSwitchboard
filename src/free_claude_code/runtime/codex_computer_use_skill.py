@@ -1,5 +1,7 @@
 """Expose the installed official Codex Computer Use skill to Claude Code."""
 
+import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from free_claude_code.runtime.codex_computer_use import (
@@ -13,6 +15,16 @@ from free_claude_code.runtime.codex_computer_use_native_contract import (
 )
 
 CLAUDE_SKILL_NAME = "computer-use"
+
+
+def claude_config_dir_from_env(environment: Mapping[str, str] | None = None) -> Path:
+    """Return Claude's active config root for the child launch environment."""
+
+    values = os.environ if environment is None else environment
+    configured = values.get("CLAUDE_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".claude"
 
 
 def native_computer_use_skill_dir(paths: CodexComputerUsePaths) -> Path:
@@ -88,6 +100,7 @@ def remove_native_computer_use_skill(
 
 __all__ = [
     "CLAUDE_SKILL_NAME",
+    "claude_config_dir_from_env",
     "install_native_computer_use_skill",
     "native_computer_use_skill_dir",
     "remove_native_computer_use_skill",

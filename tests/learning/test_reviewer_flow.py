@@ -146,6 +146,7 @@ def test_subagent_hooks_inject_and_return_machine_dense_context(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setenv("FCC_LEARNING_ENABLED", "1")
     monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
     registry = ScarRegistry("coding")
     registry.upsert(admit_scar_candidate(_candidate()))

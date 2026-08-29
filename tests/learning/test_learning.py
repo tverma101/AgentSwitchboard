@@ -6,8 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from free_claude_code.learning import cli as learning_cli
+from free_claude_code.learning.config import learning_enabled
 from free_claude_code.learning.engine import apply_learning_result
-from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
+from free_claude_code.learning.hooks import (
+    ensure_learning_hooks,
+    install_hooks,
+    uninstall_hooks,
+)
 from free_claude_code.learning.stop_hook import drain_queue, enqueue_stop, handle_stop
 from free_claude_code.learning.store import LearningStore, format_memory_context
 
@@ -54,6 +59,74 @@ def test_prompt_state_round_trip(tmp_path: Path) -> None:
     store = LearningStore(tmp_path / "learning.db")
     store.record_prompt(session_id="session-1", cwd="/repo", prompt="Fix the parser")
     assert store.prompt_for_session("session-1") == ("/repo", "Fix the parser")
+
+
+def test_learning_is_opt_in(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_LEARNING_ENABLED", raising=False)
+    assert not learning_enabled()
+
+    monkeypatch.setenv("FCC_LEARNING_ENABLED", "1")
+    assert learning_enabled()
+
+    monkeypatch.setenv("FCC_LEARNING_ENABLED", "unexpected")
+    assert not learning_enabled()
+
+
+def test_disabled_startup_removes_only_fcc_learning_hooks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "/usr/bin/python -m free_claude_code.learning.cli "
+                                        "hook user-prompt"
+                                    ),
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "printf keep-me",
+                                },
+                            ]
+                        }
+                    ],
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "/usr/bin/python -m free_claude_code.learning.stop_hook"
+                                    ),
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("FCC_LEARNING_ENABLED", raising=False)
+
+    ensure_learning_hooks()
+
+    payload = json.loads(settings.read_text(encoding="utf-8"))
+    commands = [
+        hook["command"]
+        for groups in payload["hooks"].values()
+        for group in groups
+        for hook in group["hooks"]
+    ]
+    assert commands == ["printf keep-me"]
 
 
 def test_hook_install_is_idempotent_and_preserves_existing_hooks(

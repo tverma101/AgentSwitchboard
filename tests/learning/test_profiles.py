@@ -95,6 +95,7 @@ def test_hooks_use_explicit_profile_and_advertise_it(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setenv("FCC_LEARNING_ENABLED", "1")
     monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
     coding = LearningStore(profile="coding")
     coding.remember(
@@ -183,7 +184,7 @@ def test_launcher_profile_is_removed_from_claude_args_and_inherited(
         claude_allow_uncertified=False,
         claude_process_wrapper_path="",
     )
-    monkeypatch.delenv("FCC_LEARNING_PROFILE", raising=False)
+    monkeypatch.setenv("FCC_LEARNING_PROFILE", "default")
     with (
         patch.object(
             claude, "extract_profile_argument", wraps=extract_profile_argument
@@ -200,7 +201,7 @@ def test_launcher_profile_is_removed_from_claude_args_and_inherited(
         ),
         patch.object(claude, "default_process_wrapper_path", return_value="wrapper"),
         patch.object(claude.os.path, "isfile", return_value=False),
-        patch.object(claude, "build_claude_proxy_env", return_value={}),
+        patch.object(claude, "build_claude_proxy_env", return_value={}) as build_env,
         patch.object(claude, "run_client_process", side_effect=SystemExit(0)) as run,
         pytest.raises(SystemExit) as exc_info,
     ):
@@ -212,8 +213,8 @@ def test_launcher_profile_is_removed_from_claude_args_and_inherited(
         "--model",
         "sonnet",
     ]
-    assert os.environ["FCC_LEARNING_PROFILE"] == "coding"
-    os.environ.pop("FCC_LEARNING_PROFILE", None)
+    assert os.environ["FCC_LEARNING_PROFILE"] == "default"
+    assert build_env.call_args.kwargs["base_env"]["FCC_LEARNING_PROFILE"] == "coding"
 
 
 def test_server_profile_option_selects_learning_environment(

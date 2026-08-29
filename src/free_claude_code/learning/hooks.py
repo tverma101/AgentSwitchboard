@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .config import learning_enabled
 from .reviewer_flow import parse_exit_ticket, reviewer_context_for_task
 from .stop_hook import spawn_queue_worker
 from .store import LearningStore, format_memory_context, project_identity
@@ -37,15 +38,6 @@ def _hook_definition(event: str) -> dict[str, Any]:
     if asynchronous:
         hook["async"] = True
     return hook
-
-
-def learning_enabled() -> bool:
-    return os.environ.get("FCC_LEARNING_ENABLED", "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
 
 
 def claude_config_dir() -> Path:
@@ -176,10 +168,12 @@ def uninstall_hooks(config_dir: Path | None = None) -> bool:
 
 
 def ensure_learning_hooks() -> None:
-    """Install hooks when learning is enabled."""
+    """Reconcile FCC Learning hooks with the explicit opt-in setting."""
 
     if learning_enabled():
         install_hooks()
+    else:
+        uninstall_hooks()
 
 
 def _read_hook_input() -> dict[str, Any]:

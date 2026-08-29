@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.process_helpers import run_bounded
+
+pytestmark = pytest.mark.installer
+
 FCC_COMMANDS = (
     "fcc-desktop",
     "fcc-server",
@@ -80,12 +84,10 @@ class PosixUninstallHarness:
         uv = self.bin_dir / "uv"
         if not include_uv and uv.exists():
             uv.unlink()
-        return subprocess.run(
+        return run_bounded(
             ["/bin/sh", str(_repo_root() / "scripts" / "uninstall.sh"), *args],
-            check=False,
-            capture_output=True,
-            text=True,
             env=self.env | {"FAIL_STEP": fail_step},
+            timeout=15,
         )
 
     def calls(self) -> list[str]:
@@ -421,6 +423,7 @@ class PowerShellUninstallHarness:
                 "FAIL_STEP": fail_step,
                 "UNINSTALL_DRY_RUN": "1" if dry_run else "0",
             },
+            timeout=15,
         )
 
     def calls(self) -> list[str]:

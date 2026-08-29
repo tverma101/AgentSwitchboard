@@ -6,7 +6,7 @@ import queue
 import signal
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TextIO
 
@@ -20,12 +20,16 @@ from free_claude_code.application.helpers import (
     ApprovedHelperRegistry,
     HelperExecutionError,
 )
-from free_claude_code.application.session_policy import build_session_execution_policy
+from free_claude_code.application.session_policy import (
+    build_session_execution_policy,
+    parse_allowed_helper_ids,
+)
 from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
 from free_claude_code.config.settings import get_settings
 from free_claude_code.runtime.codex_computer_use import (
     COMPUTER_USE_METHODS,
     COMPUTER_USE_TOOL_SPECS,
+    CodexComputerUseError,
 )
 from free_claude_code.runtime.codex_computer_use_helper import (
     CODEX_COMPUTER_USE_HELPER_ID,
@@ -36,6 +40,7 @@ from free_claude_code.runtime.codex_computer_use_helper import (
 SERVER_NAME = "fcc-codex-computer-use"
 SERVER_VERSION = "1"
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
+CLAUDE_MCP_TOOL_SCHEMA_MAX_BYTES = 16_384
 _CONTROLLER_MODEL_ENV = "FCC_CONTROLLER_MODEL_REF"
 
 _READ_ANNOTATIONS = {
@@ -50,6 +55,44 @@ _ACTION_ANNOTATIONS = {
     "openWorldHint": False,
     "readOnlyHint": False,
 }
+
+
+def _accept_native_app_access(_params: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Complete the native app-access prompt after explicit helper opt-in."""
+
+    return {"action": "accept", "content": {}, "_meta": None}
+
+
+def _helper_failure_message(error: HelperExecutionError) -> str:
+    """Expose safe runtime diagnostics instead of hiding them behind the helper seam."""
+
+    cause = error.__cause__
+    if isinstance(cause, CodexComputerUseError):
+        detail = " ".join(str(cause).split())
+        if detail:
+            return f"Computer Use failed: {detail[:600]}"
+    return str(error)
+
+
+def _decline_native_app_access(_params: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Decline native app access with a user-visible permission result."""
+
+    return {"action": "decline", "content": None, "_meta": None}
+
+
+def _elicitation_handler(
+    *,
+    approval_mode: str,
+    allowed_helper_ids: str,
+) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+    """Build the app-access handler from the explicit FCC helper policy."""
+
+    helper_allowed = CODEX_COMPUTER_USE_HELPER_ID in set(
+        parse_allowed_helper_ids(allowed_helper_ids)
+    )
+    if helper_allowed and approval_mode == "auto":
+        return _accept_native_app_access
+    return _decline_native_app_access
 
 
 @dataclass(slots=True)
@@ -81,7 +124,33 @@ def _tool_list() -> list[dict[str, object]]:
     return tools
 
 
-CLAUDE_COMPUTER_USE_TOOLS = tuple(_tool_list())
+def _serialized_tool_list_bytes(tools: Sequence[Mapping[str, object]]) -> int:
+    """Return the deterministic wire size of the Claude-facing tool list."""
+
+    return len(
+        json.dumps(
+            list(tools),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+
+def _validated_tool_list() -> tuple[dict[str, object], ...]:
+    """Build the fixed contract and fail closed if it grows unexpectedly."""
+
+    tools = tuple(_tool_list())
+    size = _serialized_tool_list_bytes(tools)
+    if size > CLAUDE_MCP_TOOL_SCHEMA_MAX_BYTES:
+        raise RuntimeError(
+            "FCC Computer Use MCP tool schema exceeds its context budget: "
+            f"{size} > {CLAUDE_MCP_TOOL_SCHEMA_MAX_BYTES} bytes"
+        )
+    return tools
+
+
+CLAUDE_COMPUTER_USE_TOOLS = _validated_tool_list()
 
 
 def _required_capabilities(operation: str) -> RequiredCapabilitySet:
@@ -112,7 +181,13 @@ class CodexComputerUseMcpServer:
         self._calls: queue.Queue[_PendingCall | None] = queue.Queue()
         self._closed = threading.Event()
 
-        self._adapter = CodexComputerUseHelperAdapter()
+        settings = get_settings()
+        self._adapter = CodexComputerUseHelperAdapter(
+            elicitation_handler=_elicitation_handler(
+                approval_mode=settings.computer_use_approval,
+                allowed_helper_ids=settings.allowed_helper_ids,
+            )
+        )
         self._registry = ApprovedHelperRegistry()
         helper = self._adapter.approved_helper()
         self._registry.register(helper)
@@ -296,7 +371,7 @@ class CodexComputerUseMcpServer:
                 return
             self._write_tool_error(
                 pending.request_id,
-                str(error),
+                _helper_failure_message(error),
                 receipt=error.receipt.as_dict(),
             )
             return

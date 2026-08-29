@@ -7,6 +7,7 @@ from free_claude_code.core.anthropic.conversion import (
 )
 from free_claude_code.core.anthropic.models import (
     ContentBlockDocument,
+    ContentBlockToolSearchToolResult,
     ContentBlockWebFetchToolResult,
     Message,
     MessagesRequest,
@@ -282,6 +283,38 @@ def test_document_and_web_fetch_blocks_preserve_protocol_extensions() -> None:
     assert content[0].model_dump()["cache_control"] == {"type": "ephemeral"}
     assert isinstance(content[1], ContentBlockWebFetchToolResult)
     assert content[1].model_dump()["provider_extension"] is True
+
+
+def test_tool_search_blocks_remain_valid_protocol_history() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_search_tool_result",
+                            "tool_use_id": "search_1",
+                            "content": {
+                                "type": "tool_search_tool_search_result",
+                                "tool_references": [
+                                    {
+                                        "type": "tool_reference",
+                                        "tool_name": "mcp__computer__click",
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    block = request.messages[0].content[0]
+    assert isinstance(block, ContentBlockToolSearchToolResult)
+    assert block.tool_use_id == "search_1"
 
 
 def test_content_block_descriptions_remain_in_the_public_schema() -> None:

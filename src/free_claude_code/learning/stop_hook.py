@@ -6,7 +6,7 @@ import subprocess
 import sys
 from typing import Any
 
-from .config import PROFILE_ENV, normalize_profile
+from .config import PROFILE_ENV, learning_enabled, normalize_profile
 from .engine import learn_from_turn
 from .store import LearningStore
 
@@ -124,12 +124,7 @@ def handle_stop(payload: dict[str, Any], store: LearningStore) -> None:
 def main() -> None:
     """Read Stop-hook JSON or drain a bounded queue without breaking Claude Code."""
 
-    if os.environ.get("FCC_LEARNING_ENABLED", "1").strip().lower() in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }:
+    if not learning_enabled():
         return
     try:
         store = LearningStore()

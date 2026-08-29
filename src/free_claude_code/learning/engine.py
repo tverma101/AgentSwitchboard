@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .config import qualify_skill_key
+from .config import learning_enabled, qualify_skill_key
 from .promotion import evaluate_skill_promotion
 from .store import LearningStore, project_identity, redact_sensitive
 
@@ -89,12 +89,7 @@ Use at most 4 memory actions and at most 1 skill decision.
 
 
 def _enabled() -> bool:
-    return os.environ.get("FCC_LEARNING_ENABLED", "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
+    return learning_enabled()
 
 
 def _float_env(name: str, default: float) -> float:

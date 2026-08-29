@@ -1,7 +1,7 @@
 """Provider model-list discovery and background refresh."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 
 import httpx
@@ -24,6 +24,7 @@ from free_claude_code.providers.model_listing import ModelListResponseError
 
 from .config import has_provider_configuration
 from .model_cache import ProviderModelCache
+from .model_metadata_catalog import ModelMetadataCatalog
 
 ProviderResolver = Callable[[str], BaseProvider]
 
@@ -88,11 +89,15 @@ class ProviderModelDiscovery:
         provider_resolver: ProviderResolver,
         model_cache: ProviderModelCache,
         connected_provider_ids: tuple[str, ...] = (),
+        model_metadata_catalog: ModelMetadataCatalog | None = None,
     ) -> None:
         self._settings = settings
         self._provider_resolver = provider_resolver
         self._model_cache = model_cache
         self._connected_provider_ids = connected_provider_ids
+        self._model_metadata_catalog = model_metadata_catalog or ModelMetadataCatalog(
+            fetch_enabled=False, persistence_enabled=False
+        )
 
     async def warm_referenced_model_cache(self) -> ProviderModelRefreshResult:
         """Synchronously cache model metadata for routed providers."""
@@ -133,6 +138,7 @@ class ProviderModelDiscovery:
             tasks[provider_id] = asyncio.create_task(provider.list_model_infos())
 
         refreshed_provider_ids: list[str] = []
+        successful_results: dict[str, frozenset[ProviderModelInfo]] = {}
         if tasks:
             results = await asyncio.gather(*tasks.values(), return_exceptions=True)
             for (provider_id, _task), result in zip(
@@ -144,30 +150,49 @@ class ProviderModelDiscovery:
                     self._log_discovery_failure(provider_id, result)
                     failed_provider_ids.append(provider_id)
                     continue
-                # Keep raw discovery metadata in the cache. The visible view
-                # is re-filtered at read time so policy edits affect an
-                # already-populated catalog without requiring a new upstream
-                # model-list request.
-                observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-                observed_result = frozenset(
-                    info.with_observed_at(observed_at) for info in result
-                )
-                self._model_cache.cache_model_infos(provider_id, observed_result)
-                visible_result = filter_discovered_model_infos(
-                    self._settings, provider_id, observed_result
-                )
-                refreshed_provider_ids.append(provider_id)
-                logger.info(
-                    "Provider model discovery cached: provider={} models={} visible={}",
-                    provider_id,
-                    len(observed_result),
-                    len(visible_result),
-                )
+                successful_results[provider_id] = result
+
+        enriched_results = await self._enrich_results(successful_results)
+        for provider_id, result in enriched_results.items():
+            # Keep raw discovery metadata in the cache. The visible view is
+            # re-filtered at read time so policy edits affect an already-
+            # populated catalog without requiring a new upstream model-list
+            # request.
+            observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            observed_result = frozenset(
+                info.with_observed_at(observed_at) for info in result
+            )
+            self._model_cache.cache_model_infos(provider_id, observed_result)
+            visible_result = filter_discovered_model_infos(
+                self._settings, provider_id, observed_result
+            )
+            refreshed_provider_ids.append(provider_id)
+            logger.info(
+                "Provider model discovery cached: provider={} models={} visible={}",
+                provider_id,
+                len(observed_result),
+                len(visible_result),
+            )
 
         return ProviderModelRefreshResult(
             refreshed_provider_ids=tuple(refreshed_provider_ids),
             failed_provider_ids=tuple(failed_provider_ids),
         )
+
+    async def _enrich_results(
+        self,
+        results: Mapping[str, frozenset[ProviderModelInfo]],
+    ) -> dict[str, frozenset[ProviderModelInfo]]:
+        if not results:
+            return {}
+        try:
+            return await self._model_metadata_catalog.enrich_model_infos(results)
+        except Exception as exc:
+            logger.warning(
+                "Model metadata catalog enrichment skipped: reason={}",
+                type(exc).__name__,
+            )
+            return dict(results)
 
     def _log_discovery_failure(self, provider_id: str, exc: BaseException) -> None:
         logger.warning(

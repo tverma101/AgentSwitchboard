@@ -382,11 +382,10 @@ async def test_device_login_persists_account_and_reports_only_safe_state(
     pending = await manager.start_login(ConnectedAccountLoginMode.DEVICE)
     assert pending.state == "connecting"
     assert pending.user_code == "ABCD-EFGH"
-    for _ in range(50):
-        status = manager.status()
-        if status.state != "connecting":
-            break
-        await asyncio.sleep(0.01)
+    login_task = manager._login_task
+    assert login_task is not None
+    await asyncio.wait_for(login_task, timeout=1.0)
+    status = manager.status()
 
     assert status.state == "connected"
     assert status.email == "device@example.com"

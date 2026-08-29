@@ -1,9 +1,9 @@
 """Current Codex-managed Computer Use host contract.
 
 This is the native-parity path for #102. It mirrors the Computer Use launcher
-shipped by the installed ChatGPT/Codex app and keeps Luna as the controller.
-The older isolated direct-client broker remains available only as a diagnostic
-fallback for installations where the managed launcher is absent.
+shipped by the installed ChatGPT/Codex app and keeps the caller as the
+controller. The older isolated direct-client broker remains available only as
+an implementation diagnostic; it is never a production fallback.
 
 Current host behavior was cross-checked against:
 - fitchmultz/macuse @ 447df521 (MIT), Aug 2026 external-harness validation;
@@ -18,8 +18,9 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from free_claude_code.runtime.codex_computer_use import (
     COMPUTER_USE_METHODS,
@@ -33,8 +34,26 @@ FEATURE_FLAGS = ("computer_use", "plugins", "tool_call_mcp_elicitation")
 SERVER_NAME = "computer-use"
 PLUGIN_RELATIVE_PATH = Path("plugins/openai-bundled/plugins/computer-use")
 LAUNCHER_RELATIVE_PATH = Path("bin/computer-use-client-launcher")
+CLAUDE_LAUNCHER_RELATIVE_PATH = Path(
+    "fcc/codex-computer-use/bin/computer-use-client-launcher"
+)
+CLAUDE_LAUNCHER_MARKER_RELATIVE_PATH = Path("fcc/codex-computer-use/.fcc-managed")
+CLAUDE_LAUNCHER_MARKER = "free-claude-code managed Codex Computer Use launcher\n"
 READY_POLL_SECONDS = 0.1
 MAX_STATUS_PAGES = 10
+READ_ONLY_METHODS = frozenset({"list_apps", "get_app_state"})
+MUTATING_METHODS = frozenset(COMPUTER_USE_METHODS) - READ_ONLY_METHODS
+RECOVERABLE_RESULT_MARKERS = (
+    "remoteconnection",
+    "connection closed",
+    "transport closed",
+)
+RECOVERABLE_ERROR_MARKERS = (
+    *RECOVERABLE_RESULT_MARKERS,
+    "app-server exited",
+    "request timed out",
+    "stdio is unavailable",
+)
 
 ElicitationHandler = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 
@@ -87,6 +106,99 @@ def managed_launcher(paths: CodexComputerUsePaths) -> tuple[Path, Path] | None:
     return plugin_root, canonical
 
 
+def install_claude_native_launcher(
+    paths: CodexComputerUsePaths,
+    *,
+    claude_config_dir: Path,
+) -> Path:
+    """Copy the official launcher into FCC's Claude-owned namespace.
+
+    Claude receives a stable, separately managed launcher path while the
+    launcher contents and native client remain the signed Codex installation.
+    The copy is refreshed only when FCC owns the destination; an unrelated
+    user file or symlink is never overwritten.
+    """
+
+    resolved = managed_launcher(paths)
+    if resolved is None:
+        raise CodexComputerUseError(
+            "the official bundled Codex Computer Use launcher is unavailable"
+        )
+    _plugin_root, source = resolved
+    try:
+        source_bytes = source.read_bytes()
+    except OSError as error:
+        raise CodexComputerUseError(
+            "the official Codex Computer Use launcher could not be read"
+        ) from error
+    if not source_bytes:
+        raise CodexComputerUseError("the official Codex Computer Use launcher is empty")
+
+    config_root = claude_config_dir.expanduser()
+    destination = config_root / CLAUDE_LAUNCHER_RELATIVE_PATH
+    marker = config_root / CLAUDE_LAUNCHER_MARKER_RELATIVE_PATH
+
+    if destination.is_symlink():
+        raise CodexComputerUseError(
+            "Claude's FCC Computer Use launcher path is a symlink; refusing "
+            "to overwrite it"
+        )
+    if destination.exists() and not destination.is_file():
+        raise CodexComputerUseError(
+            "Claude's FCC Computer Use launcher path is not a regular file"
+        )
+    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+        raise CodexComputerUseError(
+            "Claude's FCC Computer Use launcher ownership marker is invalid"
+        )
+    if marker.exists():
+        try:
+            marker_value = marker.read_text(encoding="utf-8")
+        except OSError as error:
+            raise CodexComputerUseError(
+                "Claude's FCC Computer Use launcher ownership marker could not be read"
+            ) from error
+        if marker_value != CLAUDE_LAUNCHER_MARKER:
+            raise CodexComputerUseError(
+                "Claude's FCC Computer Use launcher ownership marker is not recognized"
+            )
+    elif destination.exists():
+        raise CodexComputerUseError(
+            "Claude's FCC Computer Use launcher path already exists; refusing "
+            "to overwrite a non-FCC file"
+        )
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not marker.exists():
+        _atomic_write(marker, CLAUDE_LAUNCHER_MARKER.encode(), mode=0o600)
+    _atomic_write(destination, source_bytes, mode=0o755)
+    return destination
+
+
+def _atomic_write(path: Path, data: bytes, *, mode: int) -> None:
+    """Write one managed file without exposing a partial launcher."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            os.fchmod(stream.fileno(), mode)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+        temporary_name = None
+    finally:
+        if temporary_name is not None:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary_name)
+
+
 def managed_broker_environment(
     *,
     temp_root: Path,
@@ -115,7 +227,7 @@ def managed_broker_environment(
 
 
 def managed_app_server_args() -> list[str]:
-    """Start current app-server features while making model execution unusable."""
+    """Start the native app-server features without permitting model turns."""
 
     disabled_provider = (
         '{ name = "Computer Use only", base_url = "http://127.0.0.1:9/v1", '
@@ -142,8 +254,6 @@ def managed_app_server_args() -> list[str]:
         "-c",
         "memories.generate_memories=false",
         "-c",
-        "features.remote_control=false",
-        "-c",
         "features.hooks=false",
         "-c",
         "analytics.enabled=false",
@@ -161,22 +271,20 @@ def managed_app_server_args() -> list[str]:
 
 
 def managed_mcp_config(paths: CodexComputerUsePaths) -> dict[str, Any]:
-    """Mirror the installed launcher manifest, with direct client as fallback."""
+    """Mirror the installed launcher manifest used by native Codex actions."""
 
     resolved = managed_launcher(paths)
-    if resolved is not None:
-        plugin_root, launcher = resolved
-        return {
-            "command": str(launcher),
-            "args": ["mcp"],
-            "cwd": str(plugin_root),
-            "env_vars": ["CODEX_HOME"],
-            "enabled": True,
-        }
+    if resolved is None:
+        raise CodexComputerUseError(
+            "the bundled Codex Computer Use app-server launcher is unavailable; "
+            "refusing the retired direct SkyComputerUseClient path"
+        )
+    plugin_root, launcher = resolved
     return {
-        "command": str(paths.client),
+        "command": str(launcher),
         "args": ["mcp"],
-        "cwd": str(paths.app.parent),
+        "cwd": str(plugin_root),
+        "env_vars": ["CODEX_HOME"],
         "enabled": True,
     }
 
@@ -192,7 +300,6 @@ def managed_thread_start_params(
         "ephemeral": True,
         "approvalPolicy": "on-request",
         "sandbox": "workspace-write",
-        "serviceName": "fcc_codex_computer_use",
         "config": {
             "features": {
                 "computer_use": True,
@@ -231,6 +338,21 @@ def _tool_names(server: Mapping[str, Any]) -> frozenset[str]:
                 names.add(item["name"])
         return frozenset(names)
     return frozenset()
+
+
+def _normalize_tool_arguments(
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Match the native MCP argument shape without changing the public schema."""
+
+    normalized = dict(arguments)
+    if "element_index" not in normalized and "element" in normalized:
+        normalized["element_index"] = normalized.pop("element")
+    else:
+        normalized.pop("element", None)
+    if normalized.get("element_index") is not None:
+        normalized["element_index"] = str(normalized["element_index"])
+    return normalized
 
 
 class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
@@ -318,12 +440,11 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
                     "capabilities": {
                         "experimentalApi": True,
                         "requestAttestation": False,
-                        "mcpServerOpenaiFormElicitation": True,
                     },
                 },
                 timeout_seconds=15.0,
             )
-            self._notify("initialized")
+            self._notify("initialized", {})
             started = self._request_managed(
                 "thread/start",
                 managed_thread_start_params(self.paths, work_dir),
@@ -346,7 +467,12 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
         *,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        """Call one native tool; mutating transport loss is always indeterminate."""
+        """Call one native tool with bounded read-only connection recovery.
+
+        A read-only state/list result can be retried once after the native
+        Computer Use connection reports a recoverable loss. Mutating calls are
+        never replayed because the first dispatch may have reached the app.
+        """
 
         if method not in COMPUTER_USE_METHODS:
             raise CodexComputerUseError(f"unsupported Computer Use method: {method}")
@@ -357,17 +483,86 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
         timeout = self.timeout_seconds if timeout_seconds is None else timeout_seconds
         if timeout <= 0:
             raise ValueError("timeout_seconds must be positive")
-        return self._request_managed(
-            "mcpServer/tool/call",
-            {
-                "threadId": self._thread_id,
-                "server": SERVER_NAME,
-                "tool": method,
-                "arguments": dict(arguments),
-            },
-            timeout_seconds=timeout,
-            indeterminate_on_transport_loss=interaction_requires_fresh_state(method),
+        normalized_arguments = _normalize_tool_arguments(arguments)
+        if method in MUTATING_METHODS:
+            self._refresh_before_mutation(
+                method,
+                normalized_arguments,
+                timeout_seconds=timeout,
+            )
+        for attempt in range(2):
+            try:
+                result = self._request_managed(
+                    "mcpServer/tool/call",
+                    {
+                        "threadId": self._thread_id,
+                        "server": SERVER_NAME,
+                        "tool": method,
+                        "arguments": normalized_arguments,
+                    },
+                    timeout_seconds=timeout,
+                    indeterminate_on_transport_loss=interaction_requires_fresh_state(
+                        method
+                    ),
+                )
+            except CodexComputerUseError as error:
+                if (
+                    method not in READ_ONLY_METHODS
+                    or attempt == 1
+                    or not _recoverable_connection_error(error)
+                ):
+                    raise
+                self._restart_read_only_session(method)
+                continue
+            if not _recoverable_connection_result(result):
+                return result
+            if method not in READ_ONLY_METHODS or attempt == 1:
+                return _explain_connection_result(result, method)
+            self._restart_read_only_session(method)
+        raise AssertionError("unreachable native Computer Use retry state")
+
+    def _refresh_before_mutation(
+        self,
+        method: str,
+        arguments: Mapping[str, Any],
+        *,
+        timeout_seconds: float,
+    ) -> None:
+        """Reacquire the target app state before an action can reach the app."""
+
+        app = arguments.get("app")
+        if not isinstance(app, str) or not app.strip():
+            return
+        state = self.call(
+            "get_app_state",
+            {"app": app},
+            timeout_seconds=timeout_seconds,
         )
+        if not state.get("isError"):
+            return
+        detail = _result_text(state).strip()
+        if not detail:
+            detail = "native Computer Use returned no state"
+        raise CodexComputerUseError(
+            f"fresh app-state preflight failed before {method}: {detail[:600]}"
+        )
+
+    def _restart_read_only_session(self, method: str) -> None:
+        """Restart once after a read-only native connection loss."""
+
+        self.close()
+        try:
+            self.start()
+        except Exception as error:
+            raise CodexComputerUseError(
+                "the native Computer Use connection was lost while reading "
+                f"{method}, and the one automatic recovery attempt could not "
+                "restart the signed Computer Use session"
+            ) from error
+        if self._thread_id is None:
+            raise CodexComputerUseError(
+                "the native Computer Use recovery restarted without a thread"
+            )
 
     def live_readiness_probe(self) -> dict[str, Any]:
         """Run the safest positive native probe without mutating an app."""
@@ -525,11 +720,76 @@ class ManagedCodexComputerUseBroker(CodexComputerUseBroker):
         self._write({"id": request_id, "result": response})
 
 
+def _result_text(result: Mapping[str, Any]) -> str:
+    content = result.get("content")
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        str(block.get("text"))
+        for block in content
+        if isinstance(block, Mapping) and isinstance(block.get("text"), str)
+    )
+
+
+def _recoverable_connection_result(result: Mapping[str, Any]) -> bool:
+    if not result.get("isError"):
+        return False
+    text = _result_text(result).casefold().replace("_", "")
+    return any(marker in text for marker in RECOVERABLE_RESULT_MARKERS)
+
+
+def _recoverable_connection_error(error: CodexComputerUseError) -> bool:
+    text = " ".join(str(error).casefold().replace("_", " ").split())
+    return any(marker in text for marker in RECOVERABLE_ERROR_MARKERS)
+
+
+def _explain_connection_result(
+    result: Mapping[str, Any],
+    method: str,
+) -> dict[str, Any]:
+    """Replace the opaque native sentinel without dropping images or metadata."""
+
+    explained = dict(result)
+    content = result.get("content")
+    blocks = list(content) if isinstance(content, list) else []
+    message = (
+        "The signed native Computer Use service lost its local connection while "
+        f"handling {method}. The outcome is unknown, so FCC did not replay the "
+        "call. Refresh app state before trying again; if this repeats, restart "
+        "the native Computer Use service and verify macOS Screen Recording and "
+        "Accessibility permissions."
+    )
+    replaced = False
+    explained_blocks: list[Any] = []
+    for block in blocks:
+        text = block.get("text") if isinstance(block, Mapping) else None
+        if isinstance(text, str):
+            current = text.casefold().replace("_", "")
+            if not replaced and any(
+                marker in current for marker in RECOVERABLE_RESULT_MARKERS
+            ):
+                replacement = dict(cast(Mapping[str, Any], block))
+                replacement["text"] = message
+                explained_blocks.append(replacement)
+                replaced = True
+                continue
+        explained_blocks.append(block)
+    if not replaced:
+        explained_blocks.append({"type": "text", "text": message})
+    explained["content"] = explained_blocks
+    explained["isError"] = True
+    return explained
+
+
 __all__ = [
+    "CLAUDE_LAUNCHER_MARKER",
+    "CLAUDE_LAUNCHER_MARKER_RELATIVE_PATH",
+    "CLAUDE_LAUNCHER_RELATIVE_PATH",
     "CodexComputerUseElicitationError",
     "CodexComputerUseIndeterminateError",
     "CodexComputerUseReadinessError",
     "ManagedCodexComputerUseBroker",
+    "install_claude_native_launcher",
     "managed_app_server_args",
     "managed_broker_environment",
     "managed_launcher",

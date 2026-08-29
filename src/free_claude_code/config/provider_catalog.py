@@ -21,6 +21,8 @@ FIREWORKS_DEFAULT_BASE = "https://api.fireworks.ai/inference/v1"
 # Cloudflare account-scoped AI REST root; provider appends /accounts/{id}/ai/v1.
 CLOUDFLARE_AI_REST_ROOT = "https://api.cloudflare.com/client/v4"
 OPENROUTER_DEFAULT_BASE = "https://openrouter.ai/api/v1"
+# B.AI OpenAI-compatible Chat Completions API.
+BAI_DEFAULT_BASE = "https://api.b.ai/v1"
 MISTRAL_DEFAULT_BASE = "https://api.mistral.ai/v1"
 # Codestral IDE/personal endpoint (distinct from La Plateforme ``api.mistral.ai`` keys).
 CODESTRAL_DEFAULT_BASE = "https://codestral.mistral.ai/v1"
@@ -125,6 +127,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="open_router_api_key",
         default_base_url=OPENROUTER_DEFAULT_BASE,
         proxy_attr="open_router_proxy",
+    ),
+    "bai": ProviderDescriptor(
+        provider_id="bai",
+        display_name="B.AI",
+        credential_env="BAI_API_KEY",
+        credential_url="https://b.ai/",
+        credential_attr="bai_api_key",
+        default_base_url=BAI_DEFAULT_BASE,
+        base_url_attr="bai_base_url",
+        proxy_attr="bai_proxy",
     ),
     "gemini": ProviderDescriptor(
         provider_id="gemini",

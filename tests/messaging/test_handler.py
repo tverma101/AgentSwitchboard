@@ -80,12 +80,7 @@ def _session(events) -> MagicMock:
 
 
 async def _wait_for_idle(workflow: MessagingWorkflow) -> None:
-    for _ in range(200):
-        if workflow.tree_queue.task_count() == 0:
-            await asyncio.sleep(0)
-            return
-        await asyncio.sleep(0.01)
-    raise AssertionError("messaging workflow did not become idle")
+    await workflow.tree_queue.wait_idle()
 
 
 @pytest.fixture

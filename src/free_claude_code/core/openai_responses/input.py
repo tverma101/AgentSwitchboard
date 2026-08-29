@@ -180,7 +180,7 @@ def _append_input_item(
             {
                 "type": "tool_result",
                 "tool_use_id": call_id,
-                "content": item.get("output", ""),
+                "content": _tool_output_to_anthropic_content(item.get("output", "")),
             },
         )
         return
@@ -307,6 +307,13 @@ def _append_tool_result_message(
     content = message["content"]
     if isinstance(content, list):
         content.append(tool_result)
+
+
+def _tool_output_to_anthropic_content(output: Any) -> Any:
+    """Convert multimodal Responses function output back to Anthropic blocks."""
+    if not isinstance(output, list):
+        return output
+    return _convert_message_content(output)
 
 
 def _last_assistant_tool_use_message(

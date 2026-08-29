@@ -8,6 +8,8 @@ from free_claude_code.application.model_metadata import (
     CapabilityEvidenceStatus,
     ReasoningCapabilityEvidence,
     ReasoningCapabilityStatus,
+    normalize_model_pricing,
+    pricing_is_free,
 )
 from free_claude_code.application.model_metadata import (
     ProviderModelInfo as _ProviderModelInfo,
@@ -45,6 +47,7 @@ def extract_openai_model_infos(
         supports_vision, accepted_image_types = _vision_metadata(
             item, provider_name=provider_name
         )
+        pricing = normalize_model_pricing(_first_field(item, "pricing", "cost"))
         raw_supported_parameters = _field(item, "supported_parameters")
         supported_parameters = (
             {param for param in raw_supported_parameters if isinstance(param, str)}
@@ -74,6 +77,8 @@ def extract_openai_model_infos(
                 ),
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
+                is_free=_free_status(item, pricing),
+                pricing=pricing,
                 reasoning=reasoning,
                 capability_evidence=capability_evidence,
             )
@@ -110,6 +115,7 @@ def extract_tool_capable_model_infos(
         supports_vision, accepted_image_types = _vision_metadata(
             item, provider_name=provider_name
         )
+        pricing = normalize_model_pricing(_first_field(item, "pricing", "cost"))
         capability_evidence = _capability_metadata(
             item,
             provider_name=provider_name,
@@ -125,6 +131,8 @@ def extract_tool_capable_model_infos(
                 ),
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
+                is_free=_free_status(item, pricing),
+                pricing=pricing,
                 reasoning=reasoning,
                 capability_evidence=capability_evidence,
             )
@@ -498,6 +506,15 @@ def _first_bool(item: Any, capabilities: Mapping[str, Any], *names: str) -> bool
     if not isinstance(result, bool):
         result = _first_field(capabilities, *names)
     return result if isinstance(result, bool) else None
+
+
+def _free_status(item: Any, pricing: tuple[tuple[str, float], ...]) -> bool | None:
+    """Resolve an explicit provider free flag, then complete zero pricing."""
+
+    explicit = _first_field(item, "is_free", "free")
+    if isinstance(explicit, bool):
+        return explicit
+    return pricing_is_free(pricing)
 
 
 def _is_sequence(value: Any) -> bool:

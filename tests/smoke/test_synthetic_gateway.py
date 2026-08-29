@@ -17,6 +17,8 @@ from smoke.lib.synthetic_gateway import (
     fixture_names,
 )
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize("fixture", tuple(SyntheticThinkingFixture))
 def test_synthetic_gateway_serves_every_fixture_without_external_network(

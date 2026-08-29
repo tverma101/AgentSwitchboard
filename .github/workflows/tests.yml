@@ -16,15 +16,6 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
-    inputs:
-      runner_label:
-        description: Optional explicit burst runner; normal CI always uses GitHub-hosted Ubuntu
-        required: false
-        type: choice
-        default: ubuntu-latest
-        options:
-          - ubuntu-latest
-          - harness-burst
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -33,7 +24,7 @@ concurrency:
 jobs:
   no-suppressions-or-legacy-annotations:
     name: Ban suppressions and legacy annotations
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -54,7 +45,7 @@ jobs:
 
   quality:
     name: ${{ matrix.id }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_label || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -69,7 +60,7 @@ jobs:
           - id: ty
             run: uv run --no-sync ty check
           - id: pytest
-            run: uv run --no-sync pytest -v --tb=short
+            run: uv run --no-sync pytest -q --tb=short
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -81,7 +72,7 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.11.16"
-          enable-cache: false
+          enable-cache: true
           cache-python: false
 
       - name: Prepare project environment

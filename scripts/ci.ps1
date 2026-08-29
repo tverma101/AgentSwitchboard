@@ -1,6 +1,10 @@
 param(
     [string[]] $Only = @(),
     [string[]] $Skip = @(),
+    [switch] $Fast,
+    [switch] $Integration,
+    [switch] $Installers,
+    [switch] $Full,
     [switch] $DryRun,
     [switch] $Help,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -31,11 +35,15 @@ Checks (in order):
   ruff-format    uv run ruff format
   ruff-check     uv run ruff check --fix
   ty             uv run ty check
-  pytest         uv run pytest -v --tb=short
+  pytest         uv run pytest -q --tb=short
 
 Options:
   -Only ID              Run only the given check (repeatable)
   -Skip ID              Skip the given check (repeatable)
+  -Fast                 Run the safe deterministic pytest tier (the default).
+  -Integration          Include local integration, live, and interactive pytest items.
+  -Installers           Run installer/uninstaller pytest items serially; opt-in.
+  -Full                 Run deterministic, integration, and installer pytest tiers.
   -DryRun               Print commands without running them.
   -Help                 Show this help text.
 "@
@@ -160,9 +168,70 @@ function Invoke-TyCheck {
     Invoke-CiCommand -FilePath "uv" -Arguments @("run", "ty", "check")
 }
 
+function Invoke-LocalPytest {
+    param([string[]] $PytestArguments = @())
+
+    $pytestCommand = @("run", "pytest") + $PytestArguments
+    if ((Get-Command taskpolicy -ErrorAction SilentlyContinue) -and
+        (Get-Command nice -ErrorAction SilentlyContinue)) {
+        Invoke-CiCommand -FilePath "nice" -Arguments (@("-n", "5", "taskpolicy", "-c", "utility", "uv") + $pytestCommand)
+    } elseif (Get-Command taskpolicy -ErrorAction SilentlyContinue) {
+        Invoke-CiCommand -FilePath "taskpolicy" -Arguments (@("-c", "utility", "uv") + $pytestCommand)
+    } elseif (Get-Command nice -ErrorAction SilentlyContinue) {
+        Invoke-CiCommand -FilePath "nice" -Arguments (@("-n", "5", "uv") + $pytestCommand)
+    } else {
+        Invoke-CiCommand -FilePath "uv" -Arguments $pytestCommand
+    }
+}
+
 function Invoke-PytestCheck {
     Write-Step "pytest"
-    Invoke-CiCommand -FilePath "uv" -Arguments @("run", "pytest", "-v", "--tb=short")
+    if ($Fast -and $Installers) {
+        throw "-Fast and -Installers cannot be combined."
+    }
+    if ($Fast -and $Integration) {
+        throw "-Fast and -Integration cannot be combined."
+    }
+    if ($Full -and ($Fast -or $Integration -or $Installers)) {
+        throw "-Full cannot be combined with -Fast, -Integration, or -Installers."
+    }
+
+    if ($Full) {
+        Invoke-LocalPytest @(
+            "-q", "--tb=short", "-n", "0",
+            "-m", "not integration and not live and not interactive and not installer"
+        )
+        Invoke-LocalPytest @(
+            "-q", "--tb=short", "-n", "0",
+            "-m", "integration or live or interactive"
+        )
+        Invoke-LocalPytest @(
+            "-q", "--tb=short", "-n", "0", "--run-installer-tests",
+            "-m", "installer"
+        )
+    } elseif ($Installers) {
+        Invoke-LocalPytest @(
+            "-q", "--tb=short", "-n", "0", "--run-installer-tests",
+            "-m", "installer"
+        )
+    } elseif ($Integration) {
+        Invoke-LocalPytest @(
+            "-q", "--tb=short", "-n", "0",
+            "-m", "not integration and not live and not interactive and not installer"
+        )
+        Invoke-LocalPytest @(
+            "-q", "--tb=short", "-n", "0",
+            "-m", "integration or live or interactive"
+        )
+    } else {
+        # Keep the default safe for an active developer workstation. The slow
+        # tiers are explicit because they may spawn subprocesses or touch real
+        # services; hosted CI remains the full enforcement boundary.
+        Invoke-LocalPytest @(
+            "-q", "--tb=short", "-n", "0",
+            "-m", "not integration and not live and not interactive and not installer"
+        )
+    }
 }
 
 function Invoke-Check {
@@ -186,6 +255,16 @@ if ($Help) {
 if ($RemainingArgs.Count -gt 0) {
     Show-Usage
     throw "Unknown option: $($RemainingArgs -join ' ')"
+}
+
+if ($Fast -and $Installers) {
+    throw "-Fast and -Installers cannot be combined."
+}
+if ($Fast -and $Integration) {
+    throw "-Fast and -Integration cannot be combined."
+}
+if ($Full -and ($Fast -or $Integration -or $Installers)) {
+    throw "-Full cannot be combined with -Fast, -Integration, or -Installers."
 }
 
 foreach ($checkId in $Only) {

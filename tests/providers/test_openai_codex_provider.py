@@ -397,10 +397,49 @@ async def test_provider_round_trips_portable_tool_name_alias() -> None:
 @pytest.mark.asyncio
 async def test_early_truncated_attempt_is_retried_without_duplicate_output() -> None:
     attempts = 0
+    requests: list[dict[str, Any]] = []
+
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_image",
+                            "name": "get_app_state",
+                            "input": {"app": "Google Chrome"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_image",
+                            "content": {
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://example.test/chrome.png",
+                                },
+                            },
+                        }
+                    ],
+                },
+            ],
+            "stream": True,
+        }
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
+        requests.append(json.loads(request.content))
         if attempts == 1:
             body = _sse(
                 (
@@ -431,7 +470,7 @@ async def test_early_truncated_attempt_is_retried_without_duplicate_output() -> 
 
     body = await _collect(
         provider.stream_response(
-            _request(),
+            request,
             request_id="req_retry",
             response_model="claude-opus-4",
         )
@@ -440,6 +479,22 @@ async def test_early_truncated_attempt_is_retried_without_duplicate_output() -> 
     events = parse_sse_text(body)
     assert_anthropic_stream_contract(events)
     assert attempts == 2
+    assert requests[0] == requests[1]
+    tool_outputs = [
+        item for item in requests[0]["input"] if item["type"] == "function_call_output"
+    ]
+    assert tool_outputs == [
+        {
+            "type": "function_call_output",
+            "call_id": "call_image",
+            "output": [
+                {
+                    "type": "input_image",
+                    "image_url": "https://example.test/chrome.png",
+                }
+            ],
+        }
+    ]
     assert text_content(events) == "kept"
     assert "abandoned" not in body
     await client.aclose()
