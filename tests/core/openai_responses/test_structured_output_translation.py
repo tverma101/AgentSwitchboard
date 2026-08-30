@@ -29,9 +29,7 @@ def _schema() -> dict[str, object]:
 
 def test_translates_claude_json_schema_output_to_responses_text_format() -> None:
     schema = _schema()
-    request = _request(
-        {"format": {"type": "json_schema", "schema": schema}}
-    )
+    request = _request({"format": {"type": "json_schema", "schema": schema}})
 
     body = build_responses_provider_request(
         request,
@@ -102,7 +100,7 @@ def test_unknown_output_config_fields_still_fail_loud() -> None:
         }
     )
 
-    with pytest.raises(ResponsesConversionError, match="output_config.future_knob"):
+    with pytest.raises(ResponsesConversionError, match=r"output_config\.future_knob"):
         build_responses_provider_request(
             request,
             reasoning=ReasoningPolicy.provider_default(),
