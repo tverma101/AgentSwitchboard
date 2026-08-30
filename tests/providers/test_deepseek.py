@@ -142,7 +142,7 @@ def test_build_request_body_tool_choice_keeps_thinking(deepseek_provider):
     assert body["tool_choice"] == "auto"
 
 
-def test_build_request_body_forced_tool_choice_downgrades_to_auto(
+def test_build_request_body_forced_tool_choice_preserves_named_function(
     deepseek_provider,
 ):
     request = MessagesRequest.model_validate(
@@ -166,7 +166,10 @@ def test_build_request_body_forced_tool_choice_downgrades_to_auto(
     )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
-    assert body["tool_choice"] == "auto"
+    assert body["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "Read"},
+    }
 
 
 def test_build_request_body_encodes_reasoning_off():
@@ -747,7 +750,6 @@ def test_tool_call_top_level_reasoning_is_replayed(deepseek_provider):
             ],
         }
     )
-
     body = deepseek_provider._build_request_body(
         request, reasoning=reasoning_for(request)
     )
