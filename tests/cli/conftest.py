@@ -1,8 +1,5 @@
 import pytest
 
-from free_claude_code.cli import control_tui
-from free_claude_code.cli.repo_picker import RepoEntry
-
 
 _CWD_SENSITIVE_REPO_TESTS = frozenset(
     {
@@ -28,6 +25,9 @@ def deterministic_control_tui_repo_context(
 
     if request.node.name not in _CWD_SENSITIVE_REPO_TESTS:
         return
+
+    from free_claude_code.cli import control_tui
+    from free_claude_code.cli.repo_picker import RepoEntry
 
     expected = RepoEntry(
         "Harness",
