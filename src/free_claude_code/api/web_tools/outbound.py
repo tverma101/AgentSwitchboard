@@ -27,6 +27,7 @@ from .egress import (
     WebFetchEgressViolation,
     get_validated_stream_addrinfos_for_egress,
 )
+from .local_search import run_local_a3s_search
 from .parsers import HTMLTextParser, SearchResultParser
 
 _FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search"
@@ -66,7 +67,7 @@ def _log_web_tool_failure(
 
 
 def _log_search_backend_failure(backend: str, error: BaseException) -> None:
-    """Log enough to diagnose a free-search backend without leaking response bodies."""
+    """Log enough to diagnose a search backend without leaking response bodies."""
     status_code = (
         error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
     )
@@ -323,7 +324,14 @@ async def _run_duckduckgo_search(query: str) -> list[dict[str, str]]:
 
 
 async def _run_web_search(query: str) -> list[dict[str, str]]:
-    """Prefer Firecrawl Keyless and fall back to the previous free search backend."""
+    """Prefer local zero-key metasearch, then hosted keyless/free fallbacks."""
+    try:
+        local_results = await run_local_a3s_search(query)
+        if local_results:
+            return local_results
+    except Exception as error:
+        _log_search_backend_failure("a3s-local", error)
+
     try:
         return await _run_firecrawl_search(query)
     except Exception as error:
