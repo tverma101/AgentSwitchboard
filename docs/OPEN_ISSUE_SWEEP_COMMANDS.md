@@ -1,4 +1,9 @@
-# Open-issue sweep commands
+# Shared evidence commands
+
+These commands are reusable validation and comparison tools. The historical
+issue-sweep name is retained in the file path for compatibility; running a
+command does not imply that a related GitHub issue is open or that a live
+provider/device boundary is certified.
 
 ```bash
 # Show deterministic plan only

@@ -172,8 +172,9 @@ use and one bounded approved vision-helper workflow.
 ## Integration boundaries
 
 Extend rather than replace the working routing/provider/receipt primitives,
-#19 visual attachments, #20 local computer use, #21 browser control, and #22
-provider isolation.
+the visual-attachment, local-computer-use, and browser-control seams, and
+provider isolation. The issue identifiers in the earlier design breakdown are
+historical traceability, not current backlog status.
 
 Avoid a router model, a second orchestration runtime, or a rewrite of the
 working OpenCode Go/Muse transport.

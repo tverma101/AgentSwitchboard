@@ -1,7 +1,9 @@
-# Open-issue sweep status
+# Issue-sweep implementation status
 
-This sweep removes duplicated implementation work from the remaining backlog and
-adds shared machinery for the gaps that were actually missing.
+This historical status record describes the implementation and evidence boundary
+of the recorded sweep. It is not a current GitHub backlog: receipt-only issues
+may be closed while the shared machinery or its unverified evidence boundaries
+remain useful.
 
 ## Added
 

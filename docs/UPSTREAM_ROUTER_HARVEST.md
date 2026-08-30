@@ -57,8 +57,10 @@ CLI/MCP support already provides semantic browser interaction, accessibility
 snapshots, forms/navigation, screenshots, persistent sessions, and Claude Code
 integration patterns.
 
-For #21, first determine whether a thin AgentSwitchboard wrapper around Playwright CLI or
-MCP satisfies the requirement. Prefer CLI/skills when that materially reduces
+For the historical browser-control requirement, first determine whether a thin
+AgentSwitchboard wrapper around Playwright CLI or MCP satisfies the requirement.
+The earlier issue reference is historical traceability, not an open-backlog
+claim. Prefer CLI/skills when that materially reduces
 tool/context overhead; prefer MCP for a persistent specialized browser loop.
 Only write custom CDP machinery for concrete gaps that Playwright cannot cover.
 

@@ -1,6 +1,9 @@
 # Capability snapshot upstream harvest
 
-Issue: #47. This slice adds only a manual/build-time metadata adapter and precedence primitive. It does not add network polling, model routing, provider fallback, or a second catalog runtime.
+This provenance note covers a manual/build-time metadata adapter and precedence
+primitive. The earlier issue reference is historical traceability, not an
+open-backlog claim. This slice does not add network polling, model routing,
+provider fallback, or a second catalog runtime.
 
 ## Current AgentSwitchboard baseline
 

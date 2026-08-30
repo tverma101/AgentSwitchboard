@@ -68,10 +68,11 @@ Default targets do not send real bot messages or load voice backends:
 | `ollama` | local `/v1/models` plus OpenAI-chat-backed Messages through proxy | running Ollama server |
 
 The `cli` target also includes the zero-provider thinking characterization
-fixture from #55. It launches the literal installed Claude executable through
-FCC and serves synthetic Anthropic Messages SSE from a loopback OpenCode Go
-endpoint. The fixture records only structural follow-up request receipts and
-never calls Anthropic, OpenAI, or OpenCode Go. Run it with:
+fixture retained from the historical receipt work. It launches the literal
+installed Claude executable through FCC and serves synthetic Anthropic Messages
+SSE from a loopback OpenCode Go endpoint. The fixture records only structural
+follow-up request receipts and never calls Anthropic, OpenAI, or OpenCode Go.
+This deterministic fixture is not a live-client certification. Run it with:
 
 ```bash
 FCC_LIVE_SMOKE=1 FCC_SMOKE_TARGETS=cli uv run pytest \
@@ -286,9 +287,9 @@ Compaction-boundary rows may additionally include `phase` (`pre_compact`,
 `compact_turn`, `post_compact`, `mature_post_compact`, or `resume`) and a metadata-only
 `compact_boundary_hash`. `summarize_phases()` keeps those economics separate so
 the compaction turn and resume turn cannot hide a post-compact token increase.
-Issue #60's five-turn synthetic contract is loaded by
-`load_compaction_economics_receipt()` and validated by
-`validate_compaction_economics()`. It requires input/cache bucket accounting,
+The five-turn synthetic compaction-economics contract, retained from the
+historical receipt work, is loaded by `load_compaction_economics_receipt()` and
+validated by `validate_compaction_economics()`. It requires input/cache bucket accounting,
 effective uncached input, request-shape and stable-prefix hashes, one compact
 boundary identity, optional TTFT/duration ordering, unique learning-memory
 injection ids, and 1.0x retry amplification. The checked-in

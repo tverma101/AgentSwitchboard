@@ -4,6 +4,7 @@ Thanks for helping improve AgentSwitchboard. Keep changes focused, test the beha
 
 ## Before Opening A Pull Request
 
+- Read the [documentation catalogue](docs/README.md) and [documentation maintenance policy](docs/DOCUMENTATION.md) before adding or changing documentation.
 - Open an issue before proposing README changes.
 - Do not open Docker integration pull requests.
 - For bugs, include every model mapping, the active model when the failure occurred, the complete error, and reproducible steps.

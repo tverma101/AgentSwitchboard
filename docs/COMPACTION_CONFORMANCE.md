@@ -3,9 +3,11 @@
 > **Status: core path shipped and live-proven.** Current `main` has a literal
 > Claude Code receipt proving a 50K effective window, automatic compaction,
 > substantial context reduction, a post-compact tool turn, resume success, and
-> continued FCC -> OpenCode Go -> Muse routing. Remaining work is deeper semantic
-> torture, economics around the compact boundary, subagent-crossing-compact, and
-> interrupted-compaction recovery (#59-#61).
+> continued FCC -> OpenCode Go -> Muse routing. Remaining acceptance boundaries
+> include deeper semantic torture, economics around the compact boundary,
+> subagent-crossing-compact, and interrupted-compaction recovery. The associated
+> receipt-only issue references are historical traceability, not an open-backlog
+> claim.
 
 Compaction is part of AgentSwitchboard correctness because AgentSwitchboard owns the client-facing
 context budget. A lower token count alone is not enough: the literal client must
@@ -72,7 +74,11 @@ Healthy retry amplification should remain 1.0x. Any post-compact token/cache
 regression must be bounded and explained rather than accepted as an accidental
 full-history resend.
 
-## Ownership
+## Historical issue-to-contract mapping
+
+The identifiers below preserve traceability to the original work breakdown. They
+are not a statement that every referenced issue remains open; consult GitHub for
+issue state and this document for the current contract boundary.
 
 - #58: trigger/effective-window conformance (minimal gate already satisfied)
 - #59: semantic continuity across compact
