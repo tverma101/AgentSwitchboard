@@ -2,10 +2,10 @@
 
 The core module owns strict inspection plus the exact known-good rollback
 machinery. This facade adds a narrow launch-time policy for managed FCC
-sessions: newer Claude 2.x clients may be admitted while the established
-process-wrapper contract still holds, unless a version is explicitly blocked.
-Provider/protocol drift remains fail-loud in the existing conversion layers
-instead of being guessed from a patch-version change alone.
+sessions: semantically newer Claude clients may be admitted while the
+established process-wrapper contract still holds, unless a version is
+explicitly blocked. Provider/protocol drift remains fail-loud in the existing
+conversion layers instead of being guessed from a version-number change alone.
 """
 
 from collections.abc import Mapping
@@ -52,7 +52,7 @@ def enforce_claude_compatibility(
     base_env: Mapping[str, str],
     wrapper_path: Path,
 ) -> ClaudeCompatibilityStatus:
-    """Allow known-good, managed forward-compatible 2.x, or explicit canary."""
+    """Allow known-good, managed forward-compatible, or explicit canary clients."""
 
     inspected = inspect_claude_compatibility(
         binary_path,
@@ -66,9 +66,10 @@ def enforce_claude_compatibility(
         raise ClaudeCompatibilityError(
             "Claude Code version "
             f"{version} is {status.state} for FCC. Known-good="
-            f"{status.known_good_version}; managed newer Claude 2.x releases "
-            "are admitted automatically, while older, blocked, structurally "
-            "unsupported, and future-major clients require an explicit canary. "
+            f"{status.known_good_version}; managed newer Claude releases are "
+            "admitted while the structural wrapper contract remains valid. "
+            "Older, explicitly blocked, or structurally unsupported clients "
+            "remain quarantined. "
             f"Set {_core.CLAUDE_ALLOW_UNCERTIFIED_ENV}=1 only for bounded testing."
         )
     return status
@@ -104,11 +105,11 @@ def _launch_status(
             state="canary_opt_in" if explicitly_allowed else "quarantined",
         )
 
-    if (
-        installed[0] == known_good[0] == 2
-        and installed > known_good
-        and installed >= _core.MIN_PROCESS_WRAPPER_VERSION
-    ):
+    # A version-number boundary is not proof of a protocol boundary. Admit any
+    # newer managed client while the observable wrapper contract remains valid;
+    # provider/request drift still fails loudly in FCC's translation/preflight
+    # layers, and known-bad releases can be blocked immediately above.
+    if installed > known_good and installed >= _core.MIN_PROCESS_WRAPPER_VERSION:
         return replace(status, state="forward_compatible")
     return status
 
