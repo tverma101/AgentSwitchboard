@@ -1,0 +1,107 @@
+name: Redundancy audit autofix
+
+on:
+  push:
+    branches:
+      - codex/redundancy-test-suite-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/redundancy-test-suite-hardening
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+
+      - name: Remove audited redundancy
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          def fingerprint(node):
+              return (
+                  type(node).__name__,
+                  ast.dump(node.args, include_attributes=False),
+                  tuple(ast.dump(item, include_attributes=False) for item in node.decorator_list),
+                  tuple(ast.dump(item, include_attributes=False) for item in node.body),
+                  ast.dump(node.returns, include_attributes=False) if node.returns else None,
+                  tuple(ast.dump(item, include_attributes=False) for item in getattr(node, "type_params", ())),
+              )
+
+          def remove_nodes(path, nodes):
+              source = path.read_text(encoding="utf-8")
+              lines = source.splitlines(keepends=True)
+              for node in sorted(nodes, key=lambda item: item.lineno, reverse=True):
+                  start = node.lineno - 1
+                  end = node.end_lineno
+                  while end < len(lines) and not lines[end].strip():
+                      end += 1
+                  del lines[start:end]
+              path.write_text("".join(lines), encoding="utf-8")
+
+          def remove_later_duplicate_tests(path):
+              tree = ast.parse(path.read_text(encoding="utf-8"))
+              seen = {}
+              duplicates = []
+              for node in tree.body:
+                  if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                      continue
+                  if not node.name.startswith("test_"):
+                      continue
+                  key = fingerprint(node)
+                  if key in seen:
+                      duplicates.append(node)
+                  else:
+                      seen[key] = node
+              assert len(duplicates) == 1, (path, [node.name for node in duplicates])
+              remove_nodes(path, duplicates)
+
+          remove_later_duplicate_tests(
+              Path("tests/cli/test_codex_computer_use_registration.py")
+          )
+          remove_later_duplicate_tests(Path("tests/providers/test_wafer.py"))
+
+          nvidia = Path("tests/providers/test_nvidia_nim.py")
+          tree = ast.parse(nvidia.read_text(encoding="utf-8"))
+          helpers = [
+              node
+              for node in tree.body
+              if isinstance(node, ast.FunctionDef)
+              and node.name == "_make_bad_request_error"
+          ]
+          assert len(helpers) == 2
+          remove_nodes(nvidia, [helpers[0]])
+          PY
+
+      - name: Format audit
+        run: |
+          uv sync --locked
+          uv run --no-sync ruff format tests/test_redundancy_audit.py
+          git diff --check
+
+      - name: Commit cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_redundancy_audit.py \
+            tests/cli/test_codex_computer_use_registration.py \
+            tests/providers/test_nvidia_nim.py \
+            tests/providers/test_wafer.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "test: remove audited redundancy"
+          git push origin HEAD:codex/redundancy-test-suite-hardening
