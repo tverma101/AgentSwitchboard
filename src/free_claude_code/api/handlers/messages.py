@@ -22,12 +22,16 @@ from free_claude_code.api.response_streams import (
     terminal_execution_error_response,
     trace_terminal_execution_error,
 )
+from free_claude_code.api.web_tools.automatic_search import (
+    stream_automatic_web_search_response,
+)
 from free_claude_code.api.web_tools.egress import (
     WebFetchEgressPolicy,
     web_fetch_allowed_scheme_set,
 )
 from free_claude_code.api.web_tools.request import (
     is_web_server_tool_request,
+    plan_automatic_web_search,
     unsupported_server_tool_error,
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
@@ -140,7 +144,12 @@ class MessagesHandler:
                 parent_route=parent_route,
             )
             routed = self._apply_message_routing_policies(routed)
-            self._reject_unsupported_server_tools(routed)
+            automatic_search = plan_automatic_web_search(
+                routed.request,
+                web_tools_enabled=self._settings.enable_web_server_tools,
+            )
+            if automatic_search is None:
+                self._reject_unsupported_server_tools(routed)
             model_info = (
                 self._model_info_resolver(
                     routed.resolved.provider_id,
@@ -165,6 +174,15 @@ class MessagesHandler:
                     ),
                 ),
             )
+            if automatic_search is not None:
+                automatic_search = plan_automatic_web_search(
+                    routed.request,
+                    web_tools_enabled=self._settings.enable_web_server_tools,
+                )
+                if automatic_search is None:
+                    raise InvalidRequestError(
+                        "Automatic web_search became unsupported after context governance."
+                    )
             # Parent affinity is committed only after all local ingress checks
             # have accepted the request. Side queries never write this registry,
             # and malformed/unsupported parent requests cannot poison a session.
@@ -186,7 +204,25 @@ class MessagesHandler:
                     **visual_input.as_dict(),
                 )
 
-            result = await self._run_message_intercepts(routed)
+            if automatic_search is None:
+                result = await self._run_message_intercepts(routed)
+            else:
+                input_tokens = await asyncio.to_thread(
+                    self._token_counter,
+                    routed.request.messages,
+                    routed.request.system,
+                    routed.request.tools,
+                )
+                result = _MessagesStreamResult(
+                    stream_automatic_web_search_response(
+                        self._provider_executor,
+                        routed,
+                        automatic_search,
+                        request_id=request_id,
+                        fallback_input_tokens=input_tokens,
+                        verbose_client_errors=self._settings.log_api_error_tracebacks,
+                    )
+                )
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
                 result = _MessagesStreamResult(
