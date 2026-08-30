@@ -13,6 +13,13 @@ much larger native window.
 
 This keeps session behavior consistent across gateway models and prevents 1M-advertised models from silently pushing Claude Code into very long, degraded sessions.
 
+FCC also sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` by default. Claude Code
+therefore starts compaction with approximately 25% of the bounded window left
+for the compaction turn and its continuation. An explicit value in the launch
+environment is preserved. FCC removes inherited `DISABLE_COMPACT` and
+`DISABLE_AUTO_COMPACT` so a stale shell setting cannot disable this safety
+boundary.
+
 ## Override
 
 Set `FCC_CLAUDE_CONTEXT_TOKENS` to an integer from 32,000 through 1,000,000.
@@ -23,7 +30,12 @@ Known model-native ceilings smaller than the configured FCC cap must win. Advert
 
 ## Unknown gateway models
 
-FCC sets `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` because FCC already supplies an explicit bounded context value. This prevents Claude Code's separate unknown-model fallback from forcing third-party gateway models back to 200K.
+FCC does not set
+`CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1`. Current Claude Code
+uses that setting to wait for an API-reported boundary for unknown gateway
+models, which can allow a session to run too close to its limit. FCC supplies
+an explicit bounded auto-compact window while keeping Claude Code's proactive
+safety compaction active.
 
 ## Design rule
 
@@ -57,9 +69,18 @@ single oversized message is not a valid continuity proof. It sends no manual
 status/boundary, a resumed continuation marker, and a post-boundary Bash tool
 result; the FCC cap in that probe is 50,000 tokens. The leash does not replace
 the hard runtime tool-result governor at the FCC Messages/Responses ingress
-boundary; that governor redirects only oversized text-only tool results and
-fails explicitly for
-unsupported structured values.
+boundary. That governor redirects oversized text-only tool results. For a
+result containing only direct text and media blocks, it redirects only the
+oversized direct text and preserves each complete media block; unsupported
+structured values still fail explicitly. The same transformation is applied
+to `/v1/messages/count_tokens` so Claude's context estimate matches the
+payload FCC forwards.
+
+Final provider usage receipts preserve that same estimate: input tokens, cache
+reads, and cache writes are reconciled as one bounded partition, while
+provider-specific totals remain diagnostic telemetry. This prevents a gateway
+cache breakdown from making the Claude statusline jump beyond the preceding
+`count_tokens` result.
 
 When a bounded locator needs more detail, use the terminal-only retrieval
 primitive rather than dumping the artifact wholesale:

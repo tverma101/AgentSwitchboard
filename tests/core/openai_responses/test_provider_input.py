@@ -12,12 +12,39 @@ from free_claude_code.core.openai_responses.errors import ResponsesConversionErr
 from free_claude_code.core.openai_responses.provider_input import (
     build_responses_provider_request,
 )
+from free_claude_code.core.openai_responses.reasoning import reasoning_text_from_item
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 
 _KEEP_ALL_THINKING_EDIT = {
     "type": "clear_thinking_20251015",
     "keep": "all",
 }
+
+
+def test_reasoning_item_keeps_raw_content_and_provider_summary() -> None:
+    assert (
+        reasoning_text_from_item(
+            {
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "raw trace"}],
+                "summary": [{"type": "summary_text", "text": "user summary"}],
+            }
+        )
+        == "raw trace\nuser summary"
+    )
+
+
+def test_reasoning_item_deduplicates_identical_raw_content_and_summary() -> None:
+    assert (
+        reasoning_text_from_item(
+            {
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "same"}],
+                "summary": [{"type": "summary_text", "text": "same"}],
+            }
+        )
+        == "same"
+    )
 
 
 def test_build_responses_provider_request_preserves_multiturn_protocol() -> None:
@@ -111,6 +138,58 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
         "type": "input_image",
         "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     }
+
+
+def test_responses_provider_can_mark_stable_instructions_for_prompt_caching() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-5.6-luna",
+            "system": "Stable system instructions",
+            "messages": [{"role": "user", "content": "Changing request"}],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+        explicit_prompt_cache_breakpoint=True,
+    )
+
+    assert "instructions" not in body
+    assert body["input"][0] == {
+        "type": "message",
+        "role": "developer",
+        "content": [
+            {
+                "type": "input_text",
+                "text": "Stable system instructions",
+                "prompt_cache_breakpoint": {"mode": "explicit"},
+            }
+        ],
+    }
+    assert body["input"][1]["role"] == "user"
+
+
+def test_responses_provider_does_not_add_breakpoint_by_default() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "system": "Stable system instructions",
+            "messages": [{"role": "user", "content": "Changing request"}],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["instructions"] == "Stable system instructions"
+    assert all(
+        "prompt_cache_breakpoint" not in item
+        for item in body["input"]
+        if isinstance(item, dict)
+    )
 
 
 def test_responses_provider_filters_tool_search_controller_and_metadata() -> None:

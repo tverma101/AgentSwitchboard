@@ -31,6 +31,13 @@ CLAUDE_MCP_OUTPUT_TOKENS_ENV = "MAX_MCP_OUTPUT_TOKENS"
 CLAUDE_TOOL_SEARCH_DEFAULT = "true"
 CLAUDE_TOOL_SEARCH_ENV = "ENABLE_TOOL_SEARCH"
 
+# Claude Code's default compact threshold is intentionally high, but a gateway
+# model with a client-facing bounded window needs room for the compaction turn
+# and its follow-up request. Keep this below the default without overriding an
+# explicit user setting.
+CLAUDE_AUTOCOMPACT_PCT_DEFAULT = "75"
+CLAUDE_AUTOCOMPACT_PCT_ENV = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
+
 # Keys Claude Code applies from its settings.json ``env`` block over the
 # process environment. FCC's launcher owns these for a proxy session; when a
 # user settings file sets any of them, Claude Code would silently override the
@@ -310,14 +317,22 @@ def build_claude_proxy_env(
     window = effective_context_window(model_id, base_env)
     env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(window)
     env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(window)
-    # Recent Claude Code releases enforce a separate hardcoded 200K window for
-    # unknown third-party models. FCC already supplies an explicit bounded cap,
-    # so that second enforcement layer is both redundant and destabilizing.
-    env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1"
+    # Do not disable Claude Code's unknown-model safety enforcement. Current
+    # Claude Code uses that switch to wait for the API instead of proactively
+    # compacting when a gateway model is not in its native model map. FCC has a
+    # bounded window, but must still let the client compact before the boundary.
+    env.pop("CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT", None)
+    # Inherited compact-disable flags would defeat the bounded-session contract
+    # and make the status line reach 100% before Claude can compact. The
+    # automatic-only flag is separate from DISABLE_COMPACT in Claude Code.
+    env.pop("DISABLE_COMPACT", None)
+    env.pop("DISABLE_AUTO_COMPACT", None)
     env[CLAUDE_PROCESS_WRAPPER_ENV] = process_wrapper_path or str(
         default_process_wrapper_path(base_env)
     )
 
+    if not env.get(CLAUDE_AUTOCOMPACT_PCT_ENV, "").strip():
+        env[CLAUDE_AUTOCOMPACT_PCT_ENV] = CLAUDE_AUTOCOMPACT_PCT_DEFAULT
     if not env.get(CLAUDE_MCP_OUTPUT_TOKENS_ENV, "").strip():
         env[CLAUDE_MCP_OUTPUT_TOKENS_ENV] = str(CLAUDE_MCP_OUTPUT_TOKENS_DEFAULT)
     if not env.get(CLAUDE_TOOL_SEARCH_ENV, "").strip():

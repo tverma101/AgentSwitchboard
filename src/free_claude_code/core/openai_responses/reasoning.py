@@ -7,17 +7,24 @@ from .tools import optional_str
 
 
 def reasoning_text_from_item(item: Mapping[str, Any]) -> str | None:
+    """Return both raw reasoning and its provider-written summary.
+
+    Responses reasoning items may carry the two representations at the same
+    time. Preferring ``content`` silently discarded the summary on the next
+    request, while preferring ``summary`` discarded raw text. Keep both in a
+    deterministic order; identical representations are emitted once.
+    """
     content_parts = _text_parts_from_items(
         item.get("content"), item_type="reasoning_text"
     )
-    if content_parts:
-        return "\n".join(content_parts)
     summary_parts = _text_parts_from_items(
         item.get("summary"), item_type="summary_text"
     )
-    if summary_parts:
-        return "\n".join(summary_parts)
-    return None
+    content = "\n".join(content_parts) if content_parts else None
+    summary = "\n".join(summary_parts) if summary_parts else None
+    if content is not None and summary is not None and content == summary:
+        return content
+    return combine_reasoning(content, summary)
 
 
 def encrypted_reasoning_from_item(item: Mapping[str, Any]) -> str | None:

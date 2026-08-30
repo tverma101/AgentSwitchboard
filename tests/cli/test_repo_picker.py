@@ -9,8 +9,10 @@ import free_claude_code.cli.repo_picker as repo_picker
 from free_claude_code.cli.repo_picker import (
     RepoEntry,
     _is_github_remote,
+    _remote_label,
     _remote_slug,
     choose_repo,
+    deduplicate_repos,
     discover_repos,
     fuzzy_match,
     github_authenticated_user,
@@ -96,6 +98,77 @@ def test_github_authenticated_user_fails_closed_without_gh(
 )
 def test_remote_slug_is_compact(url: str, expected: str) -> None:
     assert _remote_slug(url) == expected
+
+
+def test_remote_label_is_host_qualified_without_credentials() -> None:
+    assert _remote_label("https://user:password@gitlab.com/acme/repo.git") == (
+        "gitlab.com/acme/repo"
+    )
+
+
+def test_repo_identity_uses_remote_name_not_checkout_directory() -> None:
+    repo = RepoEntry(
+        "client-checkout", "/tmp/client-checkout", "feature/ui", "acme/client"
+    )
+
+    assert repo.repository_name == "client"
+    assert repo.identity == "acme/client"
+    assert (
+        repo.selection_detail
+        == "checkout client-checkout · branch feature/ui · /tmp/client-checkout"
+    )
+
+
+def test_discovery_includes_local_repositories_without_github_authentication(
+    tmp_path: Path,
+) -> None:
+    local_only = tmp_path / "local-only"
+    gitlab_repo = tmp_path / "gitlab-checkout"
+    _init_repo(local_only)
+    _init_repo(gitlab_repo, ("origin", "https://gitlab.com/acme/service.git"))
+
+    repos = discover_repos((tmp_path,))
+
+    assert {repo.path for repo in repos} == {
+        str(local_only.resolve()),
+        str(gitlab_repo.resolve()),
+    }
+    assert {repo.identity for repo in repos} == {
+        "local-only",
+        "gitlab.com/acme/service",
+    }
+
+
+def test_discovery_includes_repo_containing_a_scan_root(tmp_path: Path) -> None:
+    repository = tmp_path / "checkout"
+    nested_root = repository / "src"
+    _init_repo(repository, ("origin", "https://github.com/acme/service.git"))
+    nested_root.mkdir()
+
+    repos = discover_repos((nested_root,))
+
+    assert [repo.path for repo in repos] == [str(repository.resolve())]
+
+
+def test_deduplicate_repos_removes_duplicate_paths_but_keeps_distinct_clones(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    repos = [
+        RepoEntry("first", str(first), "main", "acme/service"),
+        RepoEntry("first duplicate", str(first.resolve()), "feature", "acme/service"),
+        RepoEntry("second", str(second), "main", "acme/service"),
+    ]
+
+    unique = deduplicate_repos(repos)
+
+    assert [repo.path for repo in unique] == [
+        str(first.resolve()),
+        str(second.resolve()),
+    ]
 
 
 def test_discovery_keeps_only_github_repos_and_handles_multiple_remotes(
@@ -195,6 +268,27 @@ def test_non_tty_filter_with_no_match_returns_none(
     assert choose_repo(repos, "definitely-no-match") is None
 
 
+def test_non_tty_picker_prefers_selected_default_when_it_matches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    repos = [
+        RepoEntry("first", str(first), "main", "acme/first"),
+        RepoEntry("second", str(second), "main", "acme/second"),
+    ]
+    non_tty = SimpleNamespace(isatty=lambda: False)
+    monkeypatch.setattr(repo_picker.sys, "stdin", non_tty)
+    monkeypatch.setattr(repo_picker.sys, "stdout", non_tty)
+
+    selected = choose_repo(repos, selected_path=str(second))
+
+    assert selected is not None
+    assert selected.path == str(second.resolve())
+
+
 def test_launch_repo_execs_canonical_fccdanger_with_selected_cwd(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -243,9 +337,8 @@ def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(
     scanned: list[tuple[Path, ...]] = []
     launched: list[RepoEntry] = []
 
-    def fake_discover(roots: tuple[Path, ...], *, github_user: str) -> list[RepoEntry]:
+    def fake_discover(roots: tuple[Path, ...]) -> list[RepoEntry]:
         scanned.append(roots)
-        assert github_user == "acme"
         return [wanted]
 
     def fake_launch(repo: RepoEntry) -> None:

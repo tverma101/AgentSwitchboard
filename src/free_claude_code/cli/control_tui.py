@@ -79,10 +79,13 @@ from . import codex_accounts
 from .harlequin_app_base import HarlequinAppBase
 from .repo_picker import (
     RepoEntry,
+    cache_is_fresh,
     cache_path,
+    deduplicate_repos,
     default_roots,
     discover_repos,
-    github_authenticated_user,
+    load_cached_repos,
+    repository_from_path,
     save_cached_repos,
 )
 
@@ -622,7 +625,11 @@ class ControlCenterApp(HarlequinAppBase):
         super().__init__()
         self.settings = settings
         self.supervisor = supervisor
-        self.selected_repo = selected_repo
+        initial_repo = selected_repo or repository_from_path(Path.cwd())
+        normalized_repos = (
+            deduplicate_repos([initial_repo]) if initial_repo is not None else []
+        )
+        self.selected_repo = normalized_repos[0] if normalized_repos else None
         self.next_profile = next_profile or configured_profile()
         self.startup_error = startup_error
         self.page = "dashboard"
@@ -643,6 +650,8 @@ class ControlCenterApp(HarlequinAppBase):
         self._oauth_last_state: str | None = None
         self._oauth_poll_in_flight = False
         self._oauth_poll_error_notified = False
+        self._repo_inventory: tuple[RepoEntry, ...] = ()
+        self._repo_inventory_loaded = False
         self._repos: tuple[RepoEntry, ...] = ()
 
     def compose(self) -> ComposeResult:
@@ -743,6 +752,7 @@ class ControlCenterApp(HarlequinAppBase):
             self.page,
             force=True,
             refresh_models=self.page == "models",
+            refresh_repos=self.page == "repos",
         )
 
     async def action_dashboard(self) -> None:
@@ -757,6 +767,7 @@ class ControlCenterApp(HarlequinAppBase):
         force: bool = False,
         focus_target: str | None = None,
         refresh_models: bool = False,
+        refresh_repos: bool = False,
     ) -> None:
         if page not in {item[0] for item in self.NAV}:
             return
@@ -796,7 +807,7 @@ class ControlCenterApp(HarlequinAppBase):
             elif page == "accounts":
                 await self._render_accounts(table)
             elif page == "repos":
-                await self._render_repos(table)
+                await self._render_repos(table, refresh=refresh_repos)
             elif page == "profiles":
                 await self._render_profiles(table)
             elif page == "models":
@@ -840,9 +851,9 @@ class ControlCenterApp(HarlequinAppBase):
             else ServerStatus.RUNNING.value
         )
         repo = (
-            self.selected_repo.display_path
+            f"{self.selected_repo.identity} · {self.selected_repo.display_path}"
             if self.selected_repo
-            else f"(current directory) {Path.cwd()}"
+            else f"(no repository selected) · {Path.cwd()}"
         )
         account_summary = await asyncio.to_thread(fcc_provider_account_summary)
         codex = await asyncio.to_thread(self._safe_codex_summary)
@@ -946,42 +957,81 @@ class ControlCenterApp(HarlequinAppBase):
         await self._add_action("fcc-browser", "OpenAI login")
         await self._add_action("fcc-device", "OpenAI device")
 
-    async def _render_repos(self, table: DataTable) -> None:
-        github_user = await asyncio.to_thread(github_authenticated_user)
-        if github_user is None:
-            repos: tuple[RepoEntry, ...] = ()
-            summary = (
-                "No repositories shown: the active GitHub account could not be "
-                "verified. Run `gh auth login` and press Refresh."
+    async def _load_repo_inventory(self, *, refresh: bool) -> list[RepoEntry]:
+        """Load the repository inventory once, scanning only on demand."""
+
+        if self._repo_inventory_loaded and not refresh:
+            return list(self._repo_inventory)
+
+        cache = cache_path()
+        repos: list[RepoEntry] = []
+        if not refresh and await asyncio.to_thread(cache_is_fresh, cache):
+            repos = await asyncio.to_thread(load_cached_repos, cache)
+        if not repos:
+            repos = await asyncio.to_thread(discover_repos, default_roots())
+            repos = deduplicate_repos(repos)
+            await asyncio.to_thread(save_cached_repos, repos, cache)
+
+        self._repo_inventory = tuple(deduplicate_repos(repos))
+        self._repo_inventory_loaded = True
+        return list(self._repo_inventory)
+
+    async def _render_repos(self, table: DataTable, *, refresh: bool = False) -> None:
+        repos = await self._load_repo_inventory(refresh=refresh)
+        selected_path = self.selected_repo.path if self.selected_repo else None
+        selected = next((repo for repo in repos if repo.path == selected_path), None)
+        if selected is None and self.selected_repo is not None:
+            selected = await asyncio.to_thread(
+                repository_from_path,
+                Path(self.selected_repo.path),
+                last_used=self.selected_repo.last_used,
             )
-        else:
-            discovered = await asyncio.to_thread(
-                discover_repos,
-                default_roots(),
-                github_user=github_user,
+            if selected is not None:
+                repos.append(selected)
+                repos = deduplicate_repos(repos)
+                self._repo_inventory = tuple(repos)
+                await asyncio.to_thread(save_cached_repos, repos, cache_path())
+        repos = deduplicate_repos(repos)
+        if selected_path is not None:
+            selected = next(
+                (repo for repo in repos if repo.path == selected_path), None
             )
-            repos = tuple(discovered)
-            await asyncio.to_thread(save_cached_repos, list(repos), cache_path())
-            summary = (
-                f"Live local GitHub repositories for {github_user} "
-                f"({len(repos)} found)."
-            )
-        self._repos = repos
-        if self.selected_repo is not None and self.selected_repo.path not in {
-            repo.path for repo in repos
-        }:
-            self.selected_repo = None
-        self.query_one("#summary", Static).update(summary)
-        table.add_columns("Repository", "GitHub", "Branch", "Path")
+        self.selected_repo = selected
+        self._repos = tuple(repos)
+        self.query_one("#summary", Static).update(
+            f"Local Git repositories ({len(repos)} found). "
+            "GitHub / remote is paired with the local folder; "
+            "the marked folder is the default for the next launch. "
+            "Use Refresh to rescan."
+        )
+        # Keep the two fields needed for selection visible in the normal-width
+        # pane. Longer path and branch details remain available to the right.
+        table.add_column("GitHub / remote", width=26)
+        table.add_column("Local folder", width=20)
+        table.add_column("Branch", width=16)
+        table.add_column("Path", width=32)
         for repo in repos:
+            local_folder = f"● {repo.name}" if repo.path == selected_path else repo.name
             table.add_row(
-                repo.name,
-                repo.remote,
+                repo.identity,
+                local_folder,
                 repo.branch,
                 repo.display_path,
                 key=repo.path,
             )
-        await self._add_action("repo-select", "Select", disabled=not repos)
+        if selected_path is not None:
+            selected_index = next(
+                (
+                    index
+                    for index, repo in enumerate(repos)
+                    if repo.path == selected_path
+                ),
+                None,
+            )
+            if selected_index is not None:
+                table.move_cursor(row=selected_index, column=0)
+        await self._add_action("repo-select", "Use selected", disabled=not repos)
+        await self._add_action("repo-open", "Open path")
         await self._add_action("repo-refresh", "Refresh")
 
     async def _render_profiles(self, table: DataTable) -> None:
@@ -1395,7 +1445,9 @@ class ControlCenterApp(HarlequinAppBase):
             repo = self._repo_for_path(value)
             if repo is not None:
                 self.selected_repo = repo
-                self.notify(f"Next launch repository: {repo.display_path}")
+                self.notify(
+                    f"Next launch repository: {repo.identity} · {repo.display_path}"
+                )
                 await self._show_page("repos", force=True)
         elif self.page == "profiles":
             self.next_profile = value
@@ -1787,13 +1839,42 @@ class ControlCenterApp(HarlequinAppBase):
             self._notify_missing_selection("repository")
             return
         self.selected_repo = repo
-        self.notify(f"Next launch repository: {repo.display_path}")
+        self.notify(f"Next launch repository: {repo.identity} · {repo.display_path}")
+        await self._show_page("repos", force=True)
+
+    @on(Button.Pressed, "#repo-open")
+    def repo_open(self) -> None:
+        """Open and select a repository outside the standard scan roots."""
+
+        def callback(value: str | None) -> None:
+            if value is not None:
+                self.run_worker(self._open_repo_path(value))
+
+        self.push_screen(
+            InputModal(
+                "Open local repository",
+                "Path to a Git repository (a subdirectory is okay)",
+            ),
+            callback,
+        )
+
+    async def _open_repo_path(self, value: str) -> None:
+        repo = await asyncio.to_thread(repository_from_path, Path(value))
+        if repo is None:
+            self.notify(
+                "That path is not inside a readable local Git repository.",
+                title="Repository not found",
+                severity="error",
+            )
+            return
+        self.selected_repo = deduplicate_repos([repo])[0]
+        self.notify(f"Default repository → {self.selected_repo.identity}")
         await self._show_page("repos", force=True)
 
     @on(Button.Pressed, "#repo-refresh")
     async def repo_refresh(self) -> None:
         self.notify("Scanning local repository roots…")
-        await self._show_page("repos", force=True)
+        await self._show_page("repos", force=True, refresh_repos=True)
 
     @on(Button.Pressed, "#profile-select")
     async def profile_select(self) -> None:

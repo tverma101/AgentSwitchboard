@@ -30,6 +30,7 @@ from free_claude_code.core.anthropic.streaming import (
     parse_complete_tool_input,
     tool_schemas_by_name,
 )
+from free_claude_code.core.anthropic.usage import reconcile_input_usage
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
@@ -223,6 +224,32 @@ class OpenAIChatProvider(BaseProvider):
         """Return provider-specific Anthropic usage fields for final SSE usage."""
         usage_fields = self._profile.usage_fields
         return usage_fields(usage_info) if usage_fields is not None else {}
+
+    def _client_usage(
+        self, usage_info: Any, estimated_input_tokens: int
+    ) -> tuple[int, dict[str, int]]:
+        """Keep final client usage aligned with the governed request estimate.
+
+        Provider prompt counters are useful telemetry, but they are not a
+        stable source for the Claude client's context meter: gateways can
+        count tool wrappers, cached prefixes, or internal prompt material
+        differently from FCC. The request estimate is the client-facing
+        source of truth. Preserve provider cache buckets when they fit inside
+        that estimate, and use provider totals only for direct callers that
+        did not supply an estimate.
+        """
+        usage_fields = self._anthropic_usage_fields(usage_info)
+        if estimated_input_tokens <= 0:
+            fallback = usage_fields.get("input_tokens")
+            if not isinstance(fallback, int) or fallback < 0:
+                fallback = usage_int(usage_info, "prompt_tokens")
+            return max(0, fallback or 0), usage_fields
+
+        return reconcile_input_usage(
+            estimated_input_tokens,
+            usage_fields,
+            fallback_input_tokens=usage_int(usage_info, "prompt_tokens"),
+        )
 
     async def _create_stream(
         self,
@@ -786,8 +813,8 @@ class _OpenAIChatStreamRunner:
                 provider_input,
                 provider_input - self._input_tokens,
             )
-        input_tokens = (
-            provider_input if provider_input is not None else self._input_tokens
+        input_tokens, usage_fields = self._provider._client_usage(
+            usage_info, self._input_tokens
         )
         trace_event(
             stage="provider",
@@ -797,15 +824,18 @@ class _OpenAIChatStreamRunner:
             request_id=self._request_id,
             finish_reason=(None if finish_reason is None else str(finish_reason)),
             output_tokens=output_tokens,
-            prompt_tokens=input_tokens,
+            prompt_tokens=(
+                provider_input if provider_input is not None else input_tokens
+            ),
             prompt_tokens_estimate=self._input_tokens,
+            client_input_tokens=input_tokens,
         )
         for event in hold_event(
             ledger.message_delta(
                 ledger.final_stop_reason(map_stop_reason(finish_reason)),
                 output_tokens,
                 input_tokens=input_tokens,
-                usage_fields=self._provider._anthropic_usage_fields(usage_info),
+                usage_fields=usage_fields,
             )
         ):
             yield event

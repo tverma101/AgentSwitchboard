@@ -77,6 +77,7 @@ def _client_control_request() -> MessagesRequest:
         {
             "model": "gpt-test",
             "max_tokens": 1024,
+            "system": "Stable system instructions",
             "messages": [{"role": "user", "content": "hello"}],
             "metadata": {"user_id": "example-user"},
             "thinking": {"type": "adaptive", "display": "omitted"},
@@ -213,7 +214,11 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
         transport=httpx.MockTransport(handler),
     )
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(),
+        auth=_FakeAuth(),
+        admission=_admission(),
+        client=client,
+        supports_explicit_prompt_cache_breakpoints=True,
     )
     request = _client_control_request()
     original_request = request.model_dump()
@@ -237,12 +242,116 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
     payload = json.loads(upstream.content)
     assert payload["model"] == "gpt-test"
     assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert payload["input"][0]["role"] == "developer"
+    assert payload["input"][0]["content"][0]["prompt_cache_breakpoint"] == {
+        "mode": "explicit"
+    }
+    assert "instructions" not in payload
     assert "max_output_tokens" not in payload
     assert "metadata" not in payload
     assert "context_management" not in payload
     assert "output_config" not in payload
     assert request.model_dump() == original_request
     assert_anthropic_stream_contract(parse_sse_text(body))
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_can_disable_unverified_cache_breakpoint_capability() -> None:
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(500, request=request)
+        ),
+    )
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=_FakeAuth(),
+        admission=_admission(),
+        client=client,
+        supports_explicit_prompt_cache_breakpoints=False,
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "system": "Stable system instructions",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+    body = provider._build_body(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["instructions"] == "Stable system instructions"
+    assert "prompt_cache_breakpoint" not in json.dumps(body)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_downgrades_cache_breakpoint_once_when_endpoint_rejects_it() -> (
+    None
+):
+    attempts = 0
+    payloads: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        payloads.append(json.loads(request.content))
+        if attempts == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "prompt_cache_breakpoint is not supported on this model",
+                        "type": "invalid_request_error",
+                        "param": "prompt_cache_breakpoint",
+                        "code": "invalid_parameter",
+                    }
+                },
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            text=_complete_stream("recovered"),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=_FakeAuth(),
+        admission=_admission(),
+        client=client,
+        supports_explicit_prompt_cache_breakpoints=True,
+    )
+
+    body = await _collect(
+        provider.stream_response(
+            _client_control_request(),
+            request_id="req_breakpoint_fallback",
+            response_model="claude-opus-4",
+        )
+    )
+
+    assert attempts == 2
+    assert payloads[0]["input"][0]["role"] == "developer"
+    assert payloads[0]["input"][0]["content"][0]["prompt_cache_breakpoint"] == {
+        "mode": "explicit"
+    }
+    assert payloads[1]["instructions"] == "Stable system instructions"
+    assert payloads[1]["input"][0]["role"] == "user"
+    assert "prompt_cache_breakpoint" not in json.dumps(payloads[1])
+    assert provider._supports_explicit_prompt_cache_breakpoints is False
+    events = parse_sse_text(body)
+    assert_anthropic_stream_contract(events)
+    assert text_content(events) == "recovered"
     await client.aclose()
 
 

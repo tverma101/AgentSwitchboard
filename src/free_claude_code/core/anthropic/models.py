@@ -172,6 +172,9 @@ class TokenCountRequest(BaseModel):
     context_management: dict[str, Any] | None = None
     output_config: dict[str, Any] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
+    # Ingress metadata used only to keep token-count routing on the same
+    # parent route as the corresponding Messages request.
+    claude_session_id: str | None = Field(default=None, exclude=True, repr=False)
     betas: list[str] | None = Field(default=None, exclude=True)
 
 

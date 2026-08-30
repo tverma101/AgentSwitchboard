@@ -13,6 +13,7 @@ from free_claude_code.api.handlers import (
 )
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.routing import ParentRouteRegistry
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.content import get_block_attr
 from free_claude_code.core.anthropic.models import (
@@ -147,6 +148,50 @@ async def test_messages_handler_keeps_session_affinity_metadata_internal() -> No
     routed = provider.requests[0]
     assert routed.claude_session_id == "session_stable"
     assert "claude_session_id" not in routed.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_inherits_parent_route_for_logical_child_models() -> (
+    None
+):
+    provider = FakeProvider()
+    settings = Settings().model_copy(
+        update={
+            "model": "opencode_go/configured-parent",
+            "model_haiku": "opencode_zen/stale-child",
+            "subagent_model_inherit": True,
+        }
+    )
+    handler = MessagesHandler(
+        settings,
+        provider_resolver=lambda _: provider,
+        generation_id=4,
+        parent_route_registry=ParentRouteRegistry(),
+    )
+
+    async def run(model: str) -> None:
+        response = await handler.create(
+            MessagesRequest(
+                model=model,
+                stream=True,
+                messages=[Message(role="user", content="hello")],
+            ),
+            claude_session_id="session_with_children",
+        )
+        assert isinstance(response, StreamingResponse)
+        await _streaming_body_text(response)
+
+    await run("openai/gpt-5.6-luna")
+    await run("claude-3-haiku-20240307")
+    await run("openai/gpt-5.6-mini")
+    await run("claude-3-haiku-20240307")
+
+    assert [request.model for request in provider.requests] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-luna",
+        "gpt-5.6-mini",
+        "gpt-5.6-luna",
+    ]
 
 
 @pytest.mark.asyncio
@@ -959,3 +1004,118 @@ def test_token_count_handler_routes_and_counts_tokens() -> None:
     assert all(
         call.kwargs["request_id"] == "req_ingress" for call in trace.call_args_list
     )
+
+
+def test_token_count_handler_inherits_parent_route_for_session() -> None:
+    settings = Settings().model_copy(
+        update={
+            "model": "opencode_go/base-model",
+            "model_haiku": "opencode_zen/stale-child-model",
+            "subagent_model_inherit": True,
+        }
+    )
+    handler = TokenCountHandler(
+        settings,
+        token_counter=lambda messages, system, tools: len(messages),
+        generation_id=9,
+        parent_route_registry=ParentRouteRegistry(),
+    )
+    session_id = "token-count-parent-route-test"
+
+    with patch("free_claude_code.api.handlers.token_count.trace_event") as trace:
+        for model in ("openai/gpt-5.6-luna", "claude-3-haiku-20240307"):
+            response = handler.count(
+                TokenCountRequest(
+                    model=model,
+                    messages=[Message(role="user", content="hi")],
+                    claude_session_id=session_id,
+                ),
+                request_id=f"req_{model.rsplit('/', maxsplit=1)[-1]}",
+            )
+            assert response.input_tokens == 1
+
+    route_events = [
+        call.kwargs
+        for call in trace.call_args_list
+        if call.kwargs.get("event") == "free_claude_code.api.route.resolved"
+    ]
+    assert [event["provider_model"] for event in route_events] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-luna",
+    ]
+
+
+def test_token_count_handler_counts_the_governed_payload(tmp_path) -> None:
+    seen_messages: list[list[Message]] = []
+    settings = Settings().model_copy(
+        update={
+            "context_governor_tool_result_max_bytes": 4096,
+            "context_governor_artifact_dir": str(tmp_path),
+        }
+    )
+
+    def count_messages(messages, _system, _tools):
+        seen_messages.append(messages)
+        return 17
+
+    handler = TokenCountHandler(settings, token_counter=count_messages)
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[
+                Message(
+                    role="user",
+                    content=[
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool_large",
+                            "content": "large-output\n" * 10_000,
+                        }
+                    ],
+                )
+            ],
+        ),
+        request_id="req_governed_count",
+    )
+
+    assert response.input_tokens == 17
+    assert len(seen_messages) == 1
+    block = seen_messages[0][0].content[0]
+    content = get_block_attr(block, "content")
+    assert isinstance(content, str)
+    assert "tool result redirected" in content
+    assert len(content.encode()) <= 4096
+
+
+def test_token_count_handler_reports_unsafe_structured_results_as_bad_request(
+    tmp_path,
+) -> None:
+    settings = Settings().model_copy(
+        update={
+            "context_governor_tool_result_max_bytes": 4096,
+            "context_governor_artifact_dir": str(tmp_path),
+        }
+    )
+    handler = TokenCountHandler(settings)
+
+    with pytest.raises(InvalidRequestError, match="structured or media"):
+        handler.count(
+            TokenCountRequest(
+                model="nvidia_nim/test-model",
+                messages=[
+                    Message(
+                        role="user",
+                        content=[
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool_structured",
+                                "content": {"records": ["x" * 10_000]},
+                            }
+                        ],
+                    )
+                ],
+            ),
+            request_id="req_structured_count",
+        )
+
+    assert not list(tmp_path.iterdir())

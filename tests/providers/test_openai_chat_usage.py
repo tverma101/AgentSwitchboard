@@ -265,7 +265,7 @@ def test_stream_usage_rejection_does_not_match_unrelated_400():
 
 
 @pytest.mark.asyncio
-async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens():
+async def test_openai_chat_stream_keeps_final_usage_at_governed_prompt_estimate():
     provider = _UsageTestProvider()
     request = make_messages_request(model="m")
     usage = SimpleNamespace(prompt_tokens=22, completion_tokens=4)
@@ -298,7 +298,45 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
         event.data["usage"] for event in parsed if event.event == "message_delta"
     )
     assert start_usage["input_tokens"] == 7
-    assert final_usage == {"input_tokens": 22, "output_tokens": 4}
+    assert final_usage == {"input_tokens": 7, "output_tokens": 4}
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_stream_reconciles_cache_to_governed_prompt_estimate():
+    provider = _UsageTestProvider()
+    request = make_messages_request(model="m")
+    usage = SimpleNamespace(
+        prompt_tokens=40,
+        completion_tokens=4,
+        prompt_cache_hit_tokens=31,
+        prompt_cache_miss_tokens=9,
+    )
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [
+            event async for event in provider.stream_response(request, input_tokens=40)
+        ]
+
+    final_usage = next(
+        event.data["usage"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "message_delta"
+    )
+    assert final_usage == {
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 31,
+    }
+    assert final_usage["input_tokens"] + final_usage["cache_read_input_tokens"] == 40
 
 
 @pytest.mark.asyncio
@@ -322,7 +360,9 @@ async def test_openai_chat_stream_does_not_double_count_cached_prompt_tokens():
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        events = [event async for event in provider.stream_response(request)]
+        events = [
+            event async for event in provider.stream_response(request, input_tokens=40)
+        ]
 
     final_usage = next(
         event.data["usage"]
@@ -360,7 +400,9 @@ async def test_openai_chat_stream_reports_explicit_cache_write_separately():
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        events = [event async for event in provider.stream_response(request)]
+        events = [
+            event async for event in provider.stream_response(request, input_tokens=40)
+        ]
 
     final_usage = next(
         event.data["usage"]
@@ -368,11 +410,17 @@ async def test_openai_chat_stream_reports_explicit_cache_write_separately():
         if event.event == "message_delta"
     )
     assert final_usage == {
-        "input_tokens": 9,
+        "input_tokens": 6,
         "output_tokens": 4,
         "cache_read_input_tokens": 31,
         "cache_creation_input_tokens": 3,
     }
+    assert (
+        final_usage["input_tokens"]
+        + final_usage["cache_read_input_tokens"]
+        + final_usage["cache_creation_input_tokens"]
+        == 40
+    )
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ def _settings() -> Settings:
     settings.model_opus = None
     settings.model_sonnet = None
     settings.model_haiku = None
+    settings.subagent_model_inherit = False
     settings.model_aliases = ""
     settings.reasoning_policy = ReasoningPreference.CLIENT
     settings.reasoning_fable = ReasoningPreference.INHERIT

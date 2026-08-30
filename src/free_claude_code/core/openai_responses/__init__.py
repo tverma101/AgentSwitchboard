@@ -9,7 +9,7 @@ from .errors import (
 )
 from .models import OpenAIResponsesRequest
 from .provider_input import build_responses_provider_request
-from .provider_stream import ResponsesProviderStream, ResponsesStreamFailure
+from .strict_provider_stream import ResponsesProviderStream, ResponsesStreamFailure
 
 __all__ = [
     "OpenAIResponsesAdapter",

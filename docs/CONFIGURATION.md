@@ -27,9 +27,12 @@ Start the server in a terminal:
 fcc-server
 ```
 
-The command opens the terminal control center. Press Enter/C for `fcc-claude`,
-D for `fccdanger`, O to select a cached/local repository, or F to select/manage
-the profile used by the next launch. F also exposes explicit selective bundle
+The command opens the terminal control center. In the Textual control center,
+choose **Repositories** in the sidebar; the current working directory is
+selected by default, and **Open path** adds any local Git checkout. Press
+Enter/C for `fcc-claude`, D for `fccdanger`, O in the legacy line-oriented menu
+to select a local repository, or F to select/manage the profile used by the
+next launch. F also exposes explicit selective bundle
 preview/export/import. P opens provider status and FCC account actions; its custom-provider
 path supports add, edit, test, enable/disable, and remove through the
 canonical Admin API. M shows models and opens a shared filterable picker for
@@ -208,6 +211,11 @@ request cannot silently start or replace a login.
 
 - `FCC_CLAUDE_CONTEXT_TOKENS` defaults to `256000` and accepts `32000` through
   `1000000`.
+- `fcc-claude` sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` by default so Claude
+  Code compacts before the bounded window is exhausted. An explicit value is
+  preserved. FCC removes inherited `DISABLE_COMPACT` and
+  `DISABLE_AUTO_COMPACT`, and does not disable Claude Code's unknown-model
+  compaction safety path.
 - `fcc-claude` supplies Claude Code's `MAX_MCP_OUTPUT_TOKENS=12000` by
   default, unless that public Claude setting is already present in the
   environment. An explicit value is preserved so a user-owned MCP server can
@@ -234,10 +242,14 @@ request cannot silently start or replace a login.
 - `FCC_CONTEXT_GOVERNOR_TOOL_RESULT_MAX_BYTES` defaults to `16384` and accepts
   `512` through `1000000`. `FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR` optionally
   selects the private artifact directory; the default is
-  `~/.fcc/context-artifacts`. Structured JSON, media, and opaque reasoning
-  state are never truncated when media preservation is enabled; oversized
-  structured values still fail explicitly. Redirect receipts include byte,
-  line, and estimated-token counts. Retrieve more
+  `~/.fcc/context-artifacts`. Complete media blocks and opaque reasoning state
+  are never truncated when media preservation is enabled. If a tool result
+  contains only direct text and media blocks, oversized direct text is
+  redirected while the media remains intact; arbitrary oversized structured
+  values still fail explicitly. Redirect receipts include byte, line, and
+  estimated-token counts. The same governance runs before
+  `/v1/messages/count_tokens`, keeping the context estimate aligned with the
+  governed `/v1/messages` payload. Retrieve more
   text only through a bounded terminal slice rooted to that directory:
 
   ```bash
@@ -248,6 +260,13 @@ request cannot silently start or replace a login.
   The command verifies the resolved path stays inside the configured artifact
   directory and reports the full-artifact SHA-256 without placing the full
   artifact back into context.
+
+  Repeated token-count probes reuse bounded in-process estimates. Fingerprinting
+  and tokenization are capped at two concurrent probes so large Computer Use
+  screenshots cannot fan out into unbounded CPU work.
+  Provider completion receipts use the same governed input estimate and
+  reconcile input, cache-read, and cache-write buckets so gateway-specific
+  usage denominators cannot inflate the Claude context meter.
 - FCC's Claude launcher pins the installed executable to the known-good
   `2.1.228` receipt by default. A newer or unparseable binary is quarantined
   before launch. After a version quarantine, FCC first checks
@@ -385,3 +404,19 @@ terminal-only flags. Browser-opening flags and the retired presentation
 variables are rejected or ignored by design. The `/admin` URL printed at
 startup is not an instruction to open a browser; it is a local endpoint for an
 explicit client or API request.
+
+### Parent model inheritance for subagents
+
+`FCC_SUBAGENT_MODEL_INHERIT=true` is the safe default. Claude Code can use a
+different logical model name for a child agent, but FCC keeps that child on the
+parent request's resolved provider/model when the client supplies a stable
+session header. The retained route is bounded and scoped to the active
+provider generation, so a configuration restart cannot reuse an old route.
+
+The first logical parent request still uses its matching `MODEL_*` mapping. If
+a client does not send a session header, later logical model names use that
+normal tier resolution because FCC cannot identify the parent safely. Set
+`FCC_SUBAGENT_MODEL_INHERIT=false` only to deliberately let a child use its
+independent `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU`
+mapping even when a parent route is available. Direct `provider/model` requests
+and configured model aliases remain explicit overrides.

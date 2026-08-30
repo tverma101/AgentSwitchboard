@@ -1,7 +1,7 @@
 """Claude Messages API product flow."""
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
 
 from fastapi.responses import JSONResponse, Response
@@ -40,7 +40,11 @@ from free_claude_code.application.errors import ApplicationError, InvalidRequest
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import ProviderResolver
-from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
+from free_claude_code.application.routing import (
+    ModelRouter,
+    ParentRouteRegistry,
+    RoutedMessagesRequest,
+)
 from free_claude_code.application.visual_capabilities import validate_visual_capability
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
@@ -70,7 +74,7 @@ class _MessagesCompleteResult:
 
 
 _MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
-MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
+MessageIntercept = Callable[[RoutedMessagesRequest], Awaitable[_MessagesResult | None]]
 ModelInfoResolver = Callable[[str, str], ProviderModelInfo | None]
 
 
@@ -88,11 +92,14 @@ class MessagesHandler:
         model_info_resolver: ModelInfoResolver | None = None,
         generation_id: int | None = None,
         usage_store: UsageStore | None = None,
+        parent_route_registry: ParentRouteRegistry | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
         self._model_info_resolver = model_info_resolver
+        self._generation_id = generation_id
+        self._parent_route_registry = parent_route_registry
         self._provider_executor = provider_executor or ProviderExecutor(
             provider_resolver,
             token_counter=token_counter,
@@ -120,7 +127,18 @@ class MessagesHandler:
                     update={"claude_session_id": claude_session_id}
                 )
             require_non_empty_messages(request_data.messages)
-            routed = self._model_router.resolve_messages_request(request_data)
+            parent_route = (
+                self._parent_route_registry.lookup(
+                    request_data.claude_session_id,
+                    generation_id=self._generation_id,
+                )
+                if self._parent_route_registry is not None
+                else None
+            )
+            routed = self._model_router.resolve_messages_request(
+                request_data,
+                parent_route=parent_route,
+            )
             routed = self._apply_message_routing_policies(routed)
             self._reject_unsupported_server_tools(routed)
             model_info = (
@@ -147,6 +165,15 @@ class MessagesHandler:
                     ),
                 ),
             )
+            # Parent affinity is committed only after all local ingress checks
+            # have accepted the request. Side queries never write this registry,
+            # and malformed/unsupported parent requests cannot poison a session.
+            if self._parent_route_registry is not None:
+                self._parent_route_registry.remember(
+                    request_data.claude_session_id,
+                    routed.resolved,
+                    generation_id=self._generation_id,
+                )
             if visual_input is not None:
                 trace_event(
                     stage="ingress",
@@ -159,7 +186,7 @@ class MessagesHandler:
                     **visual_input.as_dict(),
                 )
 
-            result = self._run_message_intercepts(routed)
+            result = await self._run_message_intercepts(routed)
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
                 result = _MessagesStreamResult(
@@ -343,16 +370,16 @@ class MessagesHandler:
             return routed
         return replace(routed, reasoning=ReasoningPolicy.off())
 
-    def _run_message_intercepts(
+    async def _run_message_intercepts(
         self, routed: RoutedMessagesRequest
     ) -> _MessagesResult | None:
         for intercept in self._message_intercepts:
-            result = intercept(routed)
+            result = await intercept(routed)
             if result is not None:
                 return result
         return None
 
-    def _intercept_web_server_tool(
+    async def _intercept_web_server_tool(
         self, routed: RoutedMessagesRequest
     ) -> _MessagesResult | None:
         if not self._settings.enable_web_server_tools:
@@ -360,8 +387,11 @@ class MessagesHandler:
         if not is_web_server_tool_request(routed.request):
             return None
 
-        input_tokens = self._token_counter(
-            routed.request.messages, routed.request.system, routed.request.tools
+        input_tokens = await asyncio.to_thread(
+            self._token_counter,
+            routed.request.messages,
+            routed.request.system,
+            routed.request.tools,
         )
         trace_event(
             stage="routing",
@@ -385,7 +415,7 @@ class MessagesHandler:
             ),
         )
 
-    def _intercept_local_optimization(
+    async def _intercept_local_optimization(
         self, routed: RoutedMessagesRequest
     ) -> _MessagesResult | None:
         optimized = try_optimizations(

@@ -48,7 +48,8 @@ def test_build_claude_proxy_env_always_sets_default_256k() -> None:
     )
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
     assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
-    assert env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] == "1"
+    assert env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "75"
+    assert "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT" not in env
     assert env["MAX_MCP_OUTPUT_TOKENS"] == "12000"
     assert env["ENABLE_TOOL_SEARCH"] == "true"
 
@@ -62,6 +63,32 @@ def test_build_claude_proxy_env_uses_explicit_override() -> None:
     )
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "192000"
     assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "192000"
+
+
+def test_build_claude_proxy_env_removes_inherited_compaction_disable() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={
+            "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
+            "DISABLE_COMPACT": "1",
+            "DISABLE_AUTO_COMPACT": "1",
+        },
+    )
+
+    assert "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT" not in env
+    assert "DISABLE_COMPACT" not in env
+    assert "DISABLE_AUTO_COMPACT" not in env
+
+
+def test_build_claude_proxy_env_preserves_explicit_compaction_threshold() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "85"},
+    )
+
+    assert env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "85"
 
 
 def test_build_claude_proxy_env_preserves_explicit_mcp_output_cap() -> None:

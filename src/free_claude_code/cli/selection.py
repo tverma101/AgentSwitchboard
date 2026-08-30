@@ -19,15 +19,23 @@ class SelectionItem:
 def fuzzy_match(items: Sequence[SelectionItem], query: str) -> list[SelectionItem]:
     """Return deterministic subsequence matches ranked by match tightness."""
 
+    unique_items: list[SelectionItem] = []
+    seen_ids: set[str] = set()
+    for item in items:
+        if item.item_id in seen_ids:
+            continue
+        seen_ids.add(item.item_id)
+        unique_items.append(item)
+
     normalized = query.casefold().strip()
     if not normalized:
         return sorted(
-            items,
+            unique_items,
             key=lambda item: (-item.last_used, item.label.casefold(), item.item_id),
         )
 
     scored: list[tuple[int, SelectionItem]] = []
-    for item in items:
+    for item in unique_items:
         haystack = f"{item.label} {item.detail} {item.item_id}".casefold()
         score = _subsequence_score(haystack, normalized)
         if score is not None:
@@ -60,14 +68,28 @@ def choose_item(
     *,
     title: str,
     initial_query: str = "",
+    default_item_id: str | None = None,
     footer: str = "type filter · ↑↓ move · enter select · esc cancel",
 ) -> SelectionItem | None:
     """Select one item without adding a TUI dependency."""
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         matches = fuzzy_match(items, initial_query)
+        if default_item_id is not None:
+            default = next(
+                (item for item in matches if item.item_id == default_item_id), None
+            )
+            if default is not None:
+                return default
         return matches[0] if matches else None
-    return curses.wrapper(_picker, tuple(items), title, initial_query, footer)
+    return curses.wrapper(
+        _picker,
+        tuple(items),
+        title,
+        initial_query,
+        default_item_id,
+        footer,
+    )
 
 
 def _picker(
@@ -75,12 +97,21 @@ def _picker(
     items: tuple[SelectionItem, ...],
     title: str,
     initial_query: str,
+    default_item_id: str | None,
     footer: str,
 ) -> SelectionItem | None:
     curses.curs_set(0)
     screen.keypad(True)
     query = initial_query
-    selected = 0
+    initial_matches = fuzzy_match(items, initial_query)
+    selected = next(
+        (
+            index
+            for index, item in enumerate(initial_matches)
+            if item.item_id == default_item_id
+        ),
+        0,
+    )
 
     while True:
         matches = fuzzy_match(items, query)
@@ -95,8 +126,9 @@ def _picker(
         visible_rows = max(0, height - 4)
         for row, item in enumerate(matches[:visible_rows]):
             prefix = ">" if row == selected else " "
+            marker = "*" if item.item_id == default_item_id else " "
             detail = f" {item.detail}" if item.detail else ""
-            text = f"{prefix} {item.label}{detail}"
+            text = f"{prefix}{marker} {item.label}{detail}"
             screen.addnstr(row + 2, 0, text, max_width)
 
         if height > 0:

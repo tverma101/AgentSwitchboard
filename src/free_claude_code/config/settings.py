@@ -197,12 +197,20 @@ class Settings(BaseSettings):
     # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 
-    # Per-model overrides (optional, falls back to MODEL)
-    # Each can use a different provider
+    # Per-logical-tier overrides (optional, falls back to MODEL). These resolve
+    # a logical parent and can route child tiers independently when inheritance
+    # is disabled.
     model_fable: str | None = Field(default=None, validation_alias="MODEL_FABLE")
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+    # Claude Code may select a different logical model for a subagent. Keep
+    # that request on the parent route unless the user explicitly opts back
+    # into independent per-tier model routing.
+    subagent_model_inherit: bool = Field(
+        default=True,
+        validation_alias="FCC_SUBAGENT_MODEL_INHERIT",
+    )
 
     # ==================== User-defined OpenAI-compatible providers ====================
     # This JSON is validated into a launch-scoped registry before provider

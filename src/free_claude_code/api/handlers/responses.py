@@ -25,7 +25,7 @@ from free_claude_code.application.errors import ApplicationError, InvalidRequest
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import ProviderResolver
-from free_claude_code.application.routing import ModelRouter
+from free_claude_code.application.routing import ModelRouter, ParentRouteRegistry
 from free_claude_code.application.visual_capabilities import validate_visual_capability
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
@@ -57,11 +57,14 @@ class ResponsesHandler:
         model_info_resolver: ModelInfoResolver | None = None,
         generation_id: int | None = None,
         usage_store: UsageStore | None = None,
+        parent_route_registry: ParentRouteRegistry | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
         self._responses_adapter = responses_adapter or OpenAIResponsesAdapter()
         self._model_info_resolver = model_info_resolver
+        self._generation_id = generation_id
+        self._parent_route_registry = parent_route_registry
         self._provider_executor = provider_executor or ProviderExecutor(
             provider_resolver,
             generation_id=generation_id,
@@ -93,7 +96,24 @@ class ResponsesHandler:
                     update={"claude_session_id": claude_session_id}
                 )
             require_non_empty_messages(response_request.messages)
-            routed = self._model_router.resolve_messages_request(response_request)
+            parent_route = (
+                self._parent_route_registry.lookup(
+                    response_request.claude_session_id,
+                    generation_id=self._generation_id,
+                )
+                if self._parent_route_registry is not None
+                else None
+            )
+            routed = self._model_router.resolve_messages_request(
+                response_request,
+                parent_route=parent_route,
+            )
+            if self._parent_route_registry is not None:
+                self._parent_route_registry.remember(
+                    response_request.claude_session_id,
+                    routed.resolved,
+                    generation_id=self._generation_id,
+                )
             model_info = (
                 self._model_info_resolver(
                     routed.resolved.provider_id,

@@ -103,3 +103,31 @@ def test_session_cache_identity_does_not_perturb_stable_prefix_hash() -> None:
     second_semantic_body.pop("prompt_cache_key")
     assert first_semantic_body == second_semantic_body
     assert stable_prefix_hash(first_body) == stable_prefix_hash(second_body)
+
+
+def test_long_stable_cache_identity_is_hashed_to_provider_limit() -> None:
+    session_id = "workspace-" + "stable-session-" * 16
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "claude_session_id": session_id,
+            "messages": [{"role": "user", "content": "same turn"}],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    cache_key = body["prompt_cache_key"]
+    assert isinstance(cache_key, str)
+    assert len(cache_key) == 64
+    assert cache_key != session_id
+    assert session_id not in json.dumps(body)
+
+    repeat = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+    assert repeat["prompt_cache_key"] == cache_key

@@ -14,9 +14,10 @@ from free_claude_code.core.diagnostics import redact_sensitive_error_text
 from .content import (
     get_block_attr,
     get_block_type,
+    is_tool_search_metadata_block,
     normalize_tool_result_content,
 )
-from .models import Message, MessagesRequest
+from .models import Message, MessagesRequest, TokenCountRequest
 
 DEFAULT_TOOL_RESULT_MAX_BYTES = 16 * 1024
 MAX_TOOL_RESULT_MAX_BYTES = 1_000_000
@@ -93,6 +94,14 @@ class GovernedMessagesRequest:
     records: tuple[ContextGovernanceRecord, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class GovernedTokenCountRequest:
+    """A token-count request after the same governance as message ingress."""
+
+    request: TokenCountRequest
+    records: tuple[ContextGovernanceRecord, ...] = ()
+
+
 def govern_messages_request(
     request: MessagesRequest,
     config: ContextGovernorConfig,
@@ -104,8 +113,10 @@ def govern_messages_request(
     thinking/signature state, and structured JSON are never truncated. When
     ``preserve_media`` is enabled by the application route, media-containing
     results pass through unchanged so a vision model receives the original
-    image rather than a lossy excerpt. Other oversized structured values are
-    rejected explicitly so protocol state cannot be silently corrupted.
+    image rather than a lossy excerpt. When a result contains only direct text
+    and media blocks, oversized direct text is redirected while each media
+    block remains byte-for-byte unchanged. Other oversized structured values
+    are rejected explicitly so protocol state cannot be silently corrupted.
     """
 
     if not config.enabled:
@@ -134,6 +145,19 @@ def govern_messages_request(
             text = _text_only_content(content)
             if text is None:
                 if config.preserve_media and _contains_media_content(content):
+                    mixed_media = _govern_mixed_media_text(
+                        block,
+                        content,
+                        config=config,
+                    )
+                    if mixed_media is not None:
+                        replacement_content, record = mixed_media
+                        blocks.append(
+                            _copy_block_with_content(block, replacement_content)
+                        )
+                        records.append(record)
+                        message_changed = True
+                        continue
                     blocks.append(block)
                     continue
                 if _serialized_size(content) > config.tool_result_max_bytes:
@@ -201,6 +225,28 @@ def govern_messages_request(
     )
 
 
+def govern_token_count_request(
+    request: TokenCountRequest,
+    config: ContextGovernorConfig,
+) -> GovernedTokenCountRequest:
+    """Apply message-ingress governance before estimating client context.
+
+    Claude Code asks ``/count_tokens`` before sending the corresponding
+    ``/messages`` request. Running the same transformation at both boundaries
+    keeps the displayed context estimate aligned with what FCC actually
+    forwards, including redirected tool output and normalized MCP envelopes.
+    """
+
+    message_request = MessagesRequest.model_validate(request.model_dump(mode="python"))
+    governed = govern_messages_request(message_request, config)
+    if governed.request is message_request:
+        return GovernedTokenCountRequest(request)
+    return GovernedTokenCountRequest(
+        request=request.model_copy(update={"messages": governed.request.messages}),
+        records=governed.records,
+    )
+
+
 def _text_only_content(content: object) -> str | None:
     if isinstance(content, str):
         return content
@@ -218,6 +264,95 @@ def _text_only_content(content: object) -> str | None:
 
 
 _MEDIA_BLOCK_TYPES = frozenset({"audio", "document", "image", "video"})
+
+
+def _govern_mixed_media_text(
+    block: object,
+    content: object,
+    *,
+    config: ContextGovernorConfig,
+) -> tuple[list[object], ContextGovernanceRecord] | None:
+    """Bound direct text in a media result while preserving media blocks.
+
+    Computer Use results commonly contain both an accessibility/text
+    observation and a complete screenshot.  Treating that whole result as
+    opaque protects the screenshot but lets an unexpectedly large text
+    observation consume the session budget.  This narrow transformation only
+    applies when every non-text item is a media or tool-search metadata block;
+    arbitrary structured results retain the existing fail-closed behavior.
+    """
+
+    if not isinstance(content, list):
+        return None
+
+    text_parts: list[str] = []
+    first_text_index: int | None = None
+    for index, item in enumerate(content):
+        item_type = get_block_type(item)
+        if item_type == "text":
+            text = get_block_attr(item, "text")
+            if not isinstance(text, str):
+                return None
+            if first_text_index is None:
+                first_text_index = index
+            text_parts.append(text)
+            continue
+        if (
+            isinstance(item_type, str) and item_type in _MEDIA_BLOCK_TYPES
+        ) or is_tool_search_metadata_block(item):
+            continue
+        return None
+
+    if first_text_index is None:
+        return None
+    text = "".join(text_parts)
+    original_bytes = len(text.encode("utf-8"))
+    if original_bytes <= config.tool_result_max_bytes:
+        return None
+
+    artifact_text = redact_sensitive_error_text(text)
+    artifact_path, artifact_sha256 = _write_artifact(
+        artifact_text,
+        artifact_dir=config.artifact_dir,
+    )
+    replacement = _redirected_text(
+        artifact_text,
+        original_bytes=original_bytes,
+        original_tokens=_estimated_tokens(text),
+        artifact_path=artifact_path,
+        artifact_sha256=artifact_sha256,
+        max_bytes=config.tool_result_max_bytes,
+    )
+
+    replacement_content: list[object] = []
+    replacement_inserted = False
+    for index, item in enumerate(content):
+        if get_block_type(item) != "text":
+            replacement_content.append(item)
+            continue
+        if replacement_inserted:
+            continue
+        if index != first_text_index:
+            return None
+        replacement_content.append(_copy_text_block(item, replacement))
+        replacement_inserted = True
+
+    visible_bytes = len(replacement.encode("utf-8"))
+    record = ContextGovernanceRecord(
+        tool_use_id=str(get_block_attr(block, "tool_use_id", "unknown")),
+        original_bytes=original_bytes,
+        visible_bytes=visible_bytes,
+        original_tokens=_estimated_tokens(text),
+        visible_tokens=_estimated_tokens(replacement),
+        original_lines=_estimated_lines(text),
+        visible_lines=_estimated_lines(replacement),
+        reduction_ratio=round(1 - (visible_bytes / max(1, original_bytes)), 6),
+        artifact_path=artifact_path,
+        artifact_sha256=artifact_sha256,
+        pressure_mode="mixed_media_text_redirected",
+        semantic_verification="text_only_preserved_media",
+    )
+    return replacement_content, record
 
 
 def _contains_media_content(value: object) -> bool:
@@ -391,6 +526,18 @@ def _copy_block_with_content(block: object, content: Any) -> object:
         return {**block, "content": content}
     raise ContextGovernanceError(
         "FCC encountered an unsupported tool-result block and will not truncate it"
+    )
+
+
+def _copy_text_block(block: object, text: str) -> object:
+    """Copy one direct text block without changing its protocol metadata."""
+    model_copy = getattr(block, "model_copy", None)
+    if callable(model_copy):
+        return model_copy(update={"text": text})
+    if isinstance(block, dict):
+        return {**block, "text": text}
+    raise ContextGovernanceError(
+        "FCC encountered an unsupported text block and will not truncate it"
     )
 
 

@@ -64,10 +64,18 @@ class OpenAICodexProvider(BaseProvider):
         auth: OpenAIAuthManager,
         admission: ProviderAdmissionController,
         client: httpx.AsyncClient | None = None,
+        supports_explicit_prompt_cache_breakpoints: bool = False,
     ) -> None:
         super().__init__(config)
         self._auth = auth
         self._admission = admission
+        # This is an adapter capability, not a model-name heuristic. It is
+        # injectable so a compatible backend can opt into the field after it is
+        # verified to accept the GPT-5.6 request shape. The private Codex
+        # endpoint currently defaults to the conservative disabled path.
+        self._supports_explicit_prompt_cache_breakpoints = (
+            supports_explicit_prompt_cache_breakpoints
+        )
         self._client_headers = {
             "User-Agent": f"{OPENAI_CODEX_ORIGINATOR}/{FCC_VERSION}",
             "originator": OPENAI_CODEX_ORIGINATOR,
@@ -143,16 +151,23 @@ class OpenAICodexProvider(BaseProvider):
             request_id=request_id,
             response_model=response_model or request.model,
             tool_names=tool_names,
+            reasoning=reasoning,
         )
 
-    @staticmethod
     def _build_body(
+        self,
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
     ) -> dict[str, Any]:
         try:
-            body = build_responses_provider_request(request, reasoning=reasoning)
+            body = build_responses_provider_request(
+                request,
+                reasoning=reasoning,
+                explicit_prompt_cache_breakpoint=(
+                    self._supports_explicit_prompt_cache_breakpoints
+                ),
+            )
         except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
         # The private Codex backend rejects these public Responses fields.
@@ -169,12 +184,14 @@ class OpenAICodexProvider(BaseProvider):
         request_id: str | None,
         response_model: str,
         tool_names: OpenAIToolNameCodec,
+        reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
         retry_session = self._admission.new_retry_session(request_id=request_id)
         recovery = RecoveryController()
         message_id = f"msg_{uuid.uuid4()}"
         session_id = str(uuid.uuid4())
         authentication_recovered = False
+        prompt_cache_breakpoint_fallback_used = False
         trace_event(
             stage="provider",
             event="provider.request.sent",
@@ -194,6 +211,7 @@ class OpenAICodexProvider(BaseProvider):
                 input_tokens=input_tokens,
                 log_raw_events=self._config.log_raw_sse_events,
                 tool_names=tool_names,
+                reasoning=reasoning,
             )
             for event in stream.start():
                 for held in recovery.push(event):
@@ -274,6 +292,32 @@ class OpenAICodexProvider(BaseProvider):
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as raw_error:
+                if (
+                    attempt is not None
+                    and not attempt.accepted
+                    and not stream_opened
+                    and not prompt_cache_breakpoint_fallback_used
+                    and _is_prompt_cache_breakpoint_rejection(raw_error)
+                ):
+                    # Some private Codex-compatible endpoints advertise a
+                    # GPT-5.6 model but still reject the public explicit
+                    # breakpoint field. Correct the request shape once, then
+                    # remember the process-local capability downgrade so all
+                    # subsequent requests avoid a predictable 400.
+                    prompt_cache_breakpoint_fallback_used = True
+                    self._supports_explicit_prompt_cache_breakpoints = False
+                    body = _body_without_prompt_cache_breakpoint(body)
+                    await attempt.retry_immediately()
+                    recovery.discard()
+                    trace_event(
+                        stage="provider",
+                        event="provider.prompt_cache_breakpoint.fallback",
+                        source="provider",
+                        provider="openai",
+                        request_id=request_id,
+                        gateway_model=response_model,
+                    )
+                    continue
                 error = _effective_error(raw_error)
                 if attempt is not None and not attempt.accepted:
                     await attempt.retry(error)
@@ -416,6 +460,88 @@ def _auth_headers(access: OpenAIAccess) -> dict[str, str]:
     if access.fedramp:
         headers["X-OpenAI-Fedramp"] = "true"
     return headers
+
+
+def _is_prompt_cache_breakpoint_rejection(error: Exception) -> bool:
+    """Return whether an HTTP 400 specifically rejects the cache breakpoint."""
+
+    if (
+        not isinstance(error, httpx.HTTPStatusError)
+        or error.response.status_code != 400
+    ):
+        return False
+    body_text = extract_upstream_error_detail(error).body_text
+    if not body_text:
+        return False
+    try:
+        payload = json.loads(body_text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    provider_error = payload.get("error")
+    if not isinstance(provider_error, dict):
+        return False
+    if provider_error.get("param") != "prompt_cache_breakpoint":
+        return False
+    code = provider_error.get("code")
+    if isinstance(code, str) and code.casefold() in {
+        "invalid_parameter",
+        "unsupported_parameter",
+    }:
+        return True
+    message = provider_error.get("message")
+    if not isinstance(message, str):
+        return False
+    normalized = message.casefold()
+    return "prompt_cache_breakpoint" in normalized and "not supported" in normalized
+
+
+def _body_without_prompt_cache_breakpoint(body: dict[str, Any]) -> dict[str, Any]:
+    """Restore the pre-breakpoint request shape without mutating ``body``."""
+
+    cleaned = _copy_without_prompt_cache_breakpoint(body)
+    if not isinstance(cleaned, dict):
+        return dict(body)
+
+    input_items = cleaned.get("input")
+    if not isinstance(input_items, list) or not input_items:
+        return cleaned
+    first_item = input_items[0]
+    if not isinstance(first_item, dict) or first_item.get("role") != "developer":
+        return cleaned
+
+    content = first_item.get("content")
+    instruction_parts: list[str] = []
+    if isinstance(content, str):
+        instruction_parts.append(content)
+    elif isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "input_text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                instruction_parts.append(text)
+    if not instruction_parts:
+        return cleaned
+
+    cleaned["instructions"] = "\n\n".join(instruction_parts)
+    cleaned["input"] = input_items[1:]
+    return cleaned
+
+
+def _copy_without_prompt_cache_breakpoint(value: Any) -> Any:
+    """Recursively copy JSON-like request data while removing one field."""
+
+    if isinstance(value, dict):
+        return {
+            key: _copy_without_prompt_cache_breakpoint(item)
+            for key, item in value.items()
+            if key != "prompt_cache_breakpoint"
+        }
+    if isinstance(value, list):
+        return [_copy_without_prompt_cache_breakpoint(item) for item in value]
+    return value
 
 
 def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:

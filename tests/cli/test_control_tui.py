@@ -4,6 +4,7 @@ The ``App.run_test()`` / Pilot pattern is adapted from Harlequin's functional
 TUI tests at commit fcfaa6c524a6cd47e17701d931eac0243c8c85b6.
 """
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -43,6 +44,15 @@ async def test_control_tui_mounts_persistent_navigation_shell() -> None:
             "free_claude_code.cli.harlequin_app_base.load_theme",
             return_value="harlequin",
         ),
+        patch(
+            "free_claude_code.cli.control_tui.repository_from_path",
+            return_value=RepoEntry(
+                "checkout",
+                "/workspace/checkout",
+                "main",
+                "acme/service",
+            ),
+        ),
     ):
         app = ControlCenterApp(_settings(), supervisor=None)
         async with app.run_test() as pilot:
@@ -57,7 +67,7 @@ async def test_control_tui_mounts_persistent_navigation_shell() -> None:
             dashboard = str(app.query_one(".dashboard-card", Static).content)
             assert "OpenAI / ChatGPT  fcc@example.com" in dashboard
             assert "FCC Account" not in dashboard
-            assert "Repository   (current directory) " in dashboard
+            assert "Repository   acme/service · /workspace/checkout" in dashboard
 
 
 @pytest.mark.asyncio
@@ -187,7 +197,6 @@ async def test_browser_login_waits_for_real_connected_state() -> None:
 
 @pytest.mark.asyncio
 async def test_repo_navigation_never_uses_nested_input_prompts() -> None:
-    app = ControlCenterApp(_settings(), supervisor=None)
     with (
         patch(
             "free_claude_code.cli.control_tui.fcc_provider_account_summary",
@@ -198,27 +207,29 @@ async def test_repo_navigation_never_uses_nested_input_prompts() -> None:
             return_value="not connected",
         ),
         patch(
-            "free_claude_code.cli.control_tui.github_authenticated_user",
-            return_value="tverma101",
+            "free_claude_code.cli.control_tui.repository_from_path",
+            return_value=None,
         ),
         patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
         patch("free_claude_code.cli.control_tui.discover_repos", return_value=[]),
         patch("free_claude_code.cli.control_tui.save_cached_repos"),
         patch(
             "builtins.input", side_effect=AssertionError("TUI must not call input()")
         ),
     ):
+        app = ControlCenterApp(_settings(), supervisor=None)
         async with app.run_test() as pilot:
             await app._show_page("repos")
             await pilot.pause()
             table = app.query_one("#table", DataTable)
             assert table.row_count == 0
+            assert app.query_one("#repo-open")
             assert app.query_one("#repo-refresh")
 
 
 @pytest.mark.asyncio
 async def test_repo_refresh_replaces_actions_without_duplicate_widget_ids() -> None:
-    app = ControlCenterApp(_settings(), supervisor=None)
     with (
         patch(
             "free_claude_code.cli.control_tui.fcc_provider_account_summary",
@@ -229,29 +240,39 @@ async def test_repo_refresh_replaces_actions_without_duplicate_widget_ids() -> N
             return_value="not connected",
         ),
         patch(
-            "free_claude_code.cli.control_tui.github_authenticated_user",
-            return_value="tverma101",
+            "free_claude_code.cli.control_tui.repository_from_path",
+            return_value=None,
         ),
         patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
-        patch("free_claude_code.cli.control_tui.discover_repos", return_value=[]),
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
+        patch(
+            "free_claude_code.cli.control_tui.discover_repos", return_value=[]
+        ) as discover,
         patch("free_claude_code.cli.control_tui.save_cached_repos"),
         patch(
             "free_claude_code.cli.control_tui.get_models",
             return_value={"models": []},
         ),
     ):
+        app = ControlCenterApp(_settings(), supervisor=None)
         async with app.run_test() as pilot:
             await app._show_page("repos")
             await app._show_page("models")
             await app._show_page("repos", force=True)
             await pilot.pause()
+            assert discover.call_count == 1
+
+            await app.repo_refresh()
+            await pilot.pause()
+            assert discover.call_count == 2
 
             assert len(app.query("#repo-select")) == 1
+            assert len(app.query("#repo-open")) == 1
             assert len(app.query("#repo-refresh")) == 1
 
 
 @pytest.mark.asyncio
-async def test_repositories_page_uses_live_authenticated_inventory() -> None:
+async def test_repositories_page_uses_live_local_inventory() -> None:
     app = ControlCenterApp(_settings(), supervisor=None)
     repo = RepoEntry(
         "Harness",
@@ -268,11 +289,8 @@ async def test_repositories_page_uses_live_authenticated_inventory() -> None:
             "free_claude_code.cli.control_tui.codex_accounts.active_account_summary",
             return_value="not connected",
         ),
-        patch(
-            "free_claude_code.cli.control_tui.github_authenticated_user",
-            return_value="tverma101",
-        ),
         patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
         patch(
             "free_claude_code.cli.control_tui.discover_repos",
             return_value=[repo],
@@ -286,27 +304,51 @@ async def test_repositories_page_uses_live_authenticated_inventory() -> None:
             table = app.query_one("#table", DataTable)
             assert table.row_count == 1
             assert table.get_row(repo.path) == [
-                "Harness",
                 "tverma101/AgentSwitchBoard",
+                "● Harness",
                 "main",
                 repo.display_path,
             ]
-            assert "Live local GitHub repositories for tverma101" in str(
+            assert "Local Git repositories (1 found)" in str(
                 app.query_one("#summary", Static).content
             )
-            discover.assert_called_once_with((), github_user="tverma101")
+            discover.assert_called_once_with(())
 
 
 @pytest.mark.asyncio
-async def test_repositories_page_fails_closed_without_authenticated_github_user() -> (
+async def test_repositories_page_uses_fresh_cache_without_scanning() -> None:
+    repo = RepoEntry(
+        "Harness",
+        "/Users/tejas/Documents/ChatGPT/Harness",
+        "main",
+        "tverma101/AgentSwitchBoard",
+    )
+    app = ControlCenterApp(_settings(), supervisor=None)
+    with (
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=True),
+        patch(
+            "free_claude_code.cli.control_tui.load_cached_repos",
+            return_value=[repo],
+        ) as load,
+        patch("free_claude_code.cli.control_tui.discover_repos") as discover,
+        patch("free_claude_code.cli.control_tui.save_cached_repos") as save,
+    ):
+        async with app.run_test() as pilot:
+            await app._show_page("repos")
+            await pilot.pause()
+            await app._show_page("repos", force=True)
+            await pilot.pause()
+
+    load.assert_called_once()
+    discover.assert_not_called()
+    save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_repositories_page_accepts_local_checkout_without_github_authentication() -> (
     None
 ):
-    repo = RepoEntry(
-        "stale",
-        "/Users/tejas/Documents/stale",
-        "main",
-        "tverma101/stale",
-    )
+    repo = RepoEntry("local-checkout", "/tmp/local-checkout", "main", "")
     app = ControlCenterApp(_settings(), supervisor=None, selected_repo=repo)
     with (
         patch(
@@ -317,12 +359,11 @@ async def test_repositories_page_fails_closed_without_authenticated_github_user(
             "free_claude_code.cli.control_tui.codex_accounts.active_account_summary",
             return_value="not connected",
         ),
-        patch(
-            "free_claude_code.cli.control_tui.github_authenticated_user",
-            return_value=None,
-        ),
+        patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
         patch(
             "free_claude_code.cli.control_tui.discover_repos",
+            return_value=[repo],
         ) as discover,
         patch("free_claude_code.cli.control_tui.save_cached_repos") as save,
     ):
@@ -330,12 +371,120 @@ async def test_repositories_page_fails_closed_without_authenticated_github_user(
             await app._show_page("repos")
             await pilot.pause()
 
-            assert app.query_one("#table", DataTable).row_count == 0
-            assert "gh auth login" in str(app.query_one("#summary", Static).content)
-            assert app.selected_repo is None
+            table = app.query_one("#table", DataTable)
+            canonical_path = str(Path(repo.path).resolve())
+            assert table.get_row(canonical_path) == [
+                "local-checkout",
+                "● local-checkout",
+                "main",
+                canonical_path,
+            ]
+            assert app.selected_repo is not None
+            assert app.selected_repo.path == canonical_path
 
-    discover.assert_not_called()
-    save.assert_not_called()
+    discover.assert_called_once_with(())
+    save.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repository_page_deduplicates_rows_and_restores_default_cursor() -> None:
+    first = RepoEntry("first", "/tmp/first", "main", "acme/service")
+    selected = RepoEntry("second", "/tmp/second", "feature/ui", "acme/service")
+    app = ControlCenterApp(_settings(), supervisor=None, selected_repo=selected)
+    with (
+        patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
+        patch(
+            "free_claude_code.cli.control_tui.discover_repos",
+            return_value=[selected, first, selected],
+        ),
+        patch("free_claude_code.cli.control_tui.save_cached_repos"),
+    ):
+        async with app.run_test() as pilot:
+            await app._show_page("repos")
+            await pilot.pause()
+
+            table = app.query_one("#table", DataTable)
+            assert table.row_count == 2
+            assert table.cursor_row == 1
+            assert table.get_row(str(Path(selected.path).resolve()))[1] == "● second"
+
+
+@pytest.mark.asyncio
+async def test_repository_page_refreshes_selected_metadata_for_same_checkout() -> None:
+    stale = RepoEntry("checkout", "/tmp/checkout", "old", "acme/old")
+    fresh = RepoEntry("checkout", "/tmp/checkout", "feature/ui", "acme/service")
+    app = ControlCenterApp(_settings(), supervisor=None, selected_repo=stale)
+    with (
+        patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
+        patch(
+            "free_claude_code.cli.control_tui.discover_repos",
+            return_value=[fresh],
+        ),
+        patch("free_claude_code.cli.control_tui.save_cached_repos"),
+    ):
+        async with app.run_test() as pilot:
+            await app._show_page("repos")
+            await pilot.pause()
+
+            assert app.selected_repo is not None
+            assert app.selected_repo.path == str(Path(fresh.path).resolve())
+            assert app.selected_repo.branch == "feature/ui"
+            assert (
+                app.query_one("#table", DataTable).get_row(
+                    str(Path(fresh.path).resolve())
+                )[0]
+                == "acme/service"
+            )
+
+
+@pytest.mark.asyncio
+async def test_open_repo_path_selects_a_local_checkout() -> None:
+    repo = RepoEntry("external", "/tmp/external", "main", "gitlab.com/acme/external")
+    app = ControlCenterApp(_settings(), supervisor=None, selected_repo=repo)
+    with (
+        patch(
+            "free_claude_code.cli.control_tui.repository_from_path",
+            return_value=repo,
+        ) as from_path,
+        patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
+        patch(
+            "free_claude_code.cli.control_tui.discover_repos",
+            return_value=[repo],
+        ),
+        patch("free_claude_code.cli.control_tui.save_cached_repos"),
+    ):
+        async with app.run_test() as pilot:
+            await app._open_repo_path("~/external")
+            await pilot.pause()
+
+            assert app.selected_repo is not None
+            assert app.selected_repo.identity == repo.identity
+            assert (
+                app.query_one("#table", DataTable).get_row(
+                    str(Path(repo.path).resolve())
+                )[1]
+                == "● external"
+            )
+
+    from_path.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_open_repo_path_keeps_invalid_path_unselected() -> None:
+    with patch(
+        "free_claude_code.cli.control_tui.repository_from_path",
+        return_value=None,
+    ) as from_path:
+        app = ControlCenterApp(_settings(), supervisor=None, selected_repo=None)
+        async with app.run_test() as pilot:
+            await app._open_repo_path("~/not-a-repository")
+            await pilot.pause()
+
+    from_path.assert_called()
+    assert app.selected_repo is None
 
 
 @pytest.mark.asyncio

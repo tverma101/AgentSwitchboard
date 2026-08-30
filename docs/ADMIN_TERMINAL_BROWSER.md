@@ -41,12 +41,16 @@ The discovery response is reused while filtering or searching, so typing does
 not issue a provider request for every key. Use `Refresh` to explicitly fetch a
 new discovery snapshot.
 
-Repository rows are rebuilt from live local Git roots and GitHub remotes owned by
-the currently authenticated `gh` account; stale or fabricated cache display data
-is ignored. If that account cannot be verified, the page shows no repositories
-and tells the user to run `gh auth login`. Repository and profile selection is
-local-only: it applies to the next child launch and does not change a live
-server/session namespace. Locked Admin fields remain read-only. Provider,
+The Repositories page pairs each remote identity with its local checkout folder;
+branch and home-relative path details are available in the same table. The first
+load uses the fresh local repository cache when available, while `Refresh` forces
+a live scan of the configured roots. Remote metadata is shown when available, but
+a GitHub CLI login is not required. The current working directory is selected by
+default, the selected folder is marked and restored after refresh, and `Open path`
+adds a checkout outside the standard scan roots.
+Repository and profile selection is local-only: it applies to the next child
+launch and does not change a live server/session namespace. Locked Admin fields
+remain read-only. Provider,
 account, usage, diagnostics, policy, logs, and settings actions report failures
 in the page summary and an error notification instead of silently flashing away.
 The command palette's theme selection is persisted in

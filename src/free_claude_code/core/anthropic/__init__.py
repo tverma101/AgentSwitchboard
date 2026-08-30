@@ -76,6 +76,7 @@ from .streaming import (
 from .thinking import ContentChunk, ContentType, ThinkTagParser
 from .tokens import get_token_count
 from .tools import HeuristicToolParser
+from .usage import reconcile_input_usage
 from .utils import set_if_not_none
 
 __all__ = [
@@ -138,6 +139,7 @@ __all__ = [
     "map_stop_reason",
     "normalize_tool_result_content",
     "read_context_artifact_slice",
+    "reconcile_input_usage",
     "serialize_tool_result_content",
     "set_if_not_none",
     "tool_result_media_block_types",

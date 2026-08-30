@@ -60,10 +60,27 @@ Check `src/free_claude_code/config/provider_catalog.py` and
 ID and native protocol manifest. Unknown OpenCode Go model protocols fail closed
 instead of probing another endpoint.
 
+## Provider reports that the model is unavailable
+
+FCC treats an upstream `Model is unavailable` response as a non-retryable
+route problem rather than repeatedly retrying the same request. Select a
+currently available provider/model pair in the FCC Models view, save the
+profile, restart `fcc-server`, and start a new Claude session. Check the
+effective `MODEL` and per-alias model settings in `~/.fcc/.env`; blank alias
+overrides intentionally inherit the base `MODEL`, so every Claude alias can
+fail together when that base model is unavailable. The error's request ID is
+safe to include when inspecting the matching local server receipt.
+
 ## Compact or resume fails
 
 Keep the client context cap within the supported range and retry with a normal
-multi-turn conversation. A single huge message is not a valid compaction proof;
+multi-turn conversation. FCC launches Claude with an explicit auto-compact
+window and a 75% default threshold, while removing inherited `DISABLE_COMPACT`
+and `DISABLE_AUTO_COMPACT`, plus the legacy unknown-model wait override.
+Provider completion receipts are reconciled to the same governed input estimate
+including cache-read and cache-write buckets. Restart `fcc-claude` after
+changing the launcher or environment; an already-running Claude process cannot inherit
+the corrected boundary. A single huge message is not a valid compaction proof;
 Claude requires enough distinct conversation groups before `/compact` can run.
 The release receipt requires an actual compact success/boundary event and a
 continuation marker. The global context policy is advisory, while the launcher
@@ -86,3 +103,19 @@ command -v fcc-server fccdanger fcc-claude
 
 If an old executable is selected, refresh the editable uv tool installation and
 verify the resolved command path before testing again.
+
+### A subagent appears to use the wrong model
+
+FCC defaults to `FCC_SUBAGENT_MODEL_INHERIT=true`. It records the first
+resolved route for a stable Claude session and applies that route to later
+logical child-model requests. Confirm that the client sends one of the
+supported session headers (`anthropic-session-id`, `x-anthropic-session-id`,
+`claude-session-id`, `x-claude-session-id`, or
+`x-claude-code-session-id`). Without a session header there is no safe way to
+identify the parent, so the request uses the normal `MODEL_*` tier mapping (or
+`MODEL` when that tier is unset).
+
+If independent child-tier routing is intentional, set
+`FCC_SUBAGENT_MODEL_INHERIT=false` and configure the relevant `MODEL_*` value.
+Restart FCC after changing this setting because it is captured per provider
+generation.

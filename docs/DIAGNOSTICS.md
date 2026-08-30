@@ -69,7 +69,33 @@ making an otherwise identical native/AgentSwitchboard envelope appear different.
 Responses cache affinity is conservative and metadata-only. A normalized
 opaque caller key or persistent client session header may be forwarded when it
 passes the identifier guard; prompt text, paths, timestamps, secrets, and
-request-shaped identifiers are rejected. This is a source-level invariant,
-not a native-vs-AgentSwitchboard economic result: no cache-key promotion or parity claim
-is made without comparable live receipts containing cache read/write, uncached
-input, cost, TTFT, and retry evidence.
+request-shaped identifiers are rejected. Keys longer than the provider's
+64-character limit are deterministically domain-hashed after validation, so a
+stable workspace/session identity keeps its affinity without making an invalid
+request. This is a source-level invariant, not a native-vs-AgentSwitchboard
+economic result: no cache-key promotion or parity claim is made without
+comparable live receipts containing cache read/write, uncached input, cost,
+TTFT, and retry evidence.
+
+The OpenAI Codex adapter also marks the end of its collected system prefix with
+the GPT-5.6 `prompt_cache_breakpoint` content-block field. It moves that prefix
+from top-level `instructions` into a developer input message only when the
+adapter capability is enabled; generic Responses callers and other providers
+keep the existing shape. The capability is injectable so an endpoint that has
+not verified this request field can disable it; the private Codex adapter keeps
+it disabled by default until a live endpoint check proves support. The private
+Codex path does not send `prompt_cache_options`, because the breakpoint-only
+shape is the smallest compatible request and the option is not required for
+cache reuse. A breakpoint and cache key are still only hints: the provider's
+cache-read/write counters
+remain the acceptance evidence, and compaction or upstream routing can reduce
+reuse.
+
+If the configured Codex-compatible endpoint explicitly rejects
+`prompt_cache_breakpoint`, the adapter performs one bounded request-shape
+correction: it removes the breakpoint, restores the previously accepted
+top-level `instructions` form, and records a process-local capability
+downgrade. It does not retry unrelated HTTP 400 responses or loop on the same
+unsupported field. This preserves availability, but a successful fallback is
+not evidence of an explicit cache hit; only upstream cache usage counters can
+establish that result.

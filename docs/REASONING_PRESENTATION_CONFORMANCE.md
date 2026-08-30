@@ -18,6 +18,12 @@ human-readable, or that an Anthropic thinking block proves raw chain-of-thought
 was returned. If a provider emits opaque state only, preserve it only when
 required for continuation and do not fabricate visible text.
 
+Responses summaries may arrive as incremental deltas, completed text events,
+summary-part events, or a final reasoning item snapshot. The adapter must
+normalize those shapes by item and part identity, reconcile final snapshots
+without duplicate emission, and preserve a non-empty final summary rather than
+treating the stream as empty. Opaque-only reasoning remains redacted.
+
 ## Muse contract
 
 For each supported effort record requested/effective effort, reasoning-token

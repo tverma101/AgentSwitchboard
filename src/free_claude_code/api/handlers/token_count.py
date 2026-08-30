@@ -9,9 +9,13 @@ from free_claude_code.api.request_errors import (
     require_non_empty_messages,
 )
 from free_claude_code.api.request_ids import new_request_id
-from free_claude_code.application.errors import ApplicationError
+from free_claude_code.application.context_governance import (
+    ContextGovernanceError,
+    apply_context_governor_to_token_count,
+)
+from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import TokenCounter
-from free_claude_code.application.routing import ModelRouter
+from free_claude_code.application.routing import ModelRouter, ParentRouteRegistry
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     TokenCountRequest,
@@ -32,22 +36,51 @@ class TokenCountHandler:
         *,
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
+        generation_id: int | None = None,
+        parent_route_registry: ParentRouteRegistry | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
+        self._generation_id = generation_id
+        self._parent_route_registry = parent_route_registry
 
     def count(
         self, request_data: TokenCountRequest, *, request_id: str | None = None
     ) -> TokenCountResponse:
-        """Count tokens for a request after applying configured model routing."""
+        """Count tokens for a request after applying configured model routing.
+
+        Token counting is a read-only side query. It may consume an already
+        established parent route, but it must never establish or mutate parent
+        affinity itself; otherwise a preflight arriving before the real parent
+        request can poison all later child routing for the session.
+        """
         request_id = request_id or new_request_id()
         with logger.contextualize(request_id=request_id):
             try:
                 require_non_empty_messages(request_data.messages)
-                routed = self._model_router.resolve_token_count_request(request_data)
+                parent_route = (
+                    self._parent_route_registry.lookup(
+                        request_data.claude_session_id,
+                        generation_id=self._generation_id,
+                    )
+                    if self._parent_route_registry is not None
+                    else None
+                )
+                routed = self._model_router.resolve_token_count_request(
+                    request_data,
+                    parent_route=parent_route,
+                )
+                governed_request = apply_context_governor_to_token_count(
+                    routed.request,
+                    self._settings,
+                    request_id=request_id,
+                    preserve_media=self._settings.context_governor_preserve_media,
+                )
                 tokens = self._token_counter(
-                    routed.request.messages, routed.request.system, routed.request.tools
+                    governed_request.messages,
+                    governed_request.system,
+                    governed_request.tools,
                 )
                 trace_event(
                     stage="routing",
@@ -60,18 +93,20 @@ class TokenCountHandler:
                     provider_model_ref=routed.resolved.provider_model_ref,
                     gateway_model=routed.resolved.original_model,
                 )
-                request_snapshot = anthropic_request_snapshot(routed.request)
+                request_snapshot = anthropic_request_snapshot(governed_request)
                 request_snapshot["model"] = routed.resolved.original_model
                 trace_event(
                     stage="ingress",
                     event="free_claude_code.api.count_tokens.completed",
                     source="api",
                     request_id=request_id,
-                    message_count=len(routed.request.messages),
+                    message_count=len(governed_request.messages),
                     input_tokens=tokens,
                     snapshot=request_snapshot,
                 )
                 return TokenCountResponse(input_tokens=tokens)
+            except ContextGovernanceError as exc:
+                raise InvalidRequestError(str(exc)) from exc
             except ApplicationError:
                 raise
             except Exception as exc:
