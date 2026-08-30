@@ -1,6 +1,6 @@
 from free_claude_code.cli import control_tui
 
-import pytest
+pytest = __import__("pytest")
 
 
 _CWD_SENSITIVE_REPO_TESTS = frozenset(
@@ -12,10 +12,7 @@ _CWD_SENSITIVE_REPO_TESTS = frozenset(
 
 
 @pytest.fixture(autouse=True)
-def deterministic_control_tui_repo_context(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def deterministic_control_tui_repo_context(request, monkeypatch) -> None:
     """Keep mocked repository-inventory tests independent of the runner checkout.
 
     ``ControlCenterApp`` intentionally defaults to the repository containing the
