@@ -3,6 +3,7 @@
 import curses
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 
 
@@ -73,7 +74,7 @@ def choose_item(
 ) -> SelectionItem | None:
     """Select one item without adding a TUI dependency."""
 
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
+    if not _terminal_is_interactive():
         matches = fuzzy_match(items, initial_query)
         if default_item_id is not None:
             default = next(
@@ -92,6 +93,15 @@ def choose_item(
     )
 
 
+def _terminal_is_interactive() -> bool:
+    """Return whether both terminal streams can safely support curses."""
+
+    try:
+        return bool(sys.stdin.isatty()) and bool(sys.stdout.isatty())
+    except Exception:
+        return False
+
+
 def _picker(
     screen: curses.window,
     items: tuple[SelectionItem, ...],
@@ -100,7 +110,8 @@ def _picker(
     default_item_id: str | None,
     footer: str,
 ) -> SelectionItem | None:
-    curses.curs_set(0)
+    with suppress(curses.error):
+        curses.curs_set(0)
     screen.keypad(True)
     query = initial_query
     initial_matches = fuzzy_match(items, initial_query)
@@ -112,6 +123,7 @@ def _picker(
         ),
         0,
     )
+    top = 0
 
     while True:
         matches = fuzzy_match(items, query)
@@ -119,20 +131,29 @@ def _picker(
         screen.erase()
         height, width = screen.getmaxyx()
         max_width = max(1, width - 1)
-        screen.addnstr(0, 0, title, max_width)
+        _safe_addnstr(screen, 0, 0, title, max_width)
         if height > 1:
-            screen.addnstr(1, 0, f"> {query}", max_width)
+            _safe_addnstr(screen, 1, 0, f"> {query}", max_width)
 
         visible_rows = max(0, height - 4)
-        for row, item in enumerate(matches[:visible_rows]):
-            prefix = ">" if row == selected else " "
+        if visible_rows:
+            top = max(0, min(top, max(0, len(matches) - visible_rows)))
+            if selected < top:
+                top = selected
+            elif selected >= top + visible_rows:
+                top = selected - visible_rows + 1
+        else:
+            top = 0
+        for row, item in enumerate(matches[top : top + visible_rows]):
+            actual_index = top + row
+            prefix = ">" if actual_index == selected else " "
             marker = "*" if item.item_id == default_item_id else " "
             detail = f" {item.detail}" if item.detail else ""
             text = f"{prefix}{marker} {item.label}{detail}"
-            screen.addnstr(row + 2, 0, text, max_width)
+            _safe_addnstr(screen, row + 2, 0, text, max_width)
 
         if height > 0:
-            screen.addnstr(height - 1, 0, footer, max_width)
+            _safe_addnstr(screen, height - 1, 0, footer, max_width)
         screen.refresh()
 
         key = screen.get_wch()
@@ -146,10 +167,23 @@ def _picker(
         if key == curses.KEY_DOWN:
             selected = min(max(0, len(matches) - 1), selected + 1)
             continue
+        if key == curses.KEY_RESIZE:
+            continue
         if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
             query = query[:-1]
             selected = 0
+            top = 0
             continue
         if isinstance(key, str) and key.isprintable():
             query += key
             selected = 0
+            top = 0
+
+
+def _safe_addnstr(
+    screen: curses.window, row: int, column: int, text: str, width: int
+) -> None:
+    """Render one bounded line without crashing on a narrow/resized terminal."""
+
+    with suppress(curses.error):
+        screen.addnstr(row, column, text, width)

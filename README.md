@@ -37,7 +37,7 @@ terminal-browser presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.62.4`; examples below describe this checkout, not every feature proposed in
+`4.62.5`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;

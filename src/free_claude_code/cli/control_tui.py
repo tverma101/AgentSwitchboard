@@ -84,7 +84,9 @@ from .repo_picker import (
     deduplicate_repos,
     default_roots,
     discover_repos,
+    github_authenticated_user,
     load_cached_repos,
+    mark_repo_used,
     repository_from_path,
     save_cached_repos,
 )
@@ -118,6 +120,15 @@ def _format_launch_failure(exc: BaseException) -> str | None:
     if isinstance(exit_code, int) and exit_code != 0:
         detail = f"{detail}\nExit status: {exit_code}."
     return f"Could not launch Claude:\n{detail}"
+
+
+def _clip_tui_line(value: str, *, limit: int = 2_000) -> str:
+    """Keep one log record from flooding the scrollable TUI page."""
+
+    value = " ".join(value.splitlines())
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1].rstrip() + "…"
 
 
 class ConfirmModal(ModalScreen[bool]):
@@ -238,6 +249,42 @@ def _configured_model_refs(settings: Settings) -> tuple[str, ...]:
     return tuple(refs)
 
 
+def _model_refs(raw: Any) -> set[str]:
+    """Normalize a catalog sequence without turning malformed values into rows."""
+
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+        return set()
+    return {
+        value.strip()
+        for value in raw
+        if isinstance(value, str) and value.strip() and value.casefold() != "none"
+    }
+
+
+def _catalog_model_refs(result: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Return visible and catalog model refs from one provider response."""
+
+    visible_refs = _model_refs(result.get("models"))
+    catalog_refs = _model_refs(result.get("catalog_models")) or set(visible_refs)
+    return visible_refs, catalog_refs
+
+
+def _model_rows(model_list: VerticalScroll) -> tuple[Any, ...]:
+    """Return direct child widgets that expose a stable model reference.
+
+    The active desktop picker and the compatibility picker intentionally use
+    different row classes.  Selection and focus must depend on the small
+    protocol (``model_ref``), not on one concrete widget implementation.
+    """
+
+    return tuple(
+        child
+        for child in model_list.children
+        if isinstance(getattr(child, "model_ref", None), str)
+        and bool(getattr(child, "model_ref", "").strip())
+    )
+
+
 def _model_provider_id(model: str) -> str:
     """Return the provider portion used by the model toolbar filter."""
 
@@ -267,7 +314,10 @@ def _model_price_state(model: str, evidence: Any) -> str:
     raw_pricing = record.get("pricing")
     if not isinstance(raw_pricing, Mapping):
         raw_pricing = metadata.get("pricing")
-    pricing_status = pricing_is_free(normalize_model_pricing(raw_pricing))
+    try:
+        pricing_status = pricing_is_free(normalize_model_pricing(raw_pricing))
+    except Exception:
+        pricing_status = None
     if pricing_status is not None:
         return "free" if pricing_status else "paid"
 
@@ -625,7 +675,16 @@ class ControlCenterApp(HarlequinAppBase):
         super().__init__()
         self.settings = settings
         self.supervisor = supervisor
-        initial_repo = selected_repo or repository_from_path(Path.cwd())
+        if selected_repo is not None:
+            initial_repo = selected_repo
+        else:
+            try:
+                initial_repo = repository_from_path(Path.cwd())
+            except Exception:
+                # A deleted/unavailable working directory must not prevent the
+                # control center from opening; the repository page can still
+                # discover configured roots and report any failure there.
+                initial_repo = None
         normalized_repos = (
             deduplicate_repos([initial_repo]) if initial_repo is not None else []
         )
@@ -646,13 +705,24 @@ class ControlCenterApp(HarlequinAppBase):
         self._model_catalog_result: dict[str, Any] | None = None
         self._model_catalog_lock: asyncio.Lock | None = None
         self._model_filter_timer: Timer | None = None
+        self._page_render_lock: asyncio.Lock | None = None
+        self._page_render_task: asyncio.Task[None] | None = None
+        self._page_render_generation = 0
         self._oauth_provider: str | None = None
         self._oauth_last_state: str | None = None
+        self._oauth_last_status_signature: tuple[object, ...] | None = None
         self._oauth_poll_in_flight = False
         self._oauth_poll_error_notified = False
+        self._oauth_poll_failures = 0
+        self._poll_timer: Timer | None = None
         self._repo_inventory: tuple[RepoEntry, ...] = ()
         self._repo_inventory_loaded = False
+        self._repo_inventory_lock: asyncio.Lock | None = None
+        self._github_user: str | None = None
+        self._github_identity_loaded = False
         self._repos: tuple[RepoEntry, ...] = ()
+        self.selected_profile: str | None = None
+        self._provider_detail_open = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -695,10 +765,22 @@ class ControlCenterApp(HarlequinAppBase):
         self.query_one("#model-toolbar", Horizontal).display = False
         self.query_one("#model-list", VerticalScroll).display = False
         self.query_one("#content").display = False
-        self.set_interval(1.0, self._poll_live_state)
+        self._poll_timer = self.set_interval(1.0, self._poll_live_state)
         if self.startup_error:
             self.notify(self.startup_error, title="Launch failed", severity="error")
         await self._show_page("dashboard")
+
+    def on_unmount(self) -> None:
+        """Stop timers before Textual tears down the widget tree."""
+
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
+        self._cancel_model_filter_timer()
+        current = self._page_render_task
+        if current is not None and not current.done():
+            current.cancel()
+        self._page_render_task = None
 
     @on(OptionList.OptionSelected, "#nav")
     async def select_page(self, event: OptionList.OptionSelected) -> None:
@@ -769,6 +851,49 @@ class ControlCenterApp(HarlequinAppBase):
         refresh_models: bool = False,
         refresh_repos: bool = False,
     ) -> None:
+        current_task = asyncio.current_task()
+        previous_task = self._page_render_task
+        if (
+            previous_task is not None
+            and previous_task is not current_task
+            and not previous_task.done()
+        ):
+            previous_task.cancel()
+        if current_task is not None:
+            self._page_render_task = current_task
+        self._page_render_generation += 1
+        request_generation = self._page_render_generation
+        if self._page_render_lock is None:
+            self._page_render_lock = asyncio.Lock()
+        try:
+            async with self._page_render_lock:
+                if request_generation != self._page_render_generation:
+                    return
+                await self._show_page_locked(
+                    page,
+                    force=force,
+                    focus_target=focus_target,
+                    refresh_models=refresh_models,
+                    refresh_repos=refresh_repos,
+                )
+        except asyncio.CancelledError:
+            # A newer navigation request owns the render now. Textual event
+            # workers should not turn that expected supersession into a UI
+            # error notification.
+            return
+        finally:
+            if self._page_render_task is current_task:
+                self._page_render_task = None
+
+    async def _show_page_locked(
+        self,
+        page: str,
+        *,
+        force: bool,
+        focus_target: str | None,
+        refresh_models: bool,
+        refresh_repos: bool,
+    ) -> None:
         if page not in {item[0] for item in self.NAV}:
             return
         if page != "models":
@@ -777,6 +902,8 @@ class ControlCenterApp(HarlequinAppBase):
             self.selected_provider = (
                 None if page != "providers" else self.selected_provider
             )
+        if page != "providers":
+            self._provider_detail_open = False
         self.page = page
         title = dict(self.NAV)[page]
         self.query_one("#page-title", Static).update(title)
@@ -828,20 +955,43 @@ class ControlCenterApp(HarlequinAppBase):
             detail = format_user_error_preview(exc, max_len=240)
             message = f"{title} unavailable: {detail}"
             self.query_one("#summary", Static).update(message)
+            if page in {"dashboard", "diagnose", "policy", "logs"}:
+                await content.mount(Static(message, classes="launch-error-card"))
+            else:
+                table.add_columns("Status", "Details")
+                table.add_row("Unavailable", detail, key="page-error")
+            await self._clear_actions()
+            await self._add_action("refresh", "Retry")
             self.notify(message, title="Control action failed", severity="error")
         if page == "models":
-            if focus_target is not None:
-                self.query_one(focus_target).focus()
-            else:
-                rows = list(model_list.query(ModelToggleButton))
-                if rows:
-                    target = next(
-                        (row for row in rows if row.model_ref == self.selected_model),
-                        rows[0],
-                    )
-                    target.focus()
+            try:
+                if focus_target is not None:
+                    self.query_one(focus_target).focus()
                 else:
-                    self.query_one("#model-search", Input).focus()
+                    rows = _model_rows(model_list)
+                    if rows:
+                        target = next(
+                            (
+                                row
+                                for row in rows
+                                if row.model_ref == self.selected_model
+                            ),
+                            rows[0],
+                        )
+                        target.focus()
+                    else:
+                        self.query_one("#model-search", Input).focus()
+            except Exception:
+                self.query_one("#model-search", Input).focus()
+        try:
+            await self._after_page_render(page, focus_target=focus_target)
+        except Exception as exc:
+            self._notify_action_error("Page layout update failed", exc)
+
+    async def _after_page_render(self, page: str, *, focus_target: str | None) -> None:
+        """Hook for the desktop subclass after a serialized page render."""
+
+        del page, focus_target
 
     async def _render_dashboard(self, content: VerticalScroll) -> None:
         owner = "this terminal" if self.supervisor is not None else "another process"
@@ -855,7 +1005,7 @@ class ControlCenterApp(HarlequinAppBase):
             if self.selected_repo
             else f"(no repository selected) · {Path.cwd()}"
         )
-        account_summary = await asyncio.to_thread(fcc_provider_account_summary)
+        account_summary = await asyncio.to_thread(self._safe_fcc_summary)
         codex = await asyncio.to_thread(self._safe_codex_summary)
         compatibility_block = False
         text = (
@@ -868,7 +1018,9 @@ class ControlCenterApp(HarlequinAppBase):
             f"Context      {context_cap_tokens(os.environ):,} tokens"
         )
         if self.startup_error:
-            compatibility_block = "compatibility firewall" in self.startup_error
+            compatibility_block = (
+                "compatibility firewall" in self.startup_error.casefold()
+            )
             summary = (
                 "Launch failed safely: FCC blocked the unsafe Claude executable. "
                 "Choose Repair & start; "
@@ -896,34 +1048,42 @@ class ControlCenterApp(HarlequinAppBase):
         await self._add_action("refresh", "Refresh")
 
     async def _render_providers(self, table: DataTable) -> None:
+        self._provider_detail_open = False
         self.query_one("#summary", Static).update(
             "Live connected-account state is overlaid on the config catalog."
         )
         table.add_columns("Provider", "Status", "Type")
         config = await asyncio.to_thread(get_admin_config, self.settings)
+        if not isinstance(config, Mapping):
+            raise TypeError("provider catalog returned an invalid response")
         statuses = config.get("provider_status")
-        if not isinstance(statuses, list):
+        if not isinstance(statuses, Sequence) or isinstance(statuses, (str, bytes)):
             return
+        seen_provider_ids: set[str] = set()
         for provider in statuses:
-            if not isinstance(provider, dict):
+            if not isinstance(provider, Mapping):
                 continue
             provider_id = str(provider.get("provider_id", ""))
-            if not provider_id:
+            provider_key = provider_id.casefold()
+            if not provider_id or provider_key in seen_provider_ids:
                 continue
+            seen_provider_ids.add(provider_key)
             label = str(provider.get("label", provider.get("status", "unknown")))
             if provider.get("kind") == "connected_account":
                 try:
                     live = await asyncio.to_thread(
                         connected_account_status, self.settings, provider_id
                     )
-                except LocalAdminError:
+                except Exception:
                     live = None
-                if isinstance(live, dict):
+                if isinstance(live, Mapping):
                     state = str(live.get("state", "unknown"))
                     email = live.get("email")
                     label = state.replace("_", " ").title()
                     if isinstance(email, str) and email:
                         label = f"{label} · {email}"
+                elif provider.get("status"):
+                    label = f"{label} (live status unavailable)"
             table.add_row(
                 str(provider.get("display_name", provider_id)),
                 label,
@@ -938,13 +1098,41 @@ class ControlCenterApp(HarlequinAppBase):
         account_summary, codex_summary = await asyncio.gather(
             asyncio.to_thread(fcc_provider_account_summary),
             asyncio.to_thread(self._safe_codex_summary),
+            return_exceptions=True,
         )
+        if isinstance(account_summary, BaseException):
+            account_summary = "needs attention"
+        if isinstance(codex_summary, BaseException):
+            codex_summary = "needs attention"
         self.query_one("#summary", Static).update(
             f"OpenAI / ChatGPT: {account_summary}   |   Codex Tools: {codex_summary}"
         )
         table.add_columns("Codex profile", "Account", "Plan", "Active")
-        accounts = await asyncio.to_thread(codex_accounts.list_accounts)
+        try:
+            accounts = await asyncio.to_thread(codex_accounts.list_accounts)
+        except Exception as exc:
+            accounts = ()
+            self.query_one("#summary", Static).update(
+                f"OpenAI / ChatGPT: {account_summary}   |   "
+                f"Codex Tools: needs attention ({format_user_error_preview(exc, max_len=120)})"
+            )
+        if not isinstance(accounts, Sequence) or isinstance(accounts, (str, bytes)):
+            accounts = ()
+        valid_accounts_list: list[Any] = []
+        seen_profiles: set[str] = set()
         for account in accounts:
+            profile = getattr(account, "profile", None)
+            if not isinstance(profile, str):
+                continue
+            profile = profile.strip()
+            if not profile or profile in seen_profiles:
+                continue
+            seen_profiles.add(profile)
+            valid_accounts_list.append(account)
+        valid_accounts = tuple(valid_accounts_list)
+        if self.selected_codex_profile not in seen_profiles:
+            self.selected_codex_profile = None
+        for account in valid_accounts:
             table.add_row(
                 account.profile,
                 account.email or "connected",
@@ -952,45 +1140,109 @@ class ControlCenterApp(HarlequinAppBase):
                 "●" if account.active else "",
                 key=account.profile,
             )
-        await self._add_action("codex-switch", "Switch", disabled=not accounts)
-        await self._add_action("codex-refresh", "Refresh usage", disabled=not accounts)
+        await self._add_action("codex-switch", "Switch", disabled=not valid_accounts)
+        await self._add_action(
+            "codex-refresh", "Refresh usage", disabled=not valid_accounts
+        )
         await self._add_action("fcc-browser", "OpenAI login")
         await self._add_action("fcc-device", "OpenAI device")
 
     async def _load_repo_inventory(self, *, refresh: bool) -> list[RepoEntry]:
         """Load the repository inventory once, scanning only on demand."""
 
-        if self._repo_inventory_loaded and not refresh:
+        if self._repo_inventory_lock is None:
+            self._repo_inventory_lock = asyncio.Lock()
+        async with self._repo_inventory_lock:
+            if self._repo_inventory_loaded and not refresh:
+                return list(self._repo_inventory)
+
+            cache = cache_path()
+            if refresh or not self._github_identity_loaded:
+                try:
+                    self._github_user = await asyncio.to_thread(
+                        github_authenticated_user
+                    )
+                except Exception as exc:
+                    # GitHub CLI identity is an optional filter. A broken or
+                    # expired local login must not hide ordinary local repos.
+                    self._github_user = None
+                    self._notify_action_error("GitHub identity unavailable", exc)
+                self._github_identity_loaded = True
+            repos: list[RepoEntry] = []
+            if not refresh and await asyncio.to_thread(cache_is_fresh, cache):
+                try:
+                    repos = await asyncio.to_thread(
+                        load_cached_repos, cache, github_user=self._github_user
+                    )
+                except Exception as exc:
+                    self._notify_action_error("Repository cache unavailable", exc)
+                    repos = []
+            if not repos:
+                roots = default_roots()
+                if self._github_user:
+                    repos = await asyncio.to_thread(
+                        discover_repos, roots, github_user=self._github_user
+                    )
+                else:
+                    repos = await asyncio.to_thread(discover_repos, roots)
+                repos = deduplicate_repos(repos)
+                try:
+                    await asyncio.to_thread(
+                        save_cached_repos,
+                        repos,
+                        cache,
+                        github_user=self._github_user,
+                    )
+                except Exception as exc:
+                    self._notify_action_error("Repository cache unavailable", exc)
+
+            self._repo_inventory = tuple(deduplicate_repos(repos))
+            self._repo_inventory_loaded = True
             return list(self._repo_inventory)
 
-        cache = cache_path()
-        repos: list[RepoEntry] = []
-        if not refresh and await asyncio.to_thread(cache_is_fresh, cache):
-            repos = await asyncio.to_thread(load_cached_repos, cache)
-        if not repos:
-            repos = await asyncio.to_thread(discover_repos, default_roots())
-            repos = deduplicate_repos(repos)
-            await asyncio.to_thread(save_cached_repos, repos, cache)
-
-        self._repo_inventory = tuple(deduplicate_repos(repos))
-        self._repo_inventory_loaded = True
-        return list(self._repo_inventory)
-
     async def _render_repos(self, table: DataTable, *, refresh: bool = False) -> None:
-        repos = await self._load_repo_inventory(refresh=refresh)
-        selected_path = self.selected_repo.path if self.selected_repo else None
+        try:
+            repos = await self._load_repo_inventory(refresh=refresh)
+        except Exception as exc:
+            self._notify_action_error("Repository discovery failed", exc)
+            repos = []
+            if self.selected_repo is not None:
+                repos.append(self.selected_repo)
+        selected_path = None
+        if self.selected_repo is not None:
+            try:
+                selected_path = str(
+                    Path(self.selected_repo.path).expanduser().resolve()
+                )
+            except OSError, RuntimeError:
+                selected_path = self.selected_repo.path
         selected = next((repo for repo in repos if repo.path == selected_path), None)
         if selected is None and self.selected_repo is not None:
-            selected = await asyncio.to_thread(
-                repository_from_path,
-                Path(self.selected_repo.path),
-                last_used=self.selected_repo.last_used,
-            )
+            try:
+                selected = await asyncio.to_thread(
+                    repository_from_path,
+                    Path(self.selected_repo.path),
+                    github_user=(
+                        self._github_user if self._github_identity_loaded else None
+                    ),
+                    last_used=self.selected_repo.last_used,
+                )
+            except Exception as exc:
+                self._notify_action_error("Selected repository lookup failed", exc)
+                selected = self.selected_repo
             if selected is not None:
                 repos.append(selected)
                 repos = deduplicate_repos(repos)
                 self._repo_inventory = tuple(repos)
-                await asyncio.to_thread(save_cached_repos, repos, cache_path())
+                try:
+                    await asyncio.to_thread(
+                        save_cached_repos,
+                        repos,
+                        cache_path(),
+                        github_user=self._github_user,
+                    )
+                except Exception as exc:
+                    self._notify_action_error("Repository cache unavailable", exc)
         repos = deduplicate_repos(repos)
         if selected_path is not None:
             selected = next(
@@ -1034,25 +1286,94 @@ class ControlCenterApp(HarlequinAppBase):
         await self._add_action("repo-open", "Open path")
         await self._add_action("repo-refresh", "Refresh")
 
+    async def _persist_repo_selection(self, repo: RepoEntry) -> bool:
+        """Persist the selected checkout immediately for the next launch."""
+
+        marked = mark_repo_used(deduplicate_repos((*self._repos, repo)), repo)
+        self._repos = tuple(marked)
+        self._repo_inventory = tuple(marked)
+        try:
+            selected_path = str(Path(repo.path).expanduser().resolve())
+        except OSError, RuntimeError:
+            selected_path = repo.path
+        self.selected_repo = next(
+            (candidate for candidate in marked if candidate.path == selected_path),
+            repo,
+        )
+        try:
+            await asyncio.to_thread(
+                save_cached_repos,
+                marked,
+                cache_path(),
+                github_user=self._github_user,
+            )
+        except Exception as exc:
+            self._notify_action_error("Repository selection was not cached", exc)
+            return False
+        return True
+
     async def _render_profiles(self, table: DataTable) -> None:
         profiles, active = await asyncio.gather(
             asyncio.to_thread(list_profiles),
             asyncio.to_thread(configured_profile),
+            return_exceptions=True,
         )
+        profile_error: BaseException | None = None
+        if isinstance(profiles, BaseException):
+            profile_error = profiles
+            profiles = ()
+        if isinstance(active, BaseException):
+            profile_error = active
+            active = "unknown"
+        if not isinstance(profiles, Sequence) or isinstance(profiles, (str, bytes)):
+            profiles = ()
+        if not isinstance(active, str):
+            active = str(active)
         self.query_one("#summary", Static).update(
             "FCC Learning profile — "
             f"running: {active}   |   next launch: {self.next_profile}"
         )
+        if profile_error is not None:
+            self.query_one("#summary", Static).update(
+                "Profiles partially unavailable: "
+                + format_user_error_preview(profile_error, max_len=160)
+            )
         table.add_columns("FCC Learning profile", "Running", "Next launch")
+        valid_profiles_list: list[str] = []
+        seen_profiles: set[str] = set()
         for profile in profiles:
+            if not isinstance(profile, str):
+                continue
+            profile = profile.strip()
+            if not profile or profile in seen_profiles:
+                continue
+            seen_profiles.add(profile)
+            valid_profiles_list.append(profile)
+        valid_profiles = tuple(valid_profiles_list)
+        if self.selected_profile not in seen_profiles:
+            self.selected_profile = None
+        for profile in valid_profiles:
             table.add_row(
                 profile,
                 "●" if profile == active else "",
                 "●" if profile == self.next_profile else "",
                 key=profile,
             )
+        if self.selected_profile is not None and valid_profiles:
+            selected_index = next(
+                (
+                    index
+                    for index, profile in enumerate(valid_profiles)
+                    if profile == self.selected_profile
+                ),
+                None,
+            )
+            if selected_index is not None:
+                table.move_cursor(row=selected_index, column=0)
         await self._add_action("profile-create", "Create")
-        await self._add_action("profile-select", "Use next", disabled=not profiles)
+        await self._add_action(
+            "profile-select", "Use next", disabled=not valid_profiles
+        )
 
     @on(Button.Pressed, "#profile-create")
     def profile_create(self) -> None:
@@ -1076,6 +1397,9 @@ class ControlCenterApp(HarlequinAppBase):
         except LearningProfileError as exc:
             self.notify(str(exc), title="Profile creation failed", severity="error")
             return
+        except Exception as exc:
+            self._notify_action_error("Profile creation failed", exc)
+            return
         self.next_profile = name
         self.notify(f"Created and selected profile: {name}")
         await self._show_page("profiles", force=True)
@@ -1095,24 +1419,15 @@ class ControlCenterApp(HarlequinAppBase):
                 self.settings,
                 refresh=refresh,
             )
-            self._model_catalog_result = result
-            return result
+            if not isinstance(result, Mapping):
+                raise TypeError("model catalog returned an invalid response")
+            self._model_catalog_result = dict(result)
+            return self._model_catalog_result
 
     async def _render_models(self, table: DataTable, *, refresh: bool = False) -> None:
         del table
         result = await self._load_model_catalog(refresh=refresh)
-        visible_models = result.get("models")
-        visible_refs = (
-            {str(raw) for raw in visible_models if raw is not None}
-            if isinstance(visible_models, list)
-            else set()
-        )
-        catalog_models = result.get("catalog_models")
-        model_refs = (
-            {str(raw) for raw in catalog_models if raw is not None}
-            if isinstance(catalog_models, list)
-            else set(visible_refs)
-        )
+        visible_refs, model_refs = _catalog_model_refs(result)
         labels = result.get("catalog_model_labels", result.get("model_labels"))
         evidence = result.get("catalog_model_evidence", result.get("model_evidence"))
         enabled_models = _model_catalog_enabled_models(self.settings, model_refs)
@@ -1206,12 +1521,15 @@ class ControlCenterApp(HarlequinAppBase):
         self.query_one("#summary", Static).update(summary)
 
         await model_list.remove_children()
+        rows: list[ModelToggleButton] = []
         for model in filtered_refs:
             friendly = model
-            if isinstance(labels, dict) and isinstance(labels.get(model), str):
+            if isinstance(labels, Mapping) and isinstance(labels.get(model), str):
                 friendly = str(labels[model])
             source = "unknown"
-            if isinstance(evidence, dict) and isinstance(evidence.get(model), dict):
+            if isinstance(evidence, Mapping) and isinstance(
+                evidence.get(model), Mapping
+            ):
                 source = str(evidence[model].get("evidence_source", "unknown"))
             access = "ON" if model in effective_models else "OFF"
             configured = " · configured" if model in configured_models else ""
@@ -1219,13 +1537,11 @@ class ControlCenterApp(HarlequinAppBase):
             label = (
                 f"{access}{configured}  {price}  {friendly}  |  {model}  |  {source}"
             )
-            await model_list.mount(
-                ModelToggleButton(
-                    model,
-                    label,
-                    pending=model in self.selected_models,
-                )
+            rows.append(
+                ModelToggleButton(model, label, pending=model in self.selected_models)
             )
+        if rows:
+            await model_list.mount(*rows)
         if not filtered_refs:
             empty_message = (
                 "No models discovered. Press Refresh to query configured providers."
@@ -1260,14 +1576,16 @@ class ControlCenterApp(HarlequinAppBase):
         """Return the model under the model-list focus, if any."""
 
         focused = self.focused
-        if isinstance(focused, ModelToggleButton) and focused.parent is model_list:
-            return focused.model_ref
+        if focused is not None and focused.parent is model_list:
+            model_ref = getattr(focused, "model_ref", None)
+            if isinstance(model_ref, str):
+                return model_ref
         return None
 
     def _model_list_index(self, model_list: VerticalScroll, model: str) -> int:
         """Find a model row by its value for focused navigation and tests."""
 
-        for index, row in enumerate(model_list.query(ModelToggleButton)):
+        for index, row in enumerate(_model_rows(model_list)):
             if row.model_ref == model:
                 return index
         return 0
@@ -1288,19 +1606,21 @@ class ControlCenterApp(HarlequinAppBase):
         search = self.model_search.casefold()
         if not search:
             return True
-        friendly = labels.get(model) if isinstance(labels, dict) else None
+        friendly = labels.get(model) if isinstance(labels, Mapping) else None
         return search in model.casefold() or (
             isinstance(friendly, str) and search in friendly.casefold()
         )
 
     async def _render_reviewers(self, table: DataTable) -> None:
         status = await asyncio.to_thread(reviewer_status, profile=self.next_profile)
+        if not isinstance(status, Mapping):
+            raise TypeError("reviewer state returned an invalid response")
         self.query_one("#summary", Static).update(
             f"Reviewer/scar state for profile {self.next_profile}."
         )
         table.add_columns("Pack", "Mode", "State")
         packs = status.get("packs")
-        if isinstance(packs, list):
+        if isinstance(packs, Sequence) and not isinstance(packs, (str, bytes)):
             for pack in packs:
                 if isinstance(pack, Mapping):
                     name = str(pack.get("pack", "?"))
@@ -1311,7 +1631,7 @@ class ControlCenterApp(HarlequinAppBase):
                         key=f"pack:{name}",
                     )
         scars = status.get("scars")
-        if isinstance(scars, list):
+        if isinstance(scars, Sequence) and not isinstance(scars, (str, bytes)):
             for scar in scars[:100]:
                 if isinstance(scar, Mapping):
                     scar_id = str(scar.get("scar_id", "?"))
@@ -1325,6 +1645,8 @@ class ControlCenterApp(HarlequinAppBase):
 
     async def _render_usage(self, table: DataTable) -> None:
         result = await asyncio.to_thread(get_usage, self.settings, days=30)
+        if not isinstance(result, Mapping):
+            raise TypeError("usage returned an invalid response")
         self.query_one("#summary", Static).update("Local metadata-only usage · 30 days")
         table.add_columns("Metric", "Value")
         totals = result.get("totals")
@@ -1347,6 +1669,8 @@ class ControlCenterApp(HarlequinAppBase):
 
     async def _render_policy(self, content: VerticalScroll) -> None:
         status = await asyncio.to_thread(get_admin_status, self.settings)
+        if not isinstance(status, Mapping):
+            raise TypeError("policy returned an invalid response")
         policy = status.get("session_policy", {})
         self.query_one("#summary", Static).update("Live session policy receipt")
         await content.mount(Static(json.dumps(policy, indent=2, sort_keys=True)))
@@ -1355,8 +1679,11 @@ class ControlCenterApp(HarlequinAppBase):
     async def _render_logs(self, content: VerticalScroll) -> None:
         path = server_log_path()
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[
-                -200:
+            lines = [
+                _clip_tui_line(line)
+                for line in path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()[-200:]
             ]
         except OSError as exc:
             lines = [f"Log unavailable ({type(exc).__name__})"]
@@ -1366,18 +1693,22 @@ class ControlCenterApp(HarlequinAppBase):
 
     async def _render_settings(self, table: DataTable) -> None:
         config = await asyncio.to_thread(get_admin_config, self.settings)
+        if not isinstance(config, Mapping):
+            raise TypeError("settings returned an invalid response")
         self.query_one("#summary", Static).update(
             "Select a field and press Edit. Secrets are never rendered."
         )
         table.add_columns("Setting", "Value", "Source", "Locked")
         fields = config.get("fields")
-        if isinstance(fields, list):
+        seen_keys: set[str] = set()
+        if isinstance(fields, Sequence) and not isinstance(fields, (str, bytes)):
             for field in fields:
-                if not isinstance(field, dict):
+                if not isinstance(field, Mapping):
                     continue
                 key = str(field.get("key", ""))
-                if not key:
+                if not key or key in seen_keys:
                     continue
+                seen_keys.add(key)
                 if field.get("secret"):
                     value = "configured" if field.get("configured") else "missing"
                 else:
@@ -1435,7 +1766,11 @@ class ControlCenterApp(HarlequinAppBase):
 
     @on(DataTable.RowSelected, "#table")
     async def row_selected(self, event: DataTable.RowSelected) -> None:
-        value = str(event.row_key.value)
+        raw_value = event.row_key.value
+        if raw_value is None or not str(raw_value).strip():
+            self._notify_missing_selection(self.page)
+            return
+        value = str(raw_value)
         if self.page == "providers":
             self.selected_provider = value
             await self._show_provider_detail(value)
@@ -1444,14 +1779,14 @@ class ControlCenterApp(HarlequinAppBase):
         elif self.page == "repos":
             repo = self._repo_for_path(value)
             if repo is not None:
-                self.selected_repo = repo
+                await self._persist_repo_selection(repo)
                 self.notify(
                     f"Next launch repository: {repo.identity} · {repo.display_path}"
                 )
                 await self._show_page("repos", force=True)
         elif self.page == "profiles":
-            self.next_profile = value
-            self.notify(f"Next launch profile: {value}")
+            self.selected_profile = value
+            self.notify(f"Selected profile: {value}. Press Use next to apply it.")
             await self._show_page("profiles", force=True)
 
     @on(Button.Pressed, "#model-list ModelToggleButton")
@@ -1522,28 +1857,34 @@ class ControlCenterApp(HarlequinAppBase):
         if marker not in text:
             return
         prefix, remainder = text.split(marker, 1)
-        _old_count, suffix = remainder.split(" | ", 1)
+        parts = remainder.split(" | ", 1)
+        if len(parts) != 2:
+            return
+        _old_count, suffix = parts
         self._model_summary_text = (
             f"{prefix}{marker}{len(self.selected_models)} | {suffix}"
         )
         self.query_one("#summary", Static).update(self._model_summary_text)
         model_list = self.query_one("#model-list", VerticalScroll)
-        for row in model_list.query(ModelToggleButton):
-            row.set_pending(row.model_ref in self.selected_models)
+        for row in _model_rows(model_list):
+            set_pending = getattr(row, "set_pending", None)
+            if callable(set_pending):
+                set_pending(row.model_ref in self.selected_models)
 
     @on(Button.Pressed, "#provider-open")
     async def open_provider_button(self) -> None:
         table = self.query_one("#table", DataTable)
-        if table.cursor_row >= 0 and table.row_count:
-            key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
-            await self._show_provider_detail(str(key.value))
-        else:
+        key = self._table_row_key(table)
+        if key is None:
             self._notify_missing_selection("provider")
+            return
+        await self._show_provider_detail(key)
 
     async def _show_provider_detail(self, provider_id: str) -> None:
         """Render provider detail or keep the failure visible in the TUI."""
 
         self.selected_provider = provider_id
+        self._provider_detail_open = True
         try:
             await self._render_provider_detail(provider_id)
         except Exception as exc:
@@ -1580,6 +1921,8 @@ class ControlCenterApp(HarlequinAppBase):
             status = await asyncio.to_thread(
                 connected_account_status, self.settings, provider_id
             )
+            if not isinstance(status, Mapping):
+                raise TypeError("connected-account status returned malformed data")
             for key in ("state", "email", "model_count", "message"):
                 value = status.get(key)
                 if value not in (None, ""):
@@ -1616,14 +1959,14 @@ class ControlCenterApp(HarlequinAppBase):
 
     @on(Button.Pressed, "#provider-test")
     async def provider_test_button(self) -> None:
-        provider_id = self.selected_provider
+        provider_id = self.selected_provider if self._provider_detail_open else None
         if provider_id is None:
             table = self.query_one("#table", DataTable)
-            if not table.row_count:
+            key = self._table_row_key(table)
+            if key is None:
                 self._notify_missing_selection("provider")
                 return
-            key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
-            provider_id = str(key.value)
+            provider_id = key
         try:
             result = await asyncio.to_thread(test_provider, self.settings, provider_id)
         except LocalAdminError as exc:
@@ -1631,6 +1974,13 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Provider test failed", exc)
         else:
+            if not isinstance(result, Mapping):
+                self.notify(
+                    f"{provider_id}: provider returned malformed test data.",
+                    title="Provider test failed",
+                    severity="error",
+                )
+                return
             count = result.get("model_count", result.get("count", "ok"))
             self.notify(f"{provider_id}: {count}", title="Provider test")
 
@@ -1644,6 +1994,13 @@ class ControlCenterApp(HarlequinAppBase):
 
     async def _start_fcc_login(self, mode: ConnectedAccountLoginMode) -> None:
         provider_id = self.selected_provider or "openai"
+        if self._oauth_provider is not None:
+            self.notify(
+                f"A login for {self._oauth_provider} is already in progress.",
+                title="FCC login",
+                severity="warning",
+            )
+            return
         try:
             status = await asyncio.to_thread(
                 start_connected_account_login,
@@ -1657,14 +2014,23 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Login failed", exc)
             return
+        if not isinstance(status, Mapping):
+            self.notify(
+                "FCC returned malformed login data; no login was started.",
+                title="Login failed",
+                severity="error",
+            )
+            return
         self._oauth_provider = provider_id
-        self._oauth_last_state = str(status.get("state", "connecting"))
+        self._oauth_last_state = str(status.get("state", "connecting")).casefold()
+        self._oauth_last_status_signature = None
         self._oauth_poll_error_notified = False
+        self._oauth_poll_failures = 0
         url = status.get("authorization_url") or status.get("verification_url")
         if isinstance(url, str) and url:
             try:
                 opened = webbrowser.open(url)
-            except OSError as exc:
+            except Exception as exc:
                 self.notify(
                     f"Could not open the browser: {type(exc).__name__}",
                     title="FCC login",
@@ -1733,7 +2099,9 @@ class ControlCenterApp(HarlequinAppBase):
             return
         self._oauth_provider = None
         self._oauth_last_state = None
+        self._oauth_last_status_signature = None
         self._oauth_poll_error_notified = False
+        self._oauth_poll_failures = 0
         self.notify("OpenAI / ChatGPT login cancelled.")
         await self._show_provider_detail(provider_id)
 
@@ -1744,24 +2112,39 @@ class ControlCenterApp(HarlequinAppBase):
             self._notify_missing_selection("provider")
             return
         table = self.query_one("#table", DataTable)
-        if not table.row_count:
+        key = self._table_row_key(table)
+        if key is None:
             self._notify_missing_selection("provider field")
             return
-        key = str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
         try:
             config = await asyncio.to_thread(get_admin_config, self.settings)
         except Exception as exc:
             self._notify_action_error("Provider field lookup failed", exc)
             return
+        if not isinstance(config, Mapping):
+            self.notify(
+                "Provider field lookup returned malformed data.",
+                title="Provider field lookup failed",
+                severity="error",
+            )
+            return
+        fields = config.get("fields")
+        if not isinstance(fields, Sequence) or isinstance(fields, (str, bytes)):
+            self.notify(
+                "Provider field lookup returned no usable fields.",
+                title="Provider field lookup failed",
+                severity="error",
+            )
+            return
         field = next(
             (
                 item
-                for item in config.get("fields", [])
-                if isinstance(item, dict) and item.get("key") == key
+                for item in fields
+                if isinstance(item, Mapping) and item.get("key") == key
             ),
             None,
         )
-        if not isinstance(field, dict):
+        if not isinstance(field, Mapping):
             self.notify("Select an editable provider field first.", severity="warning")
             return
         if field.get("locked"):
@@ -1792,8 +2175,15 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Provider field update failed", exc)
             return
+        if not isinstance(result, Mapping):
+            self.notify(
+                f"{key} update returned malformed data.",
+                title="Provider field update failed",
+                severity="error",
+            )
+            return
         if result.get("applied") is True:
-            get_settings.cache_clear()
+            self._refresh_settings_snapshot()
             self.notify(f"Applied {key}.")
             await self._show_provider_detail(provider_id)
         else:
@@ -1801,7 +2191,7 @@ class ControlCenterApp(HarlequinAppBase):
 
     @on(Button.Pressed, "#codex-switch")
     async def codex_switch(self) -> None:
-        profile = self.selected_codex_profile or self._selected_table_key()
+        profile = self._selected_table_key() or self.selected_codex_profile
         if not profile:
             self._notify_missing_selection("Codex account")
             return
@@ -1817,7 +2207,7 @@ class ControlCenterApp(HarlequinAppBase):
 
     @on(Button.Pressed, "#codex-refresh")
     async def codex_refresh(self) -> None:
-        profile = self.selected_codex_profile or self._selected_table_key()
+        profile = self._selected_table_key() or self.selected_codex_profile
         if not profile:
             self._notify_missing_selection("Codex account")
             return
@@ -1838,8 +2228,17 @@ class ControlCenterApp(HarlequinAppBase):
         if repo is None:
             self._notify_missing_selection("repository")
             return
-        self.selected_repo = repo
-        self.notify(f"Next launch repository: {repo.identity} · {repo.display_path}")
+        persisted = await self._persist_repo_selection(repo)
+        if persisted:
+            self.notify(
+                f"Next launch repository: {repo.identity} · {repo.display_path}"
+            )
+        else:
+            self.notify(
+                f"Selected for this session, but could not cache: {repo.identity}",
+                title="Repository cache unavailable",
+                severity="warning",
+            )
         await self._show_page("repos", force=True)
 
     @on(Button.Pressed, "#repo-open")
@@ -1859,7 +2258,22 @@ class ControlCenterApp(HarlequinAppBase):
         )
 
     async def _open_repo_path(self, value: str) -> None:
-        repo = await asyncio.to_thread(repository_from_path, Path(value))
+        if not self._github_identity_loaded:
+            try:
+                self._github_user = await asyncio.to_thread(github_authenticated_user)
+            except Exception as exc:
+                self._github_user = None
+                self._notify_action_error("GitHub identity unavailable", exc)
+            self._github_identity_loaded = True
+        try:
+            repo = await asyncio.to_thread(
+                repository_from_path,
+                Path(value),
+                github_user=self._github_user,
+            )
+        except Exception as exc:
+            self._notify_action_error("Repository lookup failed", exc)
+            return
         if repo is None:
             self.notify(
                 "That path is not inside a readable local Git repository.",
@@ -1868,7 +2282,16 @@ class ControlCenterApp(HarlequinAppBase):
             )
             return
         self.selected_repo = deduplicate_repos([repo])[0]
-        self.notify(f"Default repository → {self.selected_repo.identity}")
+        persisted = await self._persist_repo_selection(self.selected_repo)
+        if persisted:
+            self.notify(f"Default repository → {self.selected_repo.identity}")
+        else:
+            self.notify(
+                f"Selected for this session, but could not cache: "
+                f"{self.selected_repo.identity}",
+                title="Repository cache unavailable",
+                severity="warning",
+            )
         await self._show_page("repos", force=True)
 
     @on(Button.Pressed, "#repo-refresh")
@@ -1878,11 +2301,12 @@ class ControlCenterApp(HarlequinAppBase):
 
     @on(Button.Pressed, "#profile-select")
     async def profile_select(self) -> None:
-        profile = self._selected_table_key()
+        profile = self._selected_table_key() or self.selected_profile
         if not profile:
             self._notify_missing_selection("profile")
             return
         self.next_profile = profile
+        self.selected_profile = profile
         self.notify(f"Next launch profile: {profile}")
         await self._show_page("profiles", force=True)
 
@@ -1904,8 +2328,15 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Model selection failed", exc)
             return
+        if not isinstance(result, Mapping):
+            self.notify(
+                "Model update returned malformed data.",
+                title="Model selection failed",
+                severity="error",
+            )
+            return
         if result.get("applied") is True:
-            get_settings.cache_clear()
+            self._refresh_settings_snapshot()
             self.settings.model = model
             self.selected_model = model
             self.notify(f"Model → {model}")
@@ -1944,18 +2375,7 @@ class ControlCenterApp(HarlequinAppBase):
             or any(entry == "*" or entry.endswith("/*") for entry in allowlist)
         ):
             result = await self._load_model_catalog()
-            raw_models = result.get("catalog_models", result.get("models"))
-            model_refs = (
-                {str(raw) for raw in raw_models if raw is not None}
-                if isinstance(raw_models, list)
-                else set()
-            )
-            visible_models = result.get("models")
-            visible_refs = (
-                {str(raw) for raw in visible_models if raw is not None}
-                if isinstance(visible_models, list)
-                else set()
-            )
+            visible_refs, model_refs = _catalog_model_refs(result)
             enabled = _model_catalog_effective_models(
                 self.settings,
                 model_refs,
@@ -2007,8 +2427,15 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Model catalog update failed", exc)
             return
+        if not isinstance(result, Mapping):
+            self.notify(
+                "Model catalog update returned malformed data.",
+                title="Model catalog update failed",
+                severity="error",
+            )
+            return
         if result.get("applied") is True:
-            get_settings.cache_clear()
+            self._refresh_settings_snapshot()
             self.settings.model_catalog_mode = ModelCatalogMode(mode)
             self.settings.model_catalog_allowlist = allowlist
             self.selected_models.clear()
@@ -2028,15 +2455,30 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Settings lookup failed", exc)
             return
+        if not isinstance(config, Mapping):
+            self.notify(
+                "Settings lookup returned malformed data.",
+                title="Settings lookup failed",
+                severity="error",
+            )
+            return
+        fields = config.get("fields")
+        if not isinstance(fields, Sequence) or isinstance(fields, (str, bytes)):
+            self.notify(
+                "Settings lookup returned no usable fields.",
+                title="Settings lookup failed",
+                severity="error",
+            )
+            return
         field = next(
             (
                 item
-                for item in config.get("fields", [])
-                if isinstance(item, dict) and item.get("key") == key
+                for item in fields
+                if isinstance(item, Mapping) and item.get("key") == key
             ),
             None,
         )
-        if not isinstance(field, dict):
+        if not isinstance(field, Mapping):
             self.notify("Select an editable setting first.", severity="warning")
             return
         if field.get("locked"):
@@ -2067,8 +2509,15 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Setting update failed", exc)
             return
+        if not isinstance(result, Mapping):
+            self.notify(
+                f"{key} update returned malformed data.",
+                title="Setting update failed",
+                severity="error",
+            )
+            return
         if result.get("applied") is True:
-            get_settings.cache_clear()
+            self._refresh_settings_snapshot()
             self.notify(f"Applied {key}.")
             await self._show_page("settings", force=True)
         else:
@@ -2087,16 +2536,45 @@ class ControlCenterApp(HarlequinAppBase):
                     connected_account_status, self.settings, provider_id
                 )
             except LocalAdminError:
+                self._oauth_poll_failures += 1
+                if self._oauth_poll_failures >= 3:
+                    self.notify(
+                        "FCC could not read the login status after three attempts.",
+                        title="Login status unavailable",
+                        severity="error",
+                    )
+                    self._oauth_provider = None
                 return
             except Exception as exc:
+                self._oauth_poll_failures += 1
                 if not self._oauth_poll_error_notified:
                     self._notify_action_error("Login status check failed", exc)
                     self._oauth_poll_error_notified = True
+                if self._oauth_poll_failures >= 3:
+                    self._oauth_provider = None
                 return
         finally:
             self._oauth_poll_in_flight = False
         self._oauth_poll_error_notified = False
-        state = str(status.get("state", "unknown"))
+        self._oauth_poll_failures = 0
+        if not isinstance(status, Mapping):
+            self.notify(
+                "FCC returned an invalid login status.",
+                title="Login status unavailable",
+                severity="error",
+            )
+            self._oauth_provider = None
+            return
+        state = str(status.get("state", "unknown")).casefold()
+        status_signature = (
+            state,
+            status.get("connected"),
+            status.get("email"),
+            status.get("model_count"),
+            status.get("message"),
+        )
+        status_changed = status_signature != self._oauth_last_status_signature
+        self._oauth_last_status_signature = status_signature
         if state != self._oauth_last_state:
             self._oauth_last_state = state
             if state == "connected":
@@ -2114,6 +2592,15 @@ class ControlCenterApp(HarlequinAppBase):
                     severity="error",
                 )
                 self._oauth_provider = None
+            elif state not in {"connecting", "pending", "authorizing"}:
+                self.notify(
+                    str(status.get("message", f"OpenAI login ended ({state}).")),
+                    title="Login stopped",
+                    severity="warning",
+                )
+                self._oauth_provider = None
+        if not status_changed:
+            return
         if self.page == "providers" and self.selected_provider == provider_id:
             await self._show_provider_detail(provider_id)
         elif self.page in {"providers", "accounts", "dashboard"}:
@@ -2128,17 +2615,25 @@ class ControlCenterApp(HarlequinAppBase):
                 return highlighted
             selected = self.selected_model
             if selected is not None and any(
-                row.model_ref == selected
-                for row in self.query_one("#model-list", VerticalScroll).query(
-                    ModelToggleButton
-                )
+                getattr(row, "model_ref", None) == selected
+                for row in _model_rows(self.query_one("#model-list", VerticalScroll))
             ):
                 return selected
             return None
-        table = self.query_one("#table", DataTable)
+        return self._table_row_key(self.query_one("#table", DataTable))
+
+    @staticmethod
+    def _table_row_key(table: DataTable) -> str | None:
+        """Read a selected row defensively across empty and resized tables."""
+
         if not table.row_count or table.cursor_row < 0:
             return None
-        return str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
+        try:
+            return str(
+                table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+            )
+        except Exception:
+            return None
 
     def _repo_for_path(self, path: str) -> RepoEntry | None:
         return next((repo for repo in self._repos if repo.path == path), None)
@@ -2161,7 +2656,7 @@ class ControlCenterApp(HarlequinAppBase):
         self, config: Mapping[str, Any], provider_id: str
     ) -> Mapping[str, Any] | None:
         statuses = config.get("provider_status")
-        if not isinstance(statuses, list):
+        if not isinstance(statuses, Sequence) or isinstance(statuses, (str, bytes)):
             return None
         return next(
             (
@@ -2179,7 +2674,7 @@ class ControlCenterApp(HarlequinAppBase):
         if descriptor is None:
             return ()
         fields = config.get("fields")
-        if not isinstance(fields, list):
+        if not isinstance(fields, Sequence) or isinstance(fields, (str, bytes)):
             return ()
         by_key = {
             str(item.get("key")): item
@@ -2214,6 +2709,24 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception:
             return "needs attention"
 
+    def _refresh_settings_snapshot(self) -> None:
+        """Rebind the UI to settings written by the local Admin owner."""
+
+        get_settings.cache_clear()
+        try:
+            latest = get_settings()
+        except Exception:
+            # The action has already returned success; retaining the current
+            # object is safer than replacing it with a partially loaded value.
+            return
+        self.settings = latest
+
+    def _safe_fcc_summary(self) -> str:
+        try:
+            return fcc_provider_account_summary()
+        except Exception:
+            return "needs attention"
+
 
 def run_control_tui(
     settings: Settings,
@@ -2228,13 +2741,19 @@ def run_control_tui(
     server_profile = configured_profile()
     next_profile = server_profile
     while True:
-        result = ControlCenterApp(
+        app = ControlCenterApp(
             settings,
             supervisor=supervisor,
             selected_repo=selected_repo,
             next_profile=next_profile,
             startup_error=startup_error,
-        ).run()
+        )
+        result = app.run()
+        # Admin mutations can invalidate the cached Settings object. Reuse the
+        # app's refreshed snapshot before the next TUI session so a restart
+        # does not silently resurrect the previous profile/model values.
+        if isinstance(app.settings, Settings):
+            settings = app.settings
         startup_error = None
         if result is None or result.action == "quit":
             return

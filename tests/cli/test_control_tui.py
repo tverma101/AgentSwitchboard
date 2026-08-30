@@ -211,6 +211,10 @@ async def test_repo_navigation_never_uses_nested_input_prompts() -> None:
             return_value=None,
         ),
         patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch(
+            "free_claude_code.cli.control_tui.github_authenticated_user",
+            return_value=None,
+        ),
         patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
         patch("free_claude_code.cli.control_tui.discover_repos", return_value=[]),
         patch("free_claude_code.cli.control_tui.save_cached_repos"),
@@ -244,6 +248,10 @@ async def test_repo_refresh_replaces_actions_without_duplicate_widget_ids() -> N
             return_value=None,
         ),
         patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch(
+            "free_claude_code.cli.control_tui.github_authenticated_user",
+            return_value=None,
+        ),
         patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
         patch(
             "free_claude_code.cli.control_tui.discover_repos", return_value=[]
@@ -290,6 +298,10 @@ async def test_repositories_page_uses_live_local_inventory() -> None:
             return_value="not connected",
         ),
         patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch(
+            "free_claude_code.cli.control_tui.github_authenticated_user",
+            return_value=None,
+        ),
         patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
         patch(
             "free_claude_code.cli.control_tui.discover_repos",
@@ -360,6 +372,10 @@ async def test_repositories_page_accepts_local_checkout_without_github_authentic
             return_value="not connected",
         ),
         patch("free_claude_code.cli.control_tui.default_roots", return_value=()),
+        patch(
+            "free_claude_code.cli.control_tui.github_authenticated_user",
+            return_value=None,
+        ),
         patch("free_claude_code.cli.control_tui.cache_is_fresh", return_value=False),
         patch(
             "free_claude_code.cli.control_tui.discover_repos",
@@ -506,6 +522,10 @@ async def test_models_page_filters_and_manages_explicit_catalog() -> None:
             "free_claude_code.cli.control_tui.apply_admin_values",
             return_value={"applied": True},
         ) as apply,
+        patch(
+            "free_claude_code.cli.control_tui.get_settings",
+            return_value=app.settings,
+        ),
     ):
         async with app.run_test() as pilot:
             await app._show_page("models")
@@ -992,3 +1012,144 @@ async def test_provider_detail_failures_keep_a_back_action_available() -> None:
                 "Provider details unavailable: admin endpoint is unavailable"
             )
             assert app.query_one("#provider-back")
+
+
+@pytest.mark.asyncio
+async def test_repo_selection_is_canonicalized_and_saved_with_account_scope(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    repo = RepoEntry("checkout", str(checkout), "main", "acme/checkout")
+    app = ControlCenterApp(_settings(), supervisor=None)
+    app._github_identity_loaded = True
+    app._github_user = "acme"
+    with (
+        patch(
+            "free_claude_code.cli.control_tui.cache_path",
+            return_value=tmp_path / "repos.json",
+        ),
+        patch("free_claude_code.cli.control_tui.save_cached_repos") as save,
+    ):
+        async with app.run_test() as pilot:
+            saved = await app._persist_repo_selection(repo)
+            await pilot.pause()
+
+    assert saved is True
+    assert app.selected_repo is not None
+    assert app.selected_repo.path == str(checkout.resolve())
+    save.assert_called_once()
+    assert save.call_args.kwargs["github_user"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_repo_selection_reports_cache_failure_without_claiming_persistence(
+    tmp_path: Path,
+) -> None:
+    repo = RepoEntry("checkout", str(tmp_path / "checkout"), "main", "acme/checkout")
+    app = ControlCenterApp(_settings(), supervisor=None)
+    with (
+        patch(
+            "free_claude_code.cli.control_tui.cache_path",
+            return_value=tmp_path / "repos.json",
+        ),
+        patch(
+            "free_claude_code.cli.control_tui.save_cached_repos",
+            side_effect=OSError("read-only cache"),
+        ),
+    ):
+        async with app.run_test() as pilot:
+            saved = await app._persist_repo_selection(repo)
+            await pilot.pause()
+
+    assert saved is False
+
+
+@pytest.mark.asyncio
+async def test_repository_lookup_failure_keeps_existing_selection(
+    tmp_path: Path,
+) -> None:
+    existing = RepoEntry(
+        "existing", str(tmp_path / "existing"), "main", "acme/existing"
+    )
+    app = ControlCenterApp(_settings(), supervisor=None, selected_repo=existing)
+    with patch(
+        "free_claude_code.cli.control_tui.repository_from_path",
+        side_effect=RuntimeError("git probe failed"),
+    ):
+        async with app.run_test() as pilot:
+            await app._open_repo_path(str(tmp_path / "other"))
+            await pilot.pause()
+
+    assert app.selected_repo == existing
+
+
+@pytest.mark.asyncio
+async def test_settings_editor_rejects_malformed_field_manifest() -> None:
+    app = ControlCenterApp(_settings(), supervisor=None)
+    with patch("free_claude_code.cli.control_tui.get_admin_config", return_value=[]):
+        async with app.run_test() as pilot:
+            await app._show_page("settings")
+            await pilot.pause()
+            await app.setting_edit()
+            await pilot.pause()
+
+    assert app.page == "settings"
+
+
+@pytest.mark.asyncio
+async def test_provider_editor_accepts_mapping_field_manifest() -> None:
+    app = ControlCenterApp(_settings(), supervisor=None)
+    config = {
+        "provider_status": [
+            {
+                "provider_id": "nvidia_nim",
+                "display_name": "NVIDIA NIM",
+                "kind": "api_key",
+            }
+        ],
+        "fields": (
+            {
+                "key": "NVIDIA_NIM_API_KEY",
+                "label": "NVIDIA NIM API Key",
+                "secret": True,
+                "configured": False,
+            },
+        ),
+    }
+    with patch(
+        "free_claude_code.cli.control_tui.get_admin_config", return_value=config
+    ):
+        async with app.run_test() as pilot:
+            await app._show_provider_detail("nvidia_nim")
+            await pilot.pause()
+
+            assert app.query_one("#provider-field-edit", Button)
+
+
+@pytest.mark.asyncio
+async def test_unknown_oauth_state_stops_polling() -> None:
+    app = ControlCenterApp(_settings(), supervisor=None)
+    app._oauth_provider = "openai"
+    with patch(
+        "free_claude_code.cli.control_tui.connected_account_status",
+        return_value={"state": "expired", "message": "login expired"},
+    ):
+        async with app.run_test() as pilot:
+            await app._poll_live_state()
+            await pilot.pause()
+
+    assert app._oauth_provider is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_policy_response_becomes_recoverable_page() -> None:
+    app = ControlCenterApp(_settings(), supervisor=None)
+    with patch("free_claude_code.cli.control_tui.get_admin_status", return_value=[]):
+        async with app.run_test() as pilot:
+            await app._show_page("policy")
+            await pilot.pause()
+
+            assert "Policy unavailable" in str(
+                app.query_one("#summary", Static).content
+            )

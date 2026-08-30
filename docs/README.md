@@ -41,6 +41,7 @@ prerequisites, copyable commands, expected results, and a bounded recovery path.
 | `docs/CLAUDE_CONTEXT_POLICY.md` | Users and maintainers | Explain client context caps, advisory leashes, artifact-backed governance, and compact receipts | Current; boundary-specific live evidence | Context policy, compaction behavior, or receipt interpretation changes |
 | `docs/CLAUDE_LEARNING.md` | Users and maintainers | Explain learning hooks, local state, safety rails, and CLI controls | Current; optional integration | Learning lifecycle, state, privacy, or controls change |
 | `docs/TERMINAL_VISUAL_UX.md` | Users and maintainers | Define bounded image attachment cards, previews, and local source handling | Current; local presentation only | Terminal presentation or local media-source behavior changes |
+| `docs/troubleshooting/tui-hardening.md` | Maintainers and contributors | Record TUI/repository-picker failure classes, recovery behavior, and validation boundaries | Current incident record | TUI state, picker persistence, discovery, or cache behavior changes |
 
 ## Architecture and active contracts
 

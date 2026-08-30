@@ -10,3 +10,14 @@
 - `evidence`: current live branch was fetched from the verified GitHub remote before editing; no unrelated safety-branch changes were included.
 - `residual_gap`: historical commits are not rewritten; a direct default-branch push was rejected because all five required status checks are expected. No workflow run or pull request was created.
 - `next_action`: authorize the protected-branch pull-request/status-check workflow, then merge the already-pushed commit into the default branch.
+
+## 2026-08-30 — TUI and repository-picker hardening
+
+- `scope`: Textual and terminal control surfaces, shared selection picker, and local repository discovery/cache; no server protocol or provider behavior changes.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Documents/ChatGPT/Harness`; base `main` was synchronized to the verified remote before editing.
+- `status`: implementation and tests are prepared on isolated branch `codex/tui-hardening`; publication is pending local CI and the requested pull request.
+- `changed`: serialized page/filter/poll state, recoverable action errors, defensive payload normalization, bounded shutdown/input/rendering, authenticated-owner repository discovery, canonical deduplication, durable selection recency, cache failure reporting, model editor reconciliation, and settings snapshot rebinding; added `docs/troubleshooting/tui-hardening.md`.
+- `validation`: focused TUI/repository suite passed 135 tests; Ruff and `ty` passed for the changed scope. Full local CI is the remaining gate before publication.
+- `evidence`: implemented and locally tested only; installed/live macOS behavior, external GitHub authentication, GitHub Actions, and user visual confirmation remain separate evidence states.
+- `residual_gap`: final commit SHA, remote branch, and pull-request URL will be recorded after the authorized push/open operation; no merge is authorized by this request.
+- `next_action`: bump the patch version and lockfile, run `./scripts/ci.sh`, audit the staged diff, push `codex/tui-hardening`, and open the detailed PR.

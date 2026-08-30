@@ -13,6 +13,7 @@ from .model_picker_tui import run_control_tui
 from .terminal_control import _wait_for_proxy
 
 ControlClientLauncher = Callable[[bool, Sequence[str], Path | None], None]
+TUI_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
 def run_owned_control_center(
@@ -54,7 +55,13 @@ def run_owned_control_center(
         )
     finally:
         supervisor.request_stop()
-        server_thread.join()
+        server_thread.join(TUI_SHUTDOWN_TIMEOUT_SECONDS)
+        if server_thread.is_alive() is True:
+            print(
+                "CodeSwitchyard server worker did not stop within "
+                f"{TUI_SHUTDOWN_TIMEOUT_SECONDS:g}s.",
+                file=sys.stderr,
+            )
 
 
 def run_attached_control_center(

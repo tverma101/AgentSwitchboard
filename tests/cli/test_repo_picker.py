@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -11,6 +12,7 @@ from free_claude_code.cli.repo_picker import (
     _is_github_remote,
     _remote_label,
     _remote_slug,
+    cache_is_fresh,
     choose_repo,
     deduplicate_repos,
     discover_repos,
@@ -337,8 +339,11 @@ def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(
     scanned: list[tuple[Path, ...]] = []
     launched: list[RepoEntry] = []
 
-    def fake_discover(roots: tuple[Path, ...]) -> list[RepoEntry]:
+    def fake_discover(
+        roots: tuple[Path, ...], *, github_user: str | None = None
+    ) -> list[RepoEntry]:
         scanned.append(roots)
+        assert github_user == "acme"
         return [wanted]
 
     def fake_launch(repo: RepoEntry) -> None:
@@ -357,3 +362,194 @@ def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(
     assert scanned == [(explicit_root,)]
     assert launched == [wanted]
     assert load_cached_repos(cache, github_user="acme") == [cached]
+
+
+def test_display_path_does_not_abbreviate_sibling_with_home_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    sibling = tmp_path / "home-backup" / "checkout"
+    sibling.mkdir(parents=True)
+    monkeypatch.setattr(
+        repo_picker.Path,
+        "home",
+        classmethod(lambda _cls: home),
+    )
+
+    entry = RepoEntry("checkout", str(sibling), "main", "acme/checkout")
+
+    assert entry.display_path == str(sibling)
+
+
+def test_scan_roots_remove_nested_and_duplicate_roots(tmp_path: Path) -> None:
+    parent = tmp_path / "projects"
+    nested = parent / "nested"
+    sibling = tmp_path / "other"
+    nested.mkdir(parents=True)
+    sibling.mkdir()
+
+    assert repo_picker._normalized_scan_roots((nested, parent, nested, sibling)) == (
+        parent.resolve(),
+        sibling.resolve(),
+    )
+
+
+def test_deduplicate_repos_merges_stronger_metadata_and_latest_recency(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    merged = deduplicate_repos(
+        [
+            RepoEntry("", str(checkout), "?", "", 2.0),
+            RepoEntry("checkout", str(checkout), "feature/ui", "acme/app", 9.0),
+        ]
+    )
+
+    assert merged == [
+        RepoEntry("checkout", str(checkout.resolve()), "feature/ui", "acme/app", 9.0)
+    ]
+
+
+def test_mark_repo_used_canonicalizes_and_deduplicates_selection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    selected = RepoEntry("checkout", str(checkout), "main", "acme/app")
+    duplicate = RepoEntry("duplicate", str(checkout.resolve()), "?", "", 1.0)
+    monkeypatch.setattr(repo_picker.time, "time", lambda: 42.0)
+
+    marked = repo_picker.mark_repo_used([selected, duplicate], selected)
+
+    assert marked == [
+        RepoEntry("checkout", str(checkout.resolve()), "main", "acme/app", 42.0)
+    ]
+
+
+def test_cache_rejects_another_authenticated_github_user(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repo"
+    _init_repo(repository, ("origin", "https://github.com/acme/repo.git"))
+    cache = tmp_path / "repos.json"
+    save_cached_repos(
+        [RepoEntry("repo", str(repository), "main", "acme/repo", 1.0)],
+        cache,
+        github_user="acme",
+    )
+
+    assert load_cached_repos(cache, github_user="other") == []
+
+
+def test_cache_accepts_case_insensitive_authenticated_user(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repo"
+    _init_repo(repository, ("origin", "https://github.com/acme/repo.git"))
+    cache = tmp_path / "repos.json"
+    save_cached_repos(
+        [RepoEntry("repo", str(repository), "main", "acme/repo", 1.0)],
+        cache,
+        github_user="Acme",
+    )
+
+    assert load_cached_repos(cache, github_user="acme")[0].remote == "acme/repo"
+
+
+def test_cache_write_removes_temporary_file_after_replace_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cache = tmp_path / "repos.json"
+    repo = RepoEntry("repo", str(tmp_path / "repo"), "main", "acme/repo")
+
+    def fail_replace(*_args: object, **_kwargs: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(repo_picker.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        save_cached_repos([repo], cache)
+
+    assert not cache.with_suffix(".json.tmp").exists()
+
+
+def test_main_persists_selected_repository_recency(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repository_path = tmp_path / "selected"
+    repository_path.mkdir()
+    cache = tmp_path / "repos.json"
+    repository = RepoEntry(
+        "selected", str(repository_path), "main", "acme/selected", 0.0
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(repo_picker, "cache_path", lambda: cache)
+    monkeypatch.setattr(repo_picker, "github_authenticated_user", lambda: None)
+    monkeypatch.setattr(repo_picker, "default_roots", lambda: (tmp_path,))
+    monkeypatch.setattr(repo_picker, "cache_is_fresh", lambda _path: False)
+    monkeypatch.setattr(repo_picker, "discover_repos", lambda _roots: [repository])
+    monkeypatch.setattr(
+        repo_picker,
+        "repository_from_path",
+        lambda _path, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        repo_picker,
+        "choose_repo",
+        lambda repos, _query, **_kwargs: repos[0],
+    )
+    monkeypatch.setattr(
+        repo_picker,
+        "launch_repo",
+        lambda _repo: (_ for _ in ()).throw(RuntimeError("launch intercepted")),
+    )
+
+    with pytest.raises(RuntimeError, match="launch intercepted"):
+        repo_picker.main([])
+
+    payload = json.loads(cache.read_text(encoding="utf-8"))
+    assert payload["github_user"] is None
+    assert payload["repos"][0]["last_used"] > 0
+
+
+def test_cache_deduplicates_canonical_paths_before_writing(tmp_path: Path) -> None:
+    cache = tmp_path / "repos.json"
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+
+    save_cached_repos(
+        [
+            RepoEntry("", str(checkout), "?", "", 1.0),
+            RepoEntry("checkout", str(checkout.resolve()), "main", "acme/app", 4.0),
+        ],
+        cache,
+    )
+
+    payload = json.loads(cache.read_text(encoding="utf-8"))
+    assert len(payload["repos"]) == 1
+    assert payload["repos"][0]["path"] == str(checkout.resolve())
+    assert payload["repos"][0]["remote"] == "acme/app"
+    assert payload["repos"][0]["last_used"] == 4.0
+
+
+def test_future_dated_repository_cache_is_not_considered_fresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cache = tmp_path / "repos.json"
+    cache.write_text("{}", encoding="utf-8")
+    os.utime(cache, (2_000.0, 2_000.0))
+    monkeypatch.setattr(repo_picker.time, "time", lambda: 1_000.0)
+
+    assert not cache_is_fresh(cache)
+
+
+def test_discovery_scopes_github_owner_case_insensitively(tmp_path: Path) -> None:
+    owned = tmp_path / "owned"
+    foreign = tmp_path / "foreign"
+    _init_repo(owned, ("origin", "https://github.com/AcMe/service.git"))
+    _init_repo(foreign, ("origin", "https://github.com/other/service.git"))
+
+    repos = discover_repos((tmp_path,), github_user="acme")
+
+    assert [repo.identity for repo in repos] == ["AcMe/service"]

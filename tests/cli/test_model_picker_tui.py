@@ -1,5 +1,6 @@
 """Behavior tests for the tuiui-inspired model settings desktop."""
 
+from types import MappingProxyType
 from typing import Any
 from unittest.mock import patch
 
@@ -263,3 +264,116 @@ async def test_model_picker_discard_restores_saved_state_without_writing() -> No
             assert app.query_one("#models-save", Button).disabled
 
     apply.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_picker_preserves_pending_edits_across_catalog_refresh() -> None:
+    app = TuiuiControlCenterApp(_settings(), supervisor=None)
+    with patch("free_claude_code.cli.control_tui.get_models", return_value=_catalog()):
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+            app._model_inspector_ref = MODEL_B
+            app.make_inspected_model_default()
+            assert app._model_pending_default == MODEL_B
+
+            await app._show_page("models", force=True, refresh_models=True)
+            await pilot.pause()
+
+            assert app._model_pending_default == MODEL_B
+            assert not app.query_one("#models-save", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_model_picker_reconciles_external_default_when_no_edit_is_pending() -> (
+    None
+):
+    app = TuiuiControlCenterApp(_settings(), supervisor=None)
+    with patch("free_claude_code.cli.control_tui.get_models", return_value=_catalog()):
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+            app.settings.model = MODEL_B
+
+            await app._show_page("models", force=True)
+            await pilot.pause()
+
+            assert app._model_initial_default == MODEL_B
+            assert app._model_pending_default == MODEL_B
+            assert app.query_one("#models-save", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_model_picker_preserves_unavailable_configured_default() -> None:
+    settings = _settings()
+    settings.model = "gateway/missing"
+    app = TuiuiControlCenterApp(settings, supervisor=None)
+    with patch("free_claude_code.cli.control_tui.get_models", return_value=_catalog()):
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+            assert app._model_pending_default == "gateway/missing"
+            assert app.query_one("#models-save", Button).disabled
+            assert app._model_inspector_ref == MODEL_A
+            assert app.query_one("#model-inspector-title", Static).content == "Alpha"
+
+
+@pytest.mark.asyncio
+async def test_model_picker_handles_mapping_and_malformed_catalog_shapes() -> None:
+    app = TuiuiControlCenterApp(_settings(), supervisor=None)
+    result = MappingProxyType(
+        {
+            "models": "not-a-sequence",
+            "catalog_models": (MODEL_A, None, ""),
+            "model_labels": None,
+            "catalog_model_labels": None,
+            "model_evidence": None,
+            "catalog_model_evidence": None,
+        }
+    )
+    with patch("free_claude_code.cli.control_tui.get_models", return_value=result):
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+            assert len(app.query(ModelListButton)) == 1
+            assert app._model_visible_refs == (MODEL_A,)
+
+
+@pytest.mark.asyncio
+async def test_model_picker_malformed_save_response_stays_open() -> None:
+    app = TuiuiControlCenterApp(_settings(), supervisor=None)
+    with (
+        patch("free_claude_code.cli.control_tui.get_models", return_value=_catalog()),
+        patch(
+            "free_claude_code.cli.model_picker_tui.apply_admin_values",
+            return_value=[],
+        ) as apply,
+    ):
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+            app._model_inspector_ref = MODEL_B
+            app.make_inspected_model_default()
+            await app.save_model_changes()
+            await pilot.pause()
+
+            assert app.page == "models"
+            assert app._model_pending_default == MODEL_B
+
+    apply.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_is_requested_once_per_picker_render() -> None:
+    app = TuiuiControlCenterApp(_settings(), supervisor=None)
+    with patch(
+        "free_claude_code.cli.control_tui.get_models", return_value=_catalog()
+    ) as get_models:
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+    assert get_models.call_count == 1
