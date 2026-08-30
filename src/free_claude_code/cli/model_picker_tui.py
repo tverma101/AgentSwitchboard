@@ -211,7 +211,9 @@ class GuiModelControlCenterApp(ControlCenterApp):
         await super()._render_models(table, refresh=refresh)
         result = await self._load_model_catalog()
         model_list = self.query_one("#model-list", VerticalScroll)
-        filtered_refs = tuple(row.model_ref for row in model_list.query(ModelToggleButton))
+        filtered_refs = tuple(
+            row.model_ref for row in model_list.query(ModelToggleButton)
+        )
 
         visible_models = result.get("models")
         visible_refs = (
