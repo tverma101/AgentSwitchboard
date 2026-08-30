@@ -77,9 +77,7 @@ async def run_local_a3s_search(query: str) -> list[dict[str, str]] | None:
             title = parsed.hostname
 
         content_value = raw_result.get("content")
-        description = (
-            content_value.strip() if isinstance(content_value, str) else ""
-        )
+        description = content_value.strip() if isinstance(content_value, str) else ""
 
         result = {"title": title[:1_000], "url": url}
         if description:
