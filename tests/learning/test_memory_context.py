@@ -6,9 +6,7 @@ from free_claude_code.learning.memory_context import (
 )
 
 
-def _memory(
-    memory_id: int, text: str, *, scope: str = "project"
-) -> dict[str, object]:
+def _memory(memory_id: int, text: str, *, scope: str = "project") -> dict[str, object]:
     return {"id": memory_id, "scope": scope, "text": text}
 
 
