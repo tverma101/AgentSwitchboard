@@ -1,5 +1,7 @@
 import pytest
 
+from free_claude_code.cli import control_tui
+
 
 _CWD_SENSITIVE_REPO_TESTS = frozenset(
     {
@@ -26,10 +28,7 @@ def deterministic_control_tui_repo_context(
     if request.node.name not in _CWD_SENSITIVE_REPO_TESTS:
         return
 
-    from free_claude_code.cli import control_tui
-    from free_claude_code.cli.repo_picker import RepoEntry
-
-    expected = RepoEntry(
+    expected = control_tui.RepoEntry(
         "Harness",
         "/Users/tejas/Documents/ChatGPT/Harness",
         "main",
@@ -41,9 +40,9 @@ def deterministic_control_tui_repo_context(
         *,
         github_user: str | None = None,
         last_used: float = 0.0,
-    ) -> RepoEntry:
+    ) -> control_tui.RepoEntry:
         del path, github_user
-        return RepoEntry(
+        return control_tui.RepoEntry(
             expected.name,
             expected.path,
             expected.branch,
