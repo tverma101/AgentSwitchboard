@@ -132,6 +132,31 @@ async def test_nondefault_model_enable_is_direct_and_mouse_clickable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_rows_support_enter_and_space_keyboard_selection() -> None:
+    app = TuiuiControlCenterApp(_settings(), supervisor=None)
+    with patch(
+        "free_claude_code.cli.control_tui.get_models",
+        return_value=_catalog(),
+    ):
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+            beta = _row(app, MODEL_B)
+            beta.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._model_inspector_ref == MODEL_B
+
+            alpha = _row(app, MODEL_A)
+            alpha.focus()
+            await pilot.press("space")
+            await pilot.pause()
+            assert app._model_inspector_ref == MODEL_A
+            assert app._model_pending_enabled == {MODEL_A}
+
+
+@pytest.mark.asyncio
 async def test_nondefault_model_disable_is_direct_and_mouse_clickable() -> None:
     app = TuiuiControlCenterApp(_settings(beta_enabled=True), supervisor=None)
     with patch(

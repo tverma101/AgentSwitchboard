@@ -59,6 +59,8 @@ class ModelListButton(Button):
     """One compact, Finder-style model row."""
 
     BINDINGS: ClassVar[list[Binding]] = [
+        Binding("enter", "press", "Inspect model", show=False),
+        Binding("space", "press", "Inspect model", show=False),
         Binding("up", "focus_previous_model", "Previous model", show=False),
         Binding("down", "focus_next_model", "Next model", show=False),
     ]
