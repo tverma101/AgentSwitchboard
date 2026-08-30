@@ -8,16 +8,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .auto_reviewer import (
-    augment_agent_input,
-    process_agent_result,
-    process_background_subagent_stop,
-)
+from .auto_reviewer import augment_agent_input
 from .config import learning_enabled
+from .delegated_worker import (
+    claude_agent_posttool_event,
+    claude_subagent_stop_event,
+)
 from .memory_context import select_bounded_memory_context
 from .reviewer_flow import reviewer_context_for_task
 from .stop_hook import spawn_queue_worker
 from .store import LearningStore, project_identity
+from .worker_reviewer import process_background_worker_stop, process_worker_event
 
 _HOOK_MODULE = "free_claude_code.learning.cli"
 _STOP_HOOK_MODULE = "free_claude_code.learning.stop_hook"
@@ -276,7 +277,7 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
 
 
 def handle_agent_pre(payload: dict[str, Any], store: LearningStore) -> None:
-    """Attach task-matched reviewer context to the actual Agent prompt."""
+    """Claude adapter: attach reviewer context to a native Agent prompt."""
 
     if payload.get("tool_name") != "Agent":
         _emit_empty_hook_result()
@@ -296,9 +297,13 @@ def handle_agent_pre(payload: dict[str, Any], store: LearningStore) -> None:
 
 
 def handle_agent_post(payload: dict[str, Any], store: LearningStore) -> None:
-    """Auto-learn from a completed Agent result or register a background plan."""
+    """Claude adapter: normalize Agent completion before reviewer learning."""
 
-    result = process_agent_result(payload, profile=store.profile)
+    event = claude_agent_posttool_event(payload)
+    if event is None:
+        _emit_empty_hook_result()
+        return
+    result = process_worker_event(event, profile=store.profile)
     if result is None:
         _emit_empty_hook_result()
         return
@@ -315,9 +320,11 @@ def handle_subagent_start(payload: dict[str, Any], store: LearningStore) -> None
 
 
 def handle_subagent_stop(payload: dict[str, Any], store: LearningStore) -> None:
-    """Persist a background Agent result without reading its transcript."""
+    """Claude adapter: normalize background completion before reviewer learning."""
 
-    process_background_subagent_stop(payload, profile=store.profile)
+    event = claude_subagent_stop_event(payload)
+    if event is not None:
+        process_background_worker_stop(event, profile=store.profile)
     _emit_empty_hook_result()
 
 
