@@ -3,14 +3,19 @@ import hashlib
 from collections import defaultdict
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / "src" / "free_claude_code"
 TEST_ROOT = REPO_ROOT / "tests"
 EXCLUDED_DIR_NAMES = frozenset({"_vendor", "__pycache__"})
 DEFINITION_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 FUNCTION_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def _python_files(*roots: Path) -> list[Path]:
@@ -41,20 +46,17 @@ def _allows_redefinition(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 def _scope_label(path: Path, classes: tuple[str, ...]) -> str:
-    relative = path.relative_to(REPO_ROOT)
+    label = _display_path(path)
     if not classes:
-        return str(relative)
-    return f"{relative}:{'.'.join(classes)}"
+        return label
+    return f"{label}:{'.'.join(classes)}"
 
 
 def _duplicate_definition_issues(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     issues: list[str] = []
 
-    def inspect_scope(
-        body: list[ast.stmt],
-        classes: tuple[str, ...],
-    ) -> None:
+    def inspect_scope(body: list[ast.stmt], classes: tuple[str, ...]) -> None:
         seen: dict[str, int] = {}
         for statement in body:
             if not isinstance(statement, DEFINITION_TYPES):
@@ -138,10 +140,9 @@ def _parametrize_duplicate_issues(path: Path) -> list[str]:
                 fingerprint = ast.dump(case, include_attributes=False)
                 previous = seen.get(fingerprint)
                 if previous is not None:
-                    relative = path.relative_to(REPO_ROOT)
                     issues.append(
-                        f"{relative}:{node.lineno} {node.name!r} repeats parametrize "
-                        f"case {previous + 1} as case {index + 1}"
+                        f"{_display_path(path)}:{node.lineno} {node.name!r} repeats "
+                        f"parametrize case {previous + 1} as case {index + 1}"
                     )
                 else:
                     seen[fingerprint] = index
@@ -162,7 +163,7 @@ def _duplicate_file_issues(paths: list[Path]) -> list[str]:
     for duplicates in groups.values():
         if len(duplicates) < 2:
             continue
-        relative = [str(path.relative_to(REPO_ROOT)) for path in duplicates]
+        relative = [_display_path(path) for path in duplicates]
         issues.append(f"exact duplicate Python files: {', '.join(relative)}")
     return sorted(issues)
 
