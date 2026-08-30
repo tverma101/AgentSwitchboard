@@ -183,6 +183,6 @@ __all__ = [
     "MAX_STEER_CHARS",
     "MAX_TRANSCRIPT_BYTES",
     "MAX_TRANSCRIPT_LINE_BYTES",
-    "TranscriptHumanEvidence",
     "recover_queued_human_steers",
+    "TranscriptHumanEvidence",
 ]
