@@ -54,7 +54,10 @@ def test_install_removes_legacy_agent_interception_and_preserves_user_hooks(
                                         "hook agent-pre"
                                     ),
                                 },
-                                {"type": "command", "command": "printf user-agent-hook"},
+                                {
+                                    "type": "command",
+                                    "command": "printf user-agent-hook",
+                                },
                             ],
                         }
                     ],
