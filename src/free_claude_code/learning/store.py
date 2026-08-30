@@ -560,19 +560,20 @@ class LearningStore:
         older_than_days: float = 180.0,
         limit: int = 100,
     ) -> int:
-        """Evict only unused, unpinned, low-confidence stale memories."""
+        """Evict unpinned low-confidence memory after both update and use go stale."""
 
         cutoff = time.time() - max(0.0, older_than_days) * 86400.0
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM memories
-                WHERE pinned = 0 AND use_count = 0 AND last_used_at IS NULL
-                  AND confidence < 0.9 AND updated_at <= ?
-                ORDER BY updated_at ASC, id ASC
+                WHERE pinned = 0 AND confidence < 0.9
+                  AND updated_at <= ?
+                  AND (last_used_at IS NULL OR last_used_at <= ?)
+                ORDER BY COALESCE(last_used_at, updated_at) ASC, updated_at ASC, id ASC
                 LIMIT ?
                 """,
-                (cutoff, max(0, limit)),
+                (cutoff, cutoff, max(0, limit)),
             ).fetchall()
             for row in rows:
                 memory_id = int(row["id"])
@@ -582,7 +583,7 @@ class LearningStore:
                     memory_id=memory_id,
                     action="evict",
                     old=row,
-                    reason="stale-unused-low-confidence-retention",
+                    reason="stale-low-confidence-retention",
                     evidence="retention",
                 )
             return len(rows)
@@ -631,7 +632,7 @@ class LearningStore:
         prompt: str = "",
         limit: int = 10,
     ) -> list[sqlite3.Row]:
-        """Return recent/relevant memories for the current project."""
+        """Rank memories for the current project without mutating usage state."""
 
         rows = self.list_memories(project_key=project_key, limit=200)
         prompt_tokens = _tokens(prompt)
@@ -654,21 +655,31 @@ class LearningStore:
                 -int(row["id"]),
             )
 
-        selected = sorted(rows, key=score, reverse=True)[: max(0, limit)]
-        if selected:
-            now = time.time()
-            ids = [int(row["id"]) for row in selected]
-            placeholders = ",".join("?" for _ in ids)
-            with self._connect() as connection:
-                connection.execute(
-                    f"""
-                    UPDATE memories
-                    SET last_used_at = ?, use_count = use_count + 1
-                    WHERE id IN ({placeholders})
-                    """,
-                    (now, *ids),
-                )
-        return selected
+        return sorted(rows, key=score, reverse=True)[: max(0, limit)]
+
+    def mark_memories_used(self, memory_ids: Iterable[int]) -> int:
+        """Credit only memories that were actually injected into model context."""
+
+        ids = tuple(
+            dict.fromkeys(
+                memory_id
+                for memory_id in memory_ids
+                if isinstance(memory_id, int) and memory_id > 0
+            )
+        )
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE memories
+                SET last_used_at = ?, use_count = use_count + 1
+                WHERE id IN ({placeholders})
+                """,
+                (time.time(), *ids),
+            )
+        return max(0, cursor.rowcount)
 
     def record_skill(
         self,
