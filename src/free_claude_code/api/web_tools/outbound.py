@@ -4,6 +4,7 @@ import asyncio
 import json
 import socket
 from collections.abc import AsyncIterator
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
@@ -185,7 +186,7 @@ async def _drain_aiohttp_body_capped(
             break
 
 
-def _firecrawl_search_items(payload: dict[str, object]) -> list[object]:
+def _firecrawl_search_items(payload: dict[str, object]) -> list[Any]:
     data = payload.get("data")
     if isinstance(data, list):
         return data
