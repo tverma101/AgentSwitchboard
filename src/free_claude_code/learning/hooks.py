@@ -283,7 +283,7 @@ def handle_agent_pre(payload: dict[str, Any], store: LearningStore) -> None:
         return
     try:
         updated = augment_agent_input(tool_input, profile=store.profile)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         updated = None
     if updated is None:
         _emit_empty_hook_result()
