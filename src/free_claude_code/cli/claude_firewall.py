@@ -1,11 +1,11 @@
 """CLI facade for FCC's shared Claude compatibility controls.
 
-The core module owns the exact known-good rollback machinery. This facade adds a
-narrow forward-compatibility policy for managed FCC launches: newer Claude 2.x
-clients are admitted while the established process-wrapper contract still
-holds, unless a version is explicitly blocked. Provider/protocol drift remains
-fail-loud in the existing conversion layers instead of being guessed from a
-patch-version change alone.
+The core module owns strict inspection plus the exact known-good rollback
+machinery. This facade adds a narrow launch-time policy for managed FCC
+sessions: newer Claude 2.x clients may be admitted while the established
+process-wrapper contract still holds, unless a version is explicitly blocked.
+Provider/protocol drift remains fail-loud in the existing conversion layers
+instead of being guessed from a patch-version change alone.
 """
 
 from collections.abc import Mapping
@@ -37,13 +37,50 @@ def inspect_claude_compatibility(
     base_env: Mapping[str, str],
     wrapper_path: Path,
 ) -> ClaudeCompatibilityStatus:
-    """Inspect Claude using exact rollback state plus bounded forward admission."""
+    """Return the strict shared inspection state used by rollback logic."""
 
-    status = _core.inspect_claude_compatibility(
+    return _core.inspect_claude_compatibility(
         binary_path,
         base_env=base_env,
         wrapper_path=wrapper_path,
     )
+
+
+def enforce_claude_compatibility(
+    binary_path: str,
+    *,
+    base_env: Mapping[str, str],
+    wrapper_path: Path,
+) -> ClaudeCompatibilityStatus:
+    """Allow known-good, managed forward-compatible 2.x, or explicit canary."""
+
+    inspected = inspect_claude_compatibility(
+        binary_path,
+        base_env=base_env,
+        wrapper_path=wrapper_path,
+    )
+    status = _launch_status(inspected, base_env=base_env)
+    write_compatibility_receipt(status)
+    if status.state not in {"certified", "forward_compatible", "canary_opt_in"}:
+        version = status.version or "unresolved"
+        raise ClaudeCompatibilityError(
+            "Claude Code version "
+            f"{version} is {status.state} for FCC. Known-good="
+            f"{status.known_good_version}; managed newer Claude 2.x releases "
+            "are admitted automatically, while older, blocked, structurally "
+            "unsupported, and future-major clients require an explicit canary. "
+            f"Set {_core.CLAUDE_ALLOW_UNCERTIFIED_ENV}=1 only for bounded testing."
+        )
+    return status
+
+
+def _launch_status(
+    status: ClaudeCompatibilityStatus,
+    *,
+    base_env: Mapping[str, str],
+) -> ClaudeCompatibilityStatus:
+    """Apply forward admission without changing strict inspection semantics."""
+
     version = status.version
     if version is None or not status.wrapper_valid:
         return status
@@ -73,33 +110,6 @@ def inspect_claude_compatibility(
         and installed >= _core.MIN_PROCESS_WRAPPER_VERSION
     ):
         return replace(status, state="forward_compatible")
-    return status
-
-
-def enforce_claude_compatibility(
-    binary_path: str,
-    *,
-    base_env: Mapping[str, str],
-    wrapper_path: Path,
-) -> ClaudeCompatibilityStatus:
-    """Allow known-good, forward-compatible 2.x, or explicit canary execution."""
-
-    status = inspect_claude_compatibility(
-        binary_path,
-        base_env=base_env,
-        wrapper_path=wrapper_path,
-    )
-    write_compatibility_receipt(status)
-    if status.state not in {"certified", "forward_compatible", "canary_opt_in"}:
-        version = status.version or "unresolved"
-        raise ClaudeCompatibilityError(
-            "Claude Code version "
-            f"{version} is {status.state} for FCC. Known-good="
-            f"{status.known_good_version}; managed newer Claude 2.x releases "
-            "are admitted automatically, while older, blocked, structurally "
-            "unsupported, and future-major clients require an explicit canary. "
-            f"Set {_core.CLAUDE_ALLOW_UNCERTIFIED_ENV}=1 only for bounded testing."
-        )
     return status
 
 
