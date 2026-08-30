@@ -6,7 +6,7 @@ from free_claude_code.learning.reviewer_scars import (
 )
 
 
-def test_parent_projection_keeps_actionable_result_but_hides_private_receipt_fields() -> None:
+def test_parent_projection_hides_private_receipt_fields() -> None:
     canary = "PRIVATE_RECEIPT_CANARY_7F91"
     ticket = SubagentExitTicket(
         status=ExitStatus.DONE,
