@@ -15,9 +15,9 @@
 
 - `scope`: Textual and terminal control surfaces, shared selection picker, and local repository discovery/cache; no server protocol or provider behavior changes.
 - `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Documents/ChatGPT/Harness`; base `main` was synchronized to the verified remote before editing.
-- `status`: implementation and tests are prepared on isolated branch `codex/tui-hardening`; publication is pending local CI and the requested pull request.
+- `status`: committed as `2daf572`, pushed to `harness/codex/tui-hardening`, and opened as [PR #200](https://github.com/tverma101/AgentSwitchboard/pull/200) against `main`; it is not merged.
 - `changed`: serialized page/filter/poll state, recoverable action errors, defensive payload normalization, bounded shutdown/input/rendering, authenticated-owner repository discovery, canonical deduplication, durable selection recency, cache failure reporting, model editor reconciliation, and settings snapshot rebinding; added `docs/troubleshooting/tui-hardening.md`.
-- `validation`: focused TUI/repository suite passed 135 tests; Ruff and `ty` passed for the changed scope. Full local CI is the remaining gate before publication.
+- `validation`: focused TUI/repository suite passed 135 tests; `./scripts/ci.sh` passed with 3791 tests passed, 4 skipped, and 173 deselected; suppression scan, Ruff format/lint, `ty`, and `git diff --check` passed.
 - `evidence`: implemented and locally tested only; installed/live macOS behavior, external GitHub authentication, GitHub Actions, and user visual confirmation remain separate evidence states.
-- `residual_gap`: final commit SHA, remote branch, and pull-request URL will be recorded after the authorized push/open operation; no merge is authorized by this request.
-- `next_action`: bump the patch version and lockfile, run `./scripts/ci.sh`, audit the staged diff, push `codex/tui-hardening`, and open the detailed PR.
+- `residual_gap`: installed/live macOS behavior, external GitHub authentication, GitHub Actions, and user visual confirmation remain separate evidence states; no merge is authorized by this request.
+- `next_action`: review PR #200 and merge only after the project maintainer completes the normal protected-branch review/check workflow.
