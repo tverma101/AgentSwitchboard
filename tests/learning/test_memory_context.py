@@ -6,7 +6,9 @@ from free_claude_code.learning.memory_context import (
 )
 
 
-def _memory(memory_id: int, text: str, *, scope: str = "project") -> dict[str, object]:
+def _memory(
+    memory_id: int, text: str, *, scope: str = "project"
+) -> dict[str, object]:
     return {"id": memory_id, "scope": scope, "text": text}
 
 
@@ -42,7 +44,8 @@ def test_bounded_memory_context_preserves_rank_order_for_records_that_fit() -> N
 
     context = bounded_memory_context(rows, max_bytes=2_000)
 
-    assert context.index("memory:7") < context.index("memory:3") < context.index("memory:9")
+    assert context.index("memory:7") < context.index("memory:3")
+    assert context.index("memory:3") < context.index("memory:9")
 
 
 def test_bounded_memory_context_zero_budget_injects_nothing() -> None:
