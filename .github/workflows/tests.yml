@@ -54,7 +54,7 @@ jobs:
       matrix:
         include:
           - id: ruff-format
-            run: uv run --no-sync ruff format --check --diff
+            run: uv run --no-sync ruff format --check
           - id: ruff-check
             run: uv run --no-sync ruff check
           - id: ty
