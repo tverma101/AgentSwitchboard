@@ -1,5 +1,6 @@
 """Behavior tests for the tuiui-inspired model settings desktop."""
 
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -49,9 +50,7 @@ def _row(app: TuiuiControlCenterApp, model: str) -> ModelListButton:
     return next(row for row in app.query(ModelListButton) if row.model_ref == model)
 
 
-async def _inspect_model(
-    app: TuiuiControlCenterApp, pilot: object, model: str
-) -> None:
+async def _inspect_model(app: TuiuiControlCenterApp, pilot: Any, model: str) -> None:
     row = _row(app, model)
     row.focus()
     await pilot.pause()
