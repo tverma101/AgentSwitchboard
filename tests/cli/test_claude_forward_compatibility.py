@@ -1,11 +1,11 @@
 import stat
 
+from free_claude_code.cli import claude_firewall
 from free_claude_code.cli.claude_firewall import (
     CLAUDE_ALLOW_UNCERTIFIED_ENV,
     CLAUDE_BLOCKED_VERSIONS_ENV,
     CLAUDE_KNOWN_GOOD_VERSION_ENV,
     ensure_process_wrapper,
-    inspect_claude_compatibility,
 )
 
 
@@ -26,83 +26,112 @@ def _managed_env(**extra: str) -> dict[str, str]:
     }
 
 
-def test_managed_newer_patch_is_forward_compatible(tmp_path) -> None:
+def _enforce(binary, wrapper, env, monkeypatch):
+    monkeypatch.setattr(claude_firewall, "write_compatibility_receipt", lambda status: None)
+    return claude_firewall.enforce_claude_compatibility(
+        binary,
+        base_env=env,
+        wrapper_path=wrapper,
+    )
+
+
+def test_managed_newer_patch_is_forward_compatible(tmp_path, monkeypatch) -> None:
     binary = _fake_claude(tmp_path, "2.1.229 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
 
-    status = inspect_claude_compatibility(
-        binary,
-        base_env=_managed_env(),
-        wrapper_path=wrapper,
-    )
+    status = _enforce(binary, wrapper, _managed_env(), monkeypatch)
 
     assert status.version == "2.1.229"
     assert status.state == "forward_compatible"
     assert status.known_good_version == "2.1.228"
 
 
-def test_managed_newer_minor_stays_inside_claude_2x_envelope(tmp_path) -> None:
+def test_managed_newer_minor_stays_inside_claude_2x_envelope(
+    tmp_path, monkeypatch
+) -> None:
     binary = _fake_claude(tmp_path, "2.2.0 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
 
-    status = inspect_claude_compatibility(
-        binary,
-        base_env=_managed_env(),
-        wrapper_path=wrapper,
-    )
+    status = _enforce(binary, wrapper, _managed_env(), monkeypatch)
 
     assert status.state == "forward_compatible"
 
 
-def test_future_major_requires_explicit_canary(tmp_path) -> None:
+def test_future_major_requires_explicit_canary(tmp_path, monkeypatch) -> None:
     binary = _fake_claude(tmp_path, "3.0.0 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
 
-    blocked = inspect_claude_compatibility(
-        binary,
-        base_env=_managed_env(),
-        wrapper_path=wrapper,
-    )
-    canary = inspect_claude_compatibility(
-        binary,
-        base_env=_managed_env(**{CLAUDE_ALLOW_UNCERTIFIED_ENV: "1"}),
-        wrapper_path=wrapper,
-    )
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            claude_firewall, "write_compatibility_receipt", lambda status: None
+        )
+        try:
+            claude_firewall.enforce_claude_compatibility(
+                binary,
+                base_env=_managed_env(),
+                wrapper_path=wrapper,
+            )
+        except claude_firewall.ClaudeCompatibilityError:
+            pass
+        else:
+            raise AssertionError("future Claude major must require an explicit canary")
 
-    assert blocked.state == "quarantined"
+    canary = _enforce(
+        binary,
+        wrapper,
+        _managed_env(**{CLAUDE_ALLOW_UNCERTIFIED_ENV: "1"}),
+        monkeypatch,
+    )
     assert canary.state == "canary_opt_in"
 
 
 def test_known_bad_version_can_be_blocked_without_repinning_every_release(
-    tmp_path,
+    tmp_path, monkeypatch
 ) -> None:
     binary = _fake_claude(tmp_path, "2.1.250 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
     blocked_env = _managed_env(**{CLAUDE_BLOCKED_VERSIONS_ENV: "2.1.249,2.1.250"})
 
-    blocked = inspect_claude_compatibility(
-        binary,
-        base_env=blocked_env,
-        wrapper_path=wrapper,
-    )
-    canary = inspect_claude_compatibility(
-        binary,
-        base_env={**blocked_env, CLAUDE_ALLOW_UNCERTIFIED_ENV: "1"},
-        wrapper_path=wrapper,
-    )
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            claude_firewall, "write_compatibility_receipt", lambda status: None
+        )
+        try:
+            claude_firewall.enforce_claude_compatibility(
+                binary,
+                base_env=blocked_env,
+                wrapper_path=wrapper,
+            )
+        except claude_firewall.ClaudeCompatibilityError:
+            pass
+        else:
+            raise AssertionError("explicitly blocked Claude version must be quarantined")
 
-    assert blocked.state == "quarantined"
+    canary = _enforce(
+        binary,
+        wrapper,
+        {**blocked_env, CLAUDE_ALLOW_UNCERTIFIED_ENV: "1"},
+        monkeypatch,
+    )
     assert canary.state == "canary_opt_in"
 
 
-def test_forward_compatible_version_still_requires_valid_wrapper(tmp_path) -> None:
+def test_forward_compatible_version_still_requires_valid_wrapper(
+    tmp_path, monkeypatch
+) -> None:
     binary = _fake_claude(tmp_path, "2.1.250 Claude Code")
 
-    status = inspect_claude_compatibility(
-        binary,
-        base_env=_managed_env(),
-        wrapper_path=tmp_path / "missing-wrapper",
-    )
-
-    assert status.state == "quarantined"
-    assert status.wrapper_valid is False
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            claude_firewall, "write_compatibility_receipt", lambda status: None
+        )
+        try:
+            claude_firewall.enforce_claude_compatibility(
+                binary,
+                base_env=_managed_env(),
+                wrapper_path=tmp_path / "missing-wrapper",
+            )
+        except claude_firewall.ClaudeCompatibilityError:
+            pass
+        else:
+            raise AssertionError("forward compatibility still requires the FCC wrapper")
