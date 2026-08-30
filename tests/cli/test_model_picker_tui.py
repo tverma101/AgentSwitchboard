@@ -18,6 +18,7 @@ MODEL_A = "open_router/provider/alpha"
 MODEL_B = "open_router/provider/beta"
 CLICK_ROW = (2, 0)
 CLICK_BUTTON = (2, 1)
+TEST_TERMINAL_SIZE = (120, 40)
 
 
 def _settings() -> Settings:
@@ -54,7 +55,7 @@ async def test_model_picker_uses_compact_browser_and_inspector() -> None:
         "free_claude_code.cli.control_tui.get_models",
         return_value=_catalog(),
     ):
-        async with app.run_test() as pilot:
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
             await app._show_page("models")
             await pilot.pause()
 
@@ -65,7 +66,9 @@ async def test_model_picker_uses_compact_browser_and_inspector() -> None:
             assert not _row(app, MODEL_B).has_class("model-row-enabled")
             assert not app.query_one("#model-toggle-access", Button).disabled
             assert app.query_one("#model-set-default", Button).disabled
-            assert "Alpha" in str(app.query_one("#model-inspector-title", Static).content)
+            assert "Alpha" in str(
+                app.query_one("#model-inspector-title", Static).content
+            )
 
 
 @pytest.mark.asyncio
@@ -75,7 +78,7 @@ async def test_default_model_can_be_disabled_with_automatic_handoff() -> None:
         "free_claude_code.cli.control_tui.get_models",
         return_value=_catalog(),
     ):
-        async with app.run_test() as pilot:
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
             await app._show_page("models")
             await pilot.pause()
 
@@ -100,7 +103,7 @@ async def test_nondefault_model_enable_disable_is_direct_and_mouse_clickable() -
         "free_claude_code.cli.control_tui.get_models",
         return_value=_catalog(),
     ):
-        async with app.run_test() as pilot:
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
             await app._show_page("models")
             await pilot.pause()
 
@@ -139,7 +142,7 @@ async def test_model_picker_batches_default_and_visibility_into_one_save() -> No
             return_value={"applied": True},
         ) as apply,
     ):
-        async with app.run_test() as pilot:
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
             await app._show_page("models")
             await pilot.pause()
 
@@ -194,7 +197,7 @@ async def test_model_picker_discard_restores_saved_state_without_writing() -> No
             return_value={"applied": True},
         ) as apply,
     ):
-        async with app.run_test() as pilot:
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
             await app._show_page("models")
             await pilot.pause()
 
