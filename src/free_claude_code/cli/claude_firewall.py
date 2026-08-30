@@ -1,7 +1,7 @@
 """CLI facade for FCC's shared Claude compatibility controls.
 
 The core module owns the exact known-good rollback machinery. This facade adds a
-narrow forward-compatibility policy for normal CLI launches: newer Claude 2.x
+narrow forward-compatibility policy for managed FCC launches: newer Claude 2.x
 clients are admitted while the established process-wrapper contract still
 holds, unless a version is explicitly blocked. Provider/protocol drift remains
 fail-loud in the existing conversion layers instead of being guessed from a
@@ -50,6 +50,11 @@ def inspect_claude_compatibility(
     if version == status.known_good_version:
         return status
 
+    # Forward admission belongs to the managed FCC launcher, which always pins
+    # the rollback contract explicitly. Keep raw/direct helper callers strict.
+    if CLAUDE_KNOWN_GOOD_VERSION_ENV not in base_env:
+        return status
+
     installed = _version_tuple(version)
     known_good = _version_tuple(status.known_good_version)
     if installed == (0, 0, 0) or known_good == (0, 0, 0):
@@ -90,7 +95,7 @@ def enforce_claude_compatibility(
         raise ClaudeCompatibilityError(
             "Claude Code version "
             f"{version} is {status.state} for FCC. Known-good="
-            f"{status.known_good_version}; newer compatible Claude 2.x releases "
+            f"{status.known_good_version}; managed newer Claude 2.x releases "
             "are admitted automatically, while older, blocked, structurally "
             "unsupported, and future-major clients require an explicit canary. "
             f"Set {_core.CLAUDE_ALLOW_UNCERTIFIED_ENV}=1 only for bounded testing."
