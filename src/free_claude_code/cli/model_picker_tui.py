@@ -459,7 +459,10 @@ class TuiuiControlCenterApp(ControlCenterApp):
                     yield Input(placeholder="Search models…", id="model-search")
                 with Horizontal(id="model-workspace"):
                     with Vertical(id="model-browser"):
-                        yield Static("★ default   ✓ enabled   ○ disabled", id="model-browser-title")
+                        yield Static(
+                            "★ default   ✓ enabled   ○ disabled",
+                            id="model-browser-title",
+                        )
                         yield VerticalScroll(id="model-list")
                     with Vertical(id="model-inspector"):
                         yield Static("Select a model", id="model-inspector-title")
