@@ -3,6 +3,7 @@
 from free_claude_code.learning.memory_context import (
     MAX_MEMORY_CONTEXT_BYTES,
     bounded_memory_context,
+    select_bounded_memory_context,
 )
 
 
@@ -26,11 +27,12 @@ def test_bounded_memory_context_skips_one_oversized_record() -> None:
         _memory(2, "small verified project cave"),
     ]
 
-    context = bounded_memory_context(rows, max_bytes=700)
+    selection = select_bounded_memory_context(rows, max_bytes=700)
 
-    assert "memory:1" not in context
-    assert "memory:2" in context
-    assert "small verified project cave" in context
+    assert "memory:1" not in selection.text
+    assert "memory:2" in selection.text
+    assert "small verified project cave" in selection.text
+    assert selection.memory_ids == (2,)
 
 
 def test_bounded_memory_context_preserves_rank_order_for_records_that_fit() -> None:
@@ -40,13 +42,18 @@ def test_bounded_memory_context_preserves_rank_order_for_records_that_fit() -> N
         _memory(9, "third ranked"),
     ]
 
-    context = bounded_memory_context(rows, max_bytes=2_000)
+    selection = select_bounded_memory_context(rows, max_bytes=2_000)
 
-    assert context.index("memory:7") < context.index("memory:3")
-    assert context.index("memory:3") < context.index("memory:9")
+    assert selection.text.index("memory:7") < selection.text.index("memory:3")
+    assert selection.text.index("memory:3") < selection.text.index("memory:9")
+    assert selection.memory_ids == (7, 3, 9)
 
 
 def test_bounded_memory_context_zero_budget_injects_nothing() -> None:
+    selection = select_bounded_memory_context([_memory(1, "keep me")], max_bytes=0)
+
+    assert selection.text == ""
+    assert selection.memory_ids == ()
     assert bounded_memory_context([_memory(1, "keep me")], max_bytes=0) == ""
 
 

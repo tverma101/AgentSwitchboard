@@ -14,7 +14,7 @@ from .delegated_worker import (
     claude_agent_posttool_event,
     claude_subagent_stop_event,
 )
-from .memory_context import bounded_memory_context
+from .memory_context import select_bounded_memory_context
 from .reviewer_flow import reviewer_context_for_task
 from .stop_hook import spawn_queue_worker
 from .store import LearningStore, project_identity
@@ -240,9 +240,10 @@ def handle_session_start(payload: dict[str, Any], store: LearningStore) -> None:
     project_key = project_identity(cwd)
     rows = store.relevant_memories(project_key=project_key, limit=12)
     context = f"FCC Learning active profile: {store.profile}."
-    memory_context = bounded_memory_context(rows, profile=store.profile)
-    if memory_context:
-        context = f"{context}\n{memory_context}"
+    selection = select_bounded_memory_context(rows, profile=store.profile)
+    if selection.text:
+        context = f"{context}\n{selection.text}"
+        store.mark_memories_used(selection.memory_ids)
     _emit_hook_context(
         "SessionStart",
         context,
@@ -265,7 +266,10 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
         prompt=prompt_text,
         limit=8,
     )
-    context_parts = [bounded_memory_context(rows, profile=store.profile)]
+    selection = select_bounded_memory_context(rows, profile=store.profile)
+    if selection.text:
+        store.mark_memories_used(selection.memory_ids)
+    context_parts = [selection.text]
     context_parts.append(reviewer_context_for_task(prompt_text, profile=store.profile))
     _emit_hook_context(
         "UserPromptSubmit", "\n".join(part for part in context_parts if part)
