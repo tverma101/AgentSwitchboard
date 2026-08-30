@@ -1,5 +1,4 @@
 import pytest
-
 from free_claude_code.cli import control_tui
 
 
