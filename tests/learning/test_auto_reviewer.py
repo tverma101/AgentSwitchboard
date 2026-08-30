@@ -125,6 +125,7 @@ def test_foreground_agent_hooks_auto_persist_and_return_parent_context(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setenv("FCC_LEARNING_ENABLED", "1")
     monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
     tool_input = {
         "prompt": "Fix the Chrome browser backend on macOS",
@@ -183,6 +184,7 @@ def test_background_agent_plan_is_metadata_only_and_persists_on_subagent_stop(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     learning_home = tmp_path / "learning"
+    monkeypatch.setenv("FCC_LEARNING_ENABLED", "1")
     monkeypatch.setenv("FCC_LEARNING_HOME", str(learning_home))
     tool_input = {
         "prompt": "Fix the Chrome browser backend on macOS",
