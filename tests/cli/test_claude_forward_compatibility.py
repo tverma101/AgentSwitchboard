@@ -1,5 +1,7 @@
 import stat
 
+import pytest
+
 from free_claude_code.cli import claude_firewall
 from free_claude_code.cli.claude_firewall import (
     CLAUDE_ALLOW_UNCERTIFIED_ENV,
@@ -26,8 +28,16 @@ def _managed_env(**extra: str) -> dict[str, str]:
     }
 
 
-def _enforce(binary, wrapper, env, monkeypatch):
-    monkeypatch.setattr(claude_firewall, "write_compatibility_receipt", lambda status: None)
+def _disable_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        claude_firewall,
+        "write_compatibility_receipt",
+        lambda status: None,
+    )
+
+
+def _enforce(binary, wrapper, env, monkeypatch: pytest.MonkeyPatch):
+    _disable_receipt(monkeypatch)
     return claude_firewall.enforce_claude_compatibility(
         binary,
         base_env=env,
@@ -60,21 +70,14 @@ def test_managed_newer_minor_stays_inside_claude_2x_envelope(
 def test_future_major_requires_explicit_canary(tmp_path, monkeypatch) -> None:
     binary = _fake_claude(tmp_path, "3.0.0 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
+    _disable_receipt(monkeypatch)
 
-    with monkeypatch.context() as scoped:
-        scoped.setattr(
-            claude_firewall, "write_compatibility_receipt", lambda status: None
+    with pytest.raises(claude_firewall.ClaudeCompatibilityError):
+        claude_firewall.enforce_claude_compatibility(
+            binary,
+            base_env=_managed_env(),
+            wrapper_path=wrapper,
         )
-        try:
-            claude_firewall.enforce_claude_compatibility(
-                binary,
-                base_env=_managed_env(),
-                wrapper_path=wrapper,
-            )
-        except claude_firewall.ClaudeCompatibilityError:
-            pass
-        else:
-            raise AssertionError("future Claude major must require an explicit canary")
 
     canary = _enforce(
         binary,
@@ -91,21 +94,14 @@ def test_known_bad_version_can_be_blocked_without_repinning_every_release(
     binary = _fake_claude(tmp_path, "2.1.250 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
     blocked_env = _managed_env(**{CLAUDE_BLOCKED_VERSIONS_ENV: "2.1.249,2.1.250"})
+    _disable_receipt(monkeypatch)
 
-    with monkeypatch.context() as scoped:
-        scoped.setattr(
-            claude_firewall, "write_compatibility_receipt", lambda status: None
+    with pytest.raises(claude_firewall.ClaudeCompatibilityError):
+        claude_firewall.enforce_claude_compatibility(
+            binary,
+            base_env=blocked_env,
+            wrapper_path=wrapper,
         )
-        try:
-            claude_firewall.enforce_claude_compatibility(
-                binary,
-                base_env=blocked_env,
-                wrapper_path=wrapper,
-            )
-        except claude_firewall.ClaudeCompatibilityError:
-            pass
-        else:
-            raise AssertionError("explicitly blocked Claude version must be quarantined")
 
     canary = _enforce(
         binary,
@@ -120,18 +116,11 @@ def test_forward_compatible_version_still_requires_valid_wrapper(
     tmp_path, monkeypatch
 ) -> None:
     binary = _fake_claude(tmp_path, "2.1.250 Claude Code")
+    _disable_receipt(monkeypatch)
 
-    with monkeypatch.context() as scoped:
-        scoped.setattr(
-            claude_firewall, "write_compatibility_receipt", lambda status: None
+    with pytest.raises(claude_firewall.ClaudeCompatibilityError):
+        claude_firewall.enforce_claude_compatibility(
+            binary,
+            base_env=_managed_env(),
+            wrapper_path=tmp_path / "missing-wrapper",
         )
-        try:
-            claude_firewall.enforce_claude_compatibility(
-                binary,
-                base_env=_managed_env(),
-                wrapper_path=tmp_path / "missing-wrapper",
-            )
-        except claude_firewall.ClaudeCompatibilityError:
-            pass
-        else:
-            raise AssertionError("forward compatibility still requires the FCC wrapper")
