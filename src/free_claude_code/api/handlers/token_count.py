@@ -50,17 +50,18 @@ class TokenCountHandler:
     ) -> TokenCountResponse:
         """Count tokens for a request after applying configured model routing.
 
-        Token counting is a read-only side query. It may consume an already
-        established parent route, but it must never establish or mutate parent
-        affinity itself; otherwise a preflight arriving before the real parent
-        request can poison all later child routing for the session.
+        Token counting may reuse an accepted parent route. Before a parent has
+        been accepted, successful token probes can also share a separate probe
+        hint so sequential client preflights stay consistent. Probe hints are
+        deliberately invisible to Messages routing and therefore cannot create
+        authoritative parent affinity or poison later child execution.
         """
         request_id = request_id or new_request_id()
         with logger.contextualize(request_id=request_id):
             try:
                 require_non_empty_messages(request_data.messages)
                 parent_route = (
-                    self._parent_route_registry.lookup(
+                    self._parent_route_registry.lookup_probe(
                         request_data.claude_session_id,
                         generation_id=self._generation_id,
                     )
@@ -82,6 +83,12 @@ class TokenCountHandler:
                     governed_request.system,
                     governed_request.tools,
                 )
+                if self._parent_route_registry is not None:
+                    self._parent_route_registry.remember_probe(
+                        request_data.claude_session_id,
+                        routed.resolved,
+                        generation_id=self._generation_id,
+                    )
                 trace_event(
                     stage="routing",
                     event="free_claude_code.api.route.resolved",
