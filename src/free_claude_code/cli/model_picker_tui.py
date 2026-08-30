@@ -367,25 +367,20 @@ class GuiModelControlCenterApp(ControlCenterApp):
                 )
         self._update_model_editor_summary()
 
-    @on(Button.Pressed, ".model-default-button")
-    def choose_default_model(self, event: Button.Pressed) -> None:
-        """Stage a new default model from its large row button."""
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle model-card controls without selector-dependent dispatch."""
 
-        if not isinstance(event.button, ModelDefaultButton):
+        button = event.button
+        if isinstance(button, ModelDefaultButton):
+            model = button.model_ref
+            self._model_pending_default = model
+            self._model_pending_enabled.add(model)
+            self.selected_model = model
+            self._refresh_model_editor_widgets()
             return
-        model = event.button.model_ref
-        self._model_pending_default = model
-        self._model_pending_enabled.add(model)
-        self.selected_model = model
-        self._refresh_model_editor_widgets()
-
-    @on(Button.Pressed, ".model-access-button")
-    def toggle_model_access(self, event: Button.Pressed) -> None:
-        """Stage direct access for one model without a separate bulk-selection mode."""
-
-        if not isinstance(event.button, ModelAccessButton):
+        if not isinstance(button, ModelAccessButton):
             return
-        model = event.button.model_ref
+        model = button.model_ref
         if model == self._model_pending_default:
             self.notify(
                 "The default model must stay enabled. Choose another default first.",
