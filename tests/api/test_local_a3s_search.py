@@ -106,6 +106,6 @@ async def test_a3s_nonzero_exit_fails_closed_for_outer_fallback() -> None:
             "free_claude_code.api.web_tools.local_search.asyncio.create_subprocess_exec",
             new=AsyncMock(return_value=process),
         ),
+        pytest.raises(RuntimeError, match="exited with code 7"),
     ):
-        with pytest.raises(RuntimeError, match="exited with code 7"):
-            await run_local_a3s_search("capital of France")
+        await run_local_a3s_search("capital of France")
