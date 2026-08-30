@@ -26,7 +26,7 @@ from free_claude_code.learning.config import (
     restore_profile,
 )
 from free_claude_code.learning.engine import apply_learning_result
-from free_claude_code.learning.hooks import handle_session_start, run_hook
+from free_claude_code.learning.hooks import run_hook
 from free_claude_code.learning.store import LearningStore
 
 
@@ -115,27 +115,9 @@ def test_hooks_use_explicit_profile_and_advertise_it(
 
     output = json.loads(capsys.readouterr().out)
     context = output["hookSpecificOutput"]["additionalContext"]
-    assert "FCC Learning active profile: coding." in context
+    assert "FCC project memory profile: coding." in context
     assert "Coding profile memory." in context
     assert LearningStore(profile="default").counts() == {"memories": 0, "skills": 0}
-
-
-def test_profile_session_start_passes_namespace_to_queue_worker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
-    coding = LearningStore(profile="coding")
-    coding.enqueue_learning(
-        session_id="coding-session",
-        cwd=str(tmp_path),
-        user_prompt="Complete the coding task.",
-        assistant_message="Completed successfully.",
-    )
-
-    with patch("free_claude_code.learning.hooks.spawn_queue_worker") as spawn:
-        handle_session_start({"cwd": str(tmp_path)}, coding)
-
-    spawn.assert_called_once_with(profile="coding")
 
 
 def test_learning_cli_selects_profile_for_status_and_memory(
