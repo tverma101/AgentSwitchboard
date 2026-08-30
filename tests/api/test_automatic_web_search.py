@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -7,6 +8,7 @@ import pytest
 from fastapi.responses import StreamingResponse
 
 from free_claude_code.api.handlers import MessagesHandler
+from free_claude_code.api.web_tools.constants import _MAX_SEARCH_RESULTS
 from free_claude_code.api.web_tools.outbound import _run_web_search
 from free_claude_code.api.web_tools.request import (
     HIDDEN_WEB_SEARCH_NAME,
@@ -201,8 +203,10 @@ def _provider_tool_events(query: str) -> list[str]:
 
 async def _body_text(response: StreamingResponse) -> str:
     return "".join(
-        chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
-        async for chunk in response.body_iterator
+        [
+            chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+            async for chunk in response.body_iterator
+        ]
     )
 
 
@@ -297,14 +301,14 @@ class _ResponseContext:
 
 
 class _FirecrawlClient:
-    constructor_kwargs: dict[str, object] = {}
-    stream_args: tuple[object, ...] = ()
-    stream_kwargs: dict[str, object] = {}
+    constructor_kwargs: ClassVar[dict[str, object]] = {}
+    stream_args: ClassVar[tuple[object, ...]] = ()
+    stream_kwargs: ClassVar[dict[str, object]] = {}
 
     def __init__(self, **kwargs: object) -> None:
         type(self).constructor_kwargs = kwargs
 
-    async def __aenter__(self) -> "_FirecrawlClient":
+    async def __aenter__(self) -> _FirecrawlClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -358,5 +362,5 @@ async def test_firecrawl_keyless_search_uses_no_authorization_header() -> None:
     assert "Authorization" not in headers
     assert _FirecrawlClient.stream_kwargs["json"] == {
         "query": "claude docs",
-        "limit": 8,
+        "limit": _MAX_SEARCH_RESULTS,
     }
