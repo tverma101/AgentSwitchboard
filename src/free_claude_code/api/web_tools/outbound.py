@@ -1,6 +1,7 @@
 """Outbound HTTP for web_search / web_fetch (client, body caps, logging)."""
 
 import asyncio
+import json
 import socket
 from collections.abc import AsyncIterator
 from urllib.parse import urljoin, urlparse
@@ -25,7 +26,9 @@ from .egress import (
     WebFetchEgressViolation,
     get_validated_stream_addrinfos_for_egress,
 )
-from .parsers import HTMLTextParser, SearchResultParser
+from .parsers import HTMLTextParser
+
+_FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search"
 
 
 def _safe_public_host_for_logs(url: str) -> str:
@@ -182,27 +185,102 @@ async def _drain_aiohttp_body_capped(
             break
 
 
+def _firecrawl_search_items(payload: dict[str, object]) -> list[object]:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("results", "data", "web"):
+            candidate = data.get(key)
+            if isinstance(candidate, list):
+                return candidate
+
+    results = payload.get("results")
+    if isinstance(results, list):
+        return results
+
+    web = payload.get("web")
+    if isinstance(web, dict):
+        results = web.get("results")
+        if isinstance(results, list):
+            return results
+    return []
+
+
+def _firecrawl_result_url(entry: dict[str, object]) -> str | None:
+    metadata = entry.get("metadata")
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    raw_url = (
+        entry.get("url")
+        or entry.get("sourceURL")
+        or entry.get("sourceUrl")
+        or metadata_dict.get("sourceURL")
+    )
+    if not isinstance(raw_url, str) or len(raw_url) > 2_048:
+        return None
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    return raw_url
+
+
+def _firecrawl_search_results(payload: dict[str, object]) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for raw_entry in _firecrawl_search_items(payload)[:_MAX_SEARCH_RESULTS]:
+        if not isinstance(raw_entry, dict):
+            continue
+        entry = {str(key): value for key, value in raw_entry.items()}
+        url = _firecrawl_result_url(entry)
+        if url is None:
+            continue
+        metadata = entry.get("metadata")
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
+        raw_title = entry.get("title") or metadata_dict.get("title")
+        title = raw_title.strip() if isinstance(raw_title, str) else ""
+        if not title:
+            title = urlparse(url).hostname or url
+        raw_description = (
+            entry.get("description") or entry.get("snippet") or entry.get("summary")
+        )
+        description = (
+            raw_description.strip() if isinstance(raw_description, str) else ""
+        )
+        result = {"title": title[:1_000], "url": url}
+        if description:
+            result["description"] = description[:4_000]
+        normalized.append(result)
+    return normalized
+
+
 async def _run_web_search(query: str) -> list[dict[str, str]]:
+    """Run one anonymous Firecrawl Keyless search against the fixed hosted endpoint."""
+    headers = {**_WEB_TOOL_HTTP_HEADERS, "Content-Type": "application/json"}
     async with (
         httpx.AsyncClient(
             timeout=_REQUEST_TIMEOUT_S,
-            follow_redirects=True,
-            headers=_WEB_TOOL_HTTP_HEADERS,
+            follow_redirects=False,
+            headers=headers,
         ) as client,
         client.stream(
-            "GET",
-            "https://lite.duckduckgo.com/lite/",
-            params={"q": query},
+            "POST",
+            _FIRECRAWL_SEARCH_URL,
+            json={"query": query, "limit": _MAX_SEARCH_RESULTS},
         ) as response,
     ):
         response.raise_for_status()
         body_bytes = await _read_response_body_capped(
             response, constants._MAX_WEB_FETCH_RESPONSE_BYTES
         )
-    text = body_bytes.decode("utf-8", errors="replace")
-    parser = SearchResultParser()
-    parser.feed(text)
-    return parser.results[:_MAX_SEARCH_RESULTS]
+
+    try:
+        payload = json.loads(body_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Firecrawl Search returned malformed JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Firecrawl Search returned a non-object JSON response")
+    if payload.get("success") is False:
+        raise RuntimeError("Firecrawl Search reported an unsuccessful response")
+    return _firecrawl_search_results(payload)
 
 
 async def _run_web_fetch(url: str, egress: WebFetchEgressPolicy) -> dict[str, str]:
