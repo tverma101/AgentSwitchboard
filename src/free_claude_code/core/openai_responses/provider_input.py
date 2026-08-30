@@ -106,6 +106,8 @@ def build_responses_provider_request(
         body["top_p"] = request.top_p
     if request.metadata is not None:
         body["metadata"] = request.metadata
+    if text_config := _responses_text_config(request.output_config):
+        body["text"] = text_config
     provider_tools: list[dict[str, Any]] = []
     for tool in request.tools or ():
         if is_tool_search_tool_definition(tool):
@@ -174,6 +176,7 @@ def _validate_supported_request(request: MessagesRequest) -> None:
     if not _is_noop_context_management(request.context_management):
         unsupported.append("context_management")
     _validate_reasoning_summary(request.output_config)
+    _validate_structured_output_format(request.output_config)
     unsupported.extend(_unsupported_output_config_paths(request.output_config))
     if request.mcp_servers:
         unsupported.append("mcp_servers")
@@ -194,7 +197,7 @@ def _unsupported_output_config_paths(
     return [
         f"output_config.{key}"
         for key in sorted(output_config)
-        if key not in {"effort", "summary"}
+        if key not in {"effort", "format", "summary"}
     ]
 
 
@@ -206,6 +209,46 @@ def _validate_reasoning_summary(output_config: dict[str, Any] | None) -> None:
         raise ResponsesConversionError(
             "output_config.summary must be one of: auto, concise, detailed."
         )
+
+
+def _validate_structured_output_format(output_config: dict[str, Any] | None) -> None:
+    if not output_config or "format" not in output_config:
+        return
+    value = output_config["format"]
+    if not isinstance(value, dict):
+        raise ResponsesConversionError("output_config.format must be an object.")
+    if set(value) != {"type", "schema"}:
+        raise ResponsesConversionError(
+            "output_config.format supports exactly type and schema for Responses."
+        )
+    if value.get("type") != "json_schema":
+        raise ResponsesConversionError(
+            "output_config.format.type must be 'json_schema' for Responses."
+        )
+    if not isinstance(value.get("schema"), dict):
+        raise ResponsesConversionError(
+            "output_config.format.schema must be a JSON Schema object."
+        )
+
+
+def _responses_text_config(
+    output_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    _validate_structured_output_format(output_config)
+    if not output_config or "format" not in output_config:
+        return None
+    value = output_config["format"]
+    if not isinstance(value, dict):
+        return None
+    schema = value["schema"]
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": "claude_output",
+            "schema": schema,
+            "strict": True,
+        }
+    }
 
 
 def _is_noop_context_management(
