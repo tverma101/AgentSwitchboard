@@ -47,12 +47,22 @@ def _catalog() -> dict[str, object]:
     }
 
 
-def _default_button(app: GuiModelControlCenterApp, model: str) -> ModelDefaultButton:
-    return next(button for button in app.query(ModelDefaultButton) if button.model_ref == model)
+def _default_button(
+    app: GuiModelControlCenterApp,
+    model: str,
+) -> ModelDefaultButton:
+    return next(
+        button for button in app.query(ModelDefaultButton) if button.model_ref == model
+    )
 
 
-def _access_button(app: GuiModelControlCenterApp, model: str) -> ModelAccessButton:
-    return next(button for button in app.query(ModelAccessButton) if button.model_ref == model)
+def _access_button(
+    app: GuiModelControlCenterApp,
+    model: str,
+) -> ModelAccessButton:
+    return next(
+        button for button in app.query(ModelAccessButton) if button.model_ref == model
+    )
 
 
 @pytest.mark.asyncio
@@ -146,7 +156,6 @@ async def test_model_picker_discard_restores_saved_state_without_writing() -> No
 
             assert _default_button(app, MODEL_A).has_class("model-default-pending")
             assert _access_button(app, MODEL_A).disabled
-            assert not app.query_one("#models-save", Button).disabled is True
             assert app.query_one("#models-save", Button).disabled
 
     apply.assert_not_called()
