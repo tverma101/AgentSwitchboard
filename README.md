@@ -350,9 +350,8 @@ PASS/UNVERIFIED/SKIPPED map is in the
 Protected push, pull-request, merge-group, and manual-dispatch CI uses only
 GitHub-hosted `ubuntu-latest` runners. It does not depend on a Mac runner,
 Codespaces, a self-hosted label, or the `HARNESS_RUNNER` repository variable.
-The historical `fcc burst` path is not part of this repository's CI policy and
-must not be used to validate or merge changes. For local development, the
-default `scripts/ci.sh` pytest tier is serial and excludes subprocess-heavy
+No package command provisions a self-hosted runner, Codespace, or remote CI job.
+For local development, the default `scripts/ci.sh` pytest tier is serial and excludes subprocess-heavy
 installer, integration, live, and interactive tests; those tiers are explicit.
 
 ### Inspect usage and model labels

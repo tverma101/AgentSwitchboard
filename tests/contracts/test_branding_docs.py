@@ -11,7 +11,6 @@ DOCUMENTS = (
     ROOT / "UPSTREAM.md",
     ROOT / "THIRD_PARTY_NOTICES.md",
     ROOT / "smoke" / "README.md",
-    ROOT / ".github" / "SELF_HOSTED_RUNNER.md",
     ROOT / ".github" / "ISSUE_TEMPLATE" / "bug-report.yml",
     ROOT / ".github" / "ISSUE_TEMPLATE" / "feature-request.yml",
     ROOT / "assets" / "how-it-works.mmd",
