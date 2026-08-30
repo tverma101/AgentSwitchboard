@@ -81,6 +81,10 @@ tests in this branch:
     semantics as the Textual picker;
 35. settings mutations refresh the in-memory snapshot before a subsequent launch,
     preventing stale profile/model state from being resurrected.
+36. the Models provider filter includes configured/usable providers before their
+    first model discovery, and a selected provider with no cached rows receives
+    an actionable refresh message instead of disappearing or showing a generic
+    empty state.
 
 ## Recovery and validation
 

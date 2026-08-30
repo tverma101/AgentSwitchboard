@@ -755,6 +755,42 @@ async def test_models_page_shows_recoverable_empty_state() -> None:
 
 
 @pytest.mark.asyncio
+async def test_models_page_keeps_configured_provider_visible_before_discovery() -> None:
+    app = ControlCenterApp(_settings(), supervisor=None)
+    catalog = {
+        "models": ["open_router/existing-model"],
+        "catalog_models": ["open_router/existing-model"],
+        "model_labels": {},
+        "catalog_model_labels": {},
+        "model_evidence": {},
+        "catalog_model_evidence": {},
+        "provider_status": [
+            {
+                "provider_id": "bai",
+                "display_name": "B.AI",
+                "kind": "remote",
+                "status": "configured",
+                "label": "Configured",
+            }
+        ],
+    }
+    with patch("free_claude_code.cli.control_tui.get_models", return_value=catalog):
+        async with app.run_test() as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+            assert ("B.AI (Configured)", "bai") in app._model_provider_options
+
+            app.model_provider_filter = "bai"
+            await app._show_page("models", force=True, focus_target="#model-provider")
+            await pilot.pause()
+
+            empty = app.query_one("#model-empty", Static)
+            assert "No models cached for B.AI (Configured)" in str(empty.content)
+            assert "Press Refresh" in str(empty.content)
+
+
+@pytest.mark.asyncio
 async def test_models_page_use_model_works_after_search_focus_moves_to_action() -> None:
     app = ControlCenterApp(_settings(), supervisor=None)
     model_a = "open_router/provider/alpha"

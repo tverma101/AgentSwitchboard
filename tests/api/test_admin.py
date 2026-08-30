@@ -547,6 +547,29 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
     }
 
 
+def test_admin_models_expose_configured_provider_before_first_discovery(
+    monkeypatch,
+):
+    monkeypatch.setenv("BAI_API_KEY", "bai-key")
+    app = create_test_app(Settings())
+
+    response = _local_client(app).get("/admin/api/models")
+
+    assert response.status_code == 200
+    provider = next(
+        item
+        for item in response.json()["provider_status"]
+        if item["provider_id"] == "bai"
+    )
+    assert provider == {
+        "provider_id": "bai",
+        "display_name": "B.AI",
+        "kind": "remote",
+        "status": "configured",
+        "label": "Configured",
+    }
+
+
 def test_admin_models_keep_the_picker_catalog_separate_from_visible_models() -> None:
     settings = Settings()
     settings.model = "open_router/configured-model"

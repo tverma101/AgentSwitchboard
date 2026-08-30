@@ -43,8 +43,10 @@ from .control_tui import (
     _format_launch_failure,
     _model_catalog_effective_models,
     _model_catalog_mode,
+    _model_empty_message,
     _model_price_label,
     _model_provider_id,
+    _model_provider_options,
     _model_rows,
 )
 from .repo_picker import RepoEntry
@@ -566,13 +568,16 @@ class TuiuiControlCenterApp(ControlCenterApp):
             await model_list.mount(*rows)
 
         if not filtered_refs:
-            empty_message = (
-                "No models discovered. Press Refresh to query configured providers."
-                if not model_refs
-                else "No models match these filters. Clear search or broaden the filters."
-            )
             await model_list.mount(
-                Static(empty_message, id="model-empty", classes="model-empty")
+                Static(
+                    _model_empty_message(
+                        _model_provider_options(result, model_refs),
+                        self.model_provider_filter,
+                        model_refs,
+                    ),
+                    id="model-empty",
+                    classes="model-empty",
+                )
             )
 
         self.selected_models.clear()

@@ -291,6 +291,104 @@ def _model_provider_id(model: str) -> str:
     return model.split("/", 1)[0] if "/" in model else "other"
 
 
+_REGISTERED_PROVIDER_STATUSES = frozenset(
+    {"configured", "unknown", "connected", "ready", "available", "not_checked"}
+)
+
+
+def _model_provider_statuses(result: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    """Return usable provider status rows keyed by normalized provider id."""
+
+    raw_statuses = result.get("provider_status")
+    if not isinstance(raw_statuses, Sequence) or isinstance(raw_statuses, (str, bytes)):
+        return {}
+    statuses: dict[str, Mapping[str, Any]] = {}
+    for raw_status in raw_statuses:
+        if not isinstance(raw_status, Mapping):
+            continue
+        provider_id = raw_status.get("provider_id")
+        if not isinstance(provider_id, str):
+            continue
+        provider_id = provider_id.strip()
+        status = str(raw_status.get("status", "")).strip().casefold()
+        if not provider_id or status not in _REGISTERED_PROVIDER_STATUSES:
+            continue
+        statuses.setdefault(provider_id.casefold(), raw_status)
+    return statuses
+
+
+def _model_provider_options(
+    result: Mapping[str, Any], model_refs: set[str]
+) -> tuple[tuple[str, str], ...]:
+    """Build provider filters from models plus configured provider inventory.
+
+    Model discovery is deliberately cache-backed. That means a newly configured
+    provider can have zero model rows until its first refresh. Keep that provider
+    in the filter so the UI represents the real configuration state and gives
+    the user a path to refresh it.
+    """
+
+    statuses = _model_provider_statuses(result)
+    providers: dict[str, str] = {}
+    model_provider_keys = {_model_provider_id(model).casefold() for model in model_refs}
+    for model in model_refs:
+        provider_id = _model_provider_id(model)
+        providers.setdefault(provider_id.casefold(), provider_id)
+    for provider_key, status in statuses.items():
+        provider_id = status.get("provider_id")
+        if isinstance(provider_id, str) and provider_id.strip():
+            providers.setdefault(provider_key, provider_id.strip())
+
+    options: list[tuple[str, str]] = [("All providers", "all")]
+    for provider_key, provider_id in sorted(
+        providers.items(), key=lambda item: item[1].casefold()
+    ):
+        status = statuses.get(provider_key)
+        display_name = (
+            str(status.get("display_name", "")).strip() if status is not None else ""
+        )
+        if not display_name:
+            descriptor = PROVIDER_CATALOG.get(provider_id)
+            display_name = (
+                descriptor.display_name if descriptor is not None else provider_id
+            )
+        if provider_key not in model_provider_keys and status is not None:
+            state = str(status.get("label", status.get("status", "configured")))
+            display_name = f"{display_name} ({state})"
+        options.append((display_name, provider_id))
+    return tuple(options)
+
+
+def _model_empty_message(
+    provider_options: Sequence[tuple[str, str]],
+    provider_filter: str,
+    model_refs: set[str],
+) -> str:
+    """Explain whether an empty model list needs a refresh or filter change."""
+
+    if provider_filter != "all":
+        provider_key = provider_filter.casefold()
+        has_provider_models = any(
+            _model_provider_id(model).casefold() == provider_key for model in model_refs
+        )
+        if not has_provider_models:
+            provider_name = next(
+                (
+                    label
+                    for label, value in provider_options
+                    if value.casefold() == provider_key
+                ),
+                provider_filter,
+            )
+            return (
+                f"No models cached for {provider_name}. "
+                "Press Refresh to query this provider."
+            )
+    if model_refs:
+        return "No models match these filters. Clear search or broaden the filters."
+    return "No models discovered. Press Refresh to query configured providers."
+
+
 def _model_price_state(model: str, evidence: Any) -> str:
     """Return ``free``, ``paid``, or ``unknown`` from model evidence.
 
@@ -1444,24 +1542,8 @@ class ControlCenterApp(HarlequinAppBase):
         if highlighted_model is None:
             highlighted_model = self.selected_model
 
-        providers = sorted(
-            {_model_provider_id(model) for model in model_refs},
-            key=str.casefold,
-        )
-        provider_options = tuple(
-            [("All providers", "all")]
-            + [
-                (
-                    (
-                        PROVIDER_CATALOG[provider].display_name
-                        if provider in PROVIDER_CATALOG
-                        else provider
-                    ),
-                    provider,
-                )
-                for provider in providers
-            ]
-        )
+        provider_options = _model_provider_options(result, model_refs)
+        providers = tuple(value for _label, value in provider_options[1:])
         provider_select = self.query_one("#model-provider", Select)
         if self.model_provider_filter not in {"all", *providers}:
             self.model_provider_filter = "all"
@@ -1543,13 +1625,16 @@ class ControlCenterApp(HarlequinAppBase):
         if rows:
             await model_list.mount(*rows)
         if not filtered_refs:
-            empty_message = (
-                "No models discovered. Press Refresh to query configured providers."
-                if not model_refs
-                else "No models match these filters. Clear search or broaden the filters."
-            )
             await model_list.mount(
-                Static(empty_message, id="model-empty", classes="model-empty")
+                Static(
+                    _model_empty_message(
+                        provider_options,
+                        self.model_provider_filter,
+                        model_refs,
+                    ),
+                    id="model-empty",
+                    classes="model-empty",
+                )
             )
 
         if filtered_refs:
