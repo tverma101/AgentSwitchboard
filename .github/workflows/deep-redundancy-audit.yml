@@ -1,0 +1,178 @@
+name: Deep redundancy and test audit
+
+on:
+  push:
+    branches:
+      - codex/redundancy-test-suite-hardening
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/redundancy-test-suite-hardening
+          fetch-depth: 0
+
+      - name: Audit current main plus PR
+        run: |
+          git fetch origin main
+          git merge --no-commit --no-ff origin/main
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+
+      - name: Prepare environment
+        run: uv sync --locked
+
+      - name: Pytest strict collection
+        run: uv run --no-sync pytest --strict --collect-only -q
+
+      - name: Pytest importlib collection
+        run: uv run --no-sync pytest --import-mode=importlib --collect-only -q
+
+      - name: Full strict suite with slowest tests
+        run: uv run --no-sync pytest --strict -q --tb=short --durations=30
+
+      - name: Ruff pytest-style audit
+        shell: bash
+        run: |
+          set +e
+          uv run --no-sync ruff check tests --select PT --output-format concise | tee /tmp/pytest-style.txt
+          status=${PIPESTATUS[0]}
+          echo "PT_EXIT=$status"
+          echo "PT_FINDINGS=$(wc -l < /tmp/pytest-style.txt)"
+          exit 0
+
+      - name: Ruff complexity audit
+        shell: bash
+        run: |
+          set +e
+          uv run --no-sync ruff check src/free_claude_code tests \
+            --select C901,PLR0911,PLR0912,PLR0913,PLR0915 \
+            --output-format concise | tee /tmp/complexity.txt
+          status=${PIPESTATUS[0]}
+          echo "COMPLEXITY_EXIT=$status"
+          echo "COMPLEXITY_FINDINGS=$(wc -l < /tmp/complexity.txt)"
+          exit 0
+
+      - name: Structural clone and suite-shape audit
+        run: |
+          python - <<'PY'
+          import ast
+          import collections
+          import hashlib
+          from pathlib import Path
+
+          root = Path('.')
+          source = sorted((root / 'src' / 'free_claude_code').rglob('*.py'))
+          tests = sorted((root / 'tests').rglob('*.py'))
+
+          def parsed(path):
+              return ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+
+          print('=== largest Python files ===')
+          sizes = []
+          for path in source + tests:
+              if '_vendor' in path.parts:
+                  continue
+              lines = len(path.read_text(encoding='utf-8').splitlines())
+              sizes.append((lines, str(path)))
+          for lines, path in sorted(sizes, reverse=True)[:30]:
+              print(f'{lines:5d} {path}')
+
+          print('=== test counts by file ===')
+          counts = []
+          for path in tests:
+              tree = parsed(path)
+              count = sum(
+                  isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and node.name.startswith('test_')
+                  for node in ast.walk(tree)
+              )
+              counts.append((count, str(path)))
+          for count, path in sorted(counts, reverse=True)[:30]:
+              print(f'{count:4d} {path}')
+
+          print('=== exact cross-file test implementation clones ===')
+          groups = collections.defaultdict(list)
+          for path in tests:
+              tree = parsed(path)
+              for node in ast.walk(tree):
+                  if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                      continue
+                  if not node.name.startswith('test_'):
+                      continue
+                  payload = (
+                      type(node).__name__,
+                      ast.dump(node.args, include_attributes=False),
+                      tuple(ast.dump(x, include_attributes=False) for x in node.decorator_list),
+                      tuple(ast.dump(x, include_attributes=False) for x in node.body),
+                  )
+                  digest = hashlib.sha256(repr(payload).encode()).hexdigest()
+                  groups[digest].append((str(path), node.name, node.lineno))
+          clones = [items for items in groups.values() if len({p for p, _, _ in items}) > 1]
+          for items in sorted(clones, key=len, reverse=True)[:50]:
+              print('CLONE', ' | '.join(f'{p}:{line}:{name}' for p, name, line in items))
+          print(f'CROSS_FILE_TEST_CLONE_GROUPS={len(clones)}')
+
+          print('=== exact production function-body clones ===')
+          prod_groups = collections.defaultdict(list)
+          for path in source:
+              if '_vendor' in path.parts:
+                  continue
+              tree = parsed(path)
+              for node in ast.walk(tree):
+                  if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                      continue
+                  if len(node.body) < 2:
+                      continue
+                  payload = (
+                      type(node).__name__,
+                      ast.dump(node.args, include_attributes=False),
+                      tuple(ast.dump(x, include_attributes=False) for x in node.body),
+                  )
+                  digest = hashlib.sha256(repr(payload).encode()).hexdigest()
+                  prod_groups[digest].append((str(path), node.name, node.lineno))
+          prod_clones = [items for items in prod_groups.values() if len(items) > 1]
+          for items in sorted(prod_clones, key=len, reverse=True)[:50]:
+              print('PROD_CLONE', ' | '.join(f'{p}:{line}:{name}' for p, name, line in items))
+          print(f'PRODUCTION_FUNCTION_CLONE_GROUPS={len(prod_clones)}')
+          PY
+
+      - name: Branch coverage audit
+        run: |
+          uv run --no-sync pytest -q --tb=short \
+            --cov=free_claude_code --cov-branch --cov-report=json:/tmp/coverage.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('/tmp/coverage.json').read_text())
+          totals = report['totals']
+          print('=== coverage totals ===')
+          for key in ('percent_covered', 'num_statements', 'missing_lines', 'num_branches', 'missing_branches'):
+              print(f'{key}={totals.get(key)}')
+
+          rows = []
+          for path, data in report['files'].items():
+              summary = data['summary']
+              statements = summary.get('num_statements', 0)
+              if statements < 20:
+                  continue
+              rows.append((summary.get('percent_covered', 100.0), statements, path, summary))
+          print('=== lowest-covered production files (>=20 statements) ===')
+          for percent, statements, path, summary in sorted(rows)[:40]:
+              print(
+                  f"{percent:6.2f}% {statements:5d} stmts "
+                  f"{summary.get('missing_lines', 0):4d} missing lines "
+                  f"{summary.get('missing_branches', 0):4d} missing branches {path}"
+              )
+          PY
