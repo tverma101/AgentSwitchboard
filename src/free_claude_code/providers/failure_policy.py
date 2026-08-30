@@ -29,6 +29,15 @@ _OVERLOAD_MARKERS = frozenset(
     }
 )
 _INTERNAL_ERROR_MARKERS = frozenset({"internal_server_error", "internal server error"})
+_MODEL_UNAVAILABLE_MARKERS = frozenset(
+    {
+        "model is unavailable",
+        "model unavailable",
+        "model_not_found",
+        "model not found",
+        "model does not exist",
+    }
+)
 _AUTHENTICATION_MESSAGE = "Provider authentication failed. Check API key."
 _PERMISSION_MESSAGE = (
     "Provider denied access. Check credential permissions and model access."
@@ -37,6 +46,10 @@ _RATE_LIMIT_MESSAGE = "Provider rate limit reached. Please retry shortly."
 _INVALID_REQUEST_MESSAGE = "Invalid request sent to provider."
 _CONTEXT_WINDOW_EXCEEDED_MESSAGE = "Provider input exceeds the model context window."
 _OVERLOADED_MESSAGE = "Provider is currently overloaded. Please retry."
+_MODEL_UNAVAILABLE_MESSAGE = (
+    "Configured provider model is unavailable. Select an available model for this "
+    "FCC route in Models, then restart the FCC server."
+)
 
 
 class ProviderRecoveryExhausted(RuntimeError):
@@ -223,6 +236,8 @@ def provider_error_message(
         return _AUTHENTICATION_MESSAGE
     if isinstance(exc, openai.PermissionDeniedError):
         return _PERMISSION_MESSAGE
+    if _is_model_unavailable_error(exc):
+        return _MODEL_UNAVAILABLE_MESSAGE
     if isinstance(exc, openai.BadRequestError):
         return _INVALID_REQUEST_MESSAGE
     return safe_exception_message(exc)
@@ -242,6 +257,8 @@ def _classify_provider_failure(
         return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
     if isinstance(exc, openai.RateLimitError):
         return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
+    if _is_model_unavailable_error(exc):
+        return _failure(FailureKind.UNAVAILABLE, 503, _MODEL_UNAVAILABLE_MESSAGE, False)
     if isinstance(exc, openai.BadRequestError):
         return _failure(
             FailureKind.INVALID_REQUEST, 400, _INVALID_REQUEST_MESSAGE, False
@@ -295,6 +312,13 @@ def _classify_provider_failure(
         if status == 429:
             return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
         if status == 400:
+            if _is_model_unavailable_error(exc):
+                return _failure(
+                    FailureKind.UNAVAILABLE,
+                    503,
+                    _MODEL_UNAVAILABLE_MESSAGE,
+                    False,
+                )
             return _failure(
                 FailureKind.INVALID_REQUEST, 400, _INVALID_REQUEST_MESSAGE, False
             )
@@ -410,6 +434,11 @@ def _body_to_text(body: Any) -> str:
 
 def _has_marker(text: str, markers: frozenset[str]) -> bool:
     return any(marker in text for marker in markers)
+
+
+def _is_model_unavailable_error(exc: BaseException) -> bool:
+    """Recognize a provider's unavailable-model response across SDK wrappers."""
+    return _has_marker(transient_error_text(exc), _MODEL_UNAVAILABLE_MARKERS)
 
 
 def underlying_provider_error(exc: Exception) -> Exception:

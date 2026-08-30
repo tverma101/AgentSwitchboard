@@ -281,6 +281,43 @@ def test_model_mapping(client: TestClient):
     assert kwargs["reasoning"] == ReasoningPolicy.provider_default()
 
 
+def test_model_mapping_inherits_parent_route_from_session_header(client: TestClient):
+    """Logical child model names stay on the parent's resolved route."""
+    mock_provider.stream_response = _mock_stream_response
+    _stream_response_calls.clear()
+    session_headers = {"x-claude-code-session-id": "api-parent-route-test"}
+    parent_payload = {
+        "model": "openai/gpt-5.6-luna",
+        "messages": [{"role": "user", "content": "parent"}],
+        "max_tokens": 100,
+        "stream": True,
+    }
+    child_payload = {
+        "model": "claude-3-haiku-20240307",
+        "messages": [{"role": "user", "content": "child"}],
+        "max_tokens": 100,
+        "stream": True,
+    }
+
+    parent_response = client.post(
+        "/v1/messages",
+        headers=session_headers,
+        json=parent_payload,
+    )
+    child_response = client.post(
+        "/v1/messages",
+        headers=session_headers,
+        json=child_payload,
+    )
+
+    assert parent_response.status_code == 200
+    assert child_response.status_code == 200
+    assert [call[0][0].model for call in _stream_response_calls] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-luna",
+    ]
+
+
 @pytest.mark.parametrize(
     ("failure", "expected_type"),
     [

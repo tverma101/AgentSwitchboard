@@ -55,18 +55,26 @@ from free_claude_code.providers.admission import (
     ProviderAttempt,
 )
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
-from free_claude_code.providers.failure_policy import classify_provider_failure
+from free_claude_code.providers.failure_policy import (
+    RetryableProviderProtocolError,
+    classify_provider_failure,
+)
 from free_claude_code.providers.http import close_provider_stream
 from free_claude_code.providers.model_listing import extract_openai_model_infos
 from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     OpenAIChatProvider,
 )
+from free_claude_code.providers.stream_recovery import RecoveryController
 
 _GO_DOCS_SOURCE = "https://dev.opencode.ai/docs/go/"
 _GO_DOCS_DATE = "2026-08-23"
 _ERROR_BODY_LIMIT = 65_536
 _MUSE_MODEL = "muse-spark-1.2-contributor"
+
+
+class _TruncatedResponsesStream(ResponsesStreamFailure, RetryableProviderProtocolError):
+    """A Go Responses stream ended before its terminal lifecycle event."""
 
 
 def _translate_responses_reasoning(reasoning: ReasoningPolicy) -> ReasoningPolicy:
@@ -444,14 +452,9 @@ class OpenCodeGoProvider(BaseProvider):
             raise
         body.pop("stream", None)
         tool_names = OpenAIToolNameCodec.from_request(request)
-        stream_view = ResponsesProviderStream(
-            message_id=f"msg_{uuid.uuid4()}",
-            model=response_model,
-            input_tokens=input_tokens,
-            log_raw_events=self._config.log_raw_sse_events,
-            tool_names=tool_names,
-        )
+        message_id = f"msg_{uuid.uuid4()}"
         retry_session = self._admission.new_retry_session(request_id=request_id)
+        recovery = RecoveryController()
         evidence = AttemptEvidence(
             turn_id=turn_id,
             request_id=request_id,
@@ -475,56 +478,131 @@ class OpenCodeGoProvider(BaseProvider):
         upstream: Any | None = None
         receipt_emitted = False
         try:
-            while True:
-                attempt = await self._admission.open_attempt(retry_session)
-                evidence.attempt_number = retry_session.attempts_started
+            while retry_session.can_attempt:
+                stream_view = ResponsesProviderStream(
+                    message_id=message_id,
+                    model=response_model,
+                    input_tokens=input_tokens,
+                    log_raw_events=self._config.log_raw_sse_events,
+                    tool_names=tool_names,
+                    reasoning=reasoning,
+                )
+                attempt = None
+                upstream = None
+                stream_opened = False
                 try:
+                    attempt = await self._admission.open_attempt(retry_session)
+                    evidence.attempt_number = retry_session.attempts_started
                     self._authorize_egress(self._base_url)
                     upstream = await self._responses.responses.create(
                         **body, stream=True
                     )
+                    stream_opened = True
+                    for event in stream_view.start():
+                        ready_events = recovery.push(event)
+                        if not ready_events:
+                            continue
+                        evidence.output_committed = True
+                        if evidence.time_to_first_token_ms is None:
+                            evidence.time_to_first_token_ms = max(
+                                0, round((monotonic() - started_at) * 1000)
+                            )
+                        for ready_event in ready_events:
+                            yield ready_event
+                    async for event in upstream:
+                        if not attempt.accepted:
+                            await attempt.succeeded()
+                        payload = event.model_dump(mode="json", exclude_none=True)
+                        event_type = payload.get("type")
+                        if not isinstance(event_type, str):
+                            continue
+                        evidence.add_event(
+                            event_type, byte_count=_payload_size(payload)
+                        )
+                        for output in stream_view.feed(event_type, payload):
+                            ready_events = recovery.push(output)
+                            if not ready_events:
+                                continue
+                            evidence.output_committed = True
+                            if evidence.time_to_first_token_ms is None:
+                                evidence.time_to_first_token_ms = max(
+                                    0, round((monotonic() - started_at) * 1000)
+                                )
+                            for ready_event in ready_events:
+                                yield ready_event
+                    if not stream_view.completed:
+                        raise _TruncatedResponsesStream(
+                            "OpenCode Go Responses stream ended without a terminal event.",
+                            code="missing_terminal",
+                        )
+                    for ready_event in recovery.flush():
+                        evidence.output_committed = True
+                        if evidence.time_to_first_token_ms is None:
+                            evidence.time_to_first_token_ms = max(
+                                0, round((monotonic() - started_at) * 1000)
+                            )
+                        yield ready_event
+                    _sync_responses_evidence(evidence, stream_view)
+                    _record_completed(evidence)
+                    trace_event(
+                        stage="provider",
+                        event="provider.response.completed",
+                        source="provider",
+                        provider="OPENCODE_GO",
+                        request_id=request_id,
+                        protocol=GoProtocol.RESPONSES.value,
+                    )
+                    _trace_receipt(evidence, outcome="completed", started_at=started_at)
+                    receipt_emitted = True
+                    return
                 except Exception as error:
-                    should_retry = await attempt.retry(error)
-                    await attempt.aclose()
-                    attempt = None
-                    if should_retry:
+                    should_retry = False
+                    if attempt is not None and not attempt.accepted:
+                        should_retry = await attempt.retry(error)
+                    retryable = (
+                        attempt.failure_retryable
+                        if attempt is not None and attempt.failure_retryable is not None
+                        else None
+                    )
+                    decision = recovery.advance_failure(
+                        error,
+                        stream_opened=stream_opened,
+                        generated_output=recovery.committed,
+                        complete_tool_salvageable=False,
+                        attempts_remaining=retry_session.attempts_remaining,
+                        retryable_override=retryable,
+                    )
+                    if (
+                        should_retry and not stream_opened and retry_session.can_attempt
+                    ) or (
+                        not decision.committed
+                        and decision.retryable
+                        and retry_session.can_attempt
+                    ):
+                        recovery.discard()
+                        trace_event(
+                            stage="provider",
+                            event="provider.recovery.early_retry",
+                            source="provider",
+                            provider="OPENCODE_GO",
+                            request_id=request_id,
+                            attempts_started=retry_session.attempts_started,
+                            max_attempts=retry_session.max_attempts,
+                        )
                         continue
                     raise
-                break
-            for event in stream_view.start():
-                yield event
-            async for event in upstream:
-                if not attempt.accepted:
-                    await attempt.succeeded()
-                payload = event.model_dump(mode="json", exclude_none=True)
-                event_type = payload.get("type")
-                if not isinstance(event_type, str):
-                    continue
-                evidence.add_event(event_type, byte_count=_payload_size(payload))
-                for output in stream_view.feed(event_type, payload):
-                    if output and evidence.time_to_first_token_ms is None:
-                        evidence.time_to_first_token_ms = max(
-                            0, round((monotonic() - started_at) * 1000)
+                finally:
+                    if upstream is not None:
+                        await close_provider_stream(
+                            upstream,
+                            active_error=sys.exception(),
+                            provider_name="OPENCODE_GO",
+                            request_id=request_id,
                         )
-                    evidence.output_committed = True
-                    yield output
-            if not stream_view.completed:
-                raise ResponsesStreamFailure(
-                    "OpenCode Go Responses stream ended without a terminal event.",
-                    code="missing_terminal",
-                )
-            _sync_responses_evidence(evidence, stream_view)
-            _record_completed(evidence)
-            trace_event(
-                stage="provider",
-                event="provider.response.completed",
-                source="provider",
-                provider="OPENCODE_GO",
-                request_id=request_id,
-                protocol=GoProtocol.RESPONSES.value,
-            )
-            _trace_receipt(evidence, outcome="completed", started_at=started_at)
-            receipt_emitted = True
+                        upstream = None
+                    if attempt is not None:
+                        await attempt.aclose()
+                        attempt = None
         except asyncio.CancelledError, GeneratorExit:
             evidence.fault_domain = FaultDomain.HARNESS_TRANSPORT
             evidence.confidence = FaultConfidence.HIGH

@@ -131,6 +131,21 @@ _CASES = (
         False,
     ),
     _ClassificationCase(
+        "openai_model_unavailable_is_not_invalid_request",
+        lambda: _openai_status_error(
+            openai.BadRequestError,
+            status_code=400,
+            message="Bad Request",
+            body={
+                "type": "server_error",
+                "message": "Error from provider: Model is unavailable.",
+            },
+        ),
+        FailureKind.UNAVAILABLE,
+        503,
+        False,
+    ),
+    _ClassificationCase(
         "openai_overload_marker",
         lambda: _openai_status_error(
             openai.InternalServerError,
@@ -187,6 +202,13 @@ _CASES = (
         lambda: _http_status_error(401, "Unauthorized"),
         FailureKind.AUTHENTICATION,
         401,
+        False,
+    ),
+    _ClassificationCase(
+        "http_400_model_unavailable_is_not_invalid_request",
+        lambda: _http_status_error(400, "Model is unavailable."),
+        FailureKind.UNAVAILABLE,
+        503,
         False,
     ),
     _ClassificationCase(
@@ -286,6 +308,30 @@ def test_classification_preserves_useful_body_while_redacting_credentials() -> N
     assert "Request ID: req_body" in failure.message
     assert "AUTH_SECRET" not in failure.message
     assert "SECRET" not in failure.message
+
+
+def test_model_unavailable_failure_has_a_repair_instruction_and_no_retry() -> None:
+    error = _openai_status_error(
+        openai.BadRequestError,
+        status_code=400,
+        message="Bad Request",
+        body={"message": "Model is unavailable."},
+    )
+
+    failure = classify_provider_failure(
+        error,
+        provider_name="OPENCODE_ZEN",
+        read_timeout_s=60.0,
+        request_id="req_model_unavailable",
+    )
+
+    assert failure.kind is FailureKind.UNAVAILABLE
+    assert failure.status_code == 503
+    assert failure.retryable is False
+    assert "Select an available model for this FCC route in Models" in failure.message
+    assert "Request ID: req_model_unavailable" in failure.message
+    assert not is_retryable_provider_error(error)
+    assert retryable_upstream_status(error) is None
 
 
 def test_auth_failure_preserves_model_error_body_instead_of_masking_it() -> None:

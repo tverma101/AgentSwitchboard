@@ -37,7 +37,7 @@ terminal-browser presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.60.3`; examples below describe this checkout, not every feature proposed in
+`4.62.3`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -173,9 +173,12 @@ picker; custom providers can be added, edited, tested, enabled or disabled,
 and removed through the canonical loopback Admin API. Home redraws use the
 local snapshot; Admin/provider requests only happen after selecting one of
 those actions. API keys are entered through hidden prompts and are never
-echoed back. Repository discovery is local and cached; a selected repository
-and profile apply only to the next Claude/Danger launch and never mutate a
-running session.
+echoed back. Repository discovery scans the current working directory and the
+standard local project roots for Git checkouts; GitHub or other remote metadata
+is optional. The Repositories page marks the default checkout for the next
+launch, keeps the selected row after refresh, and lets you open a path outside
+those roots. A selected repository and profile apply only to the next
+Claude/Danger launch and never mutate a running session.
 FCC keeps two account surfaces independent. The FCC OpenAI/Codex provider uses
 `~/.fcc/auth/openai.json`; installed Codex, Computer Use, and Browser helpers
 use `$CODEX_HOME/auth.json` plus local snapshots under
@@ -474,7 +477,19 @@ Use the tag shown by `ollama list` with the `ollama/` prefix. `OLLAMA_BASE_URL` 
 <details>
 <summary><strong>Optional model-tier routing</strong></summary>
 
-`MODEL` is the fallback for every request. Select a model for `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override an individual Claude Code tier; select **None** to use `MODEL`.
+`MODEL` is the fallback for every request. Claude Code subagents inherit the
+parent request's resolved provider/model by default, so a child that asks for a
+different logical tier cannot silently switch providers. The session route is
+generation-scoped and requires the client to send its stable session header.
+The first logical parent request still honors its matching `MODEL_*` setting;
+when no session route is available, logical model names use that same normal
+tier resolution.
+
+Set `FCC_SUBAGENT_MODEL_INHERIT=false` only when you intentionally want
+`MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override an
+individual Claude Code child tier even when a parent route is available; select
+**None** to use `MODEL`. A direct
+`provider/model` request and a configured model alias remain explicit routes.
 
 For example, route Opus to `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
 

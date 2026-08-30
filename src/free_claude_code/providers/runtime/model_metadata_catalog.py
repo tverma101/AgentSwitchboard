@@ -77,8 +77,9 @@ class ModelMetadataCatalog:
 
     A provider refresh supplies all of its model ids at once. This class then
     performs at most one bounded catalog fetch per TTL window, parses the full
-    source once, and persists only JSON-safe metadata. A catalog outage never
-    blocks provider discovery; provider-native metadata remains usable.
+    source once within byte and record limits, and persists only JSON-safe
+    metadata. A catalog outage never blocks provider discovery; provider-native
+    metadata remains usable.
     """
 
     def __init__(
@@ -364,6 +365,7 @@ def _parse_models_dev_payload(
         raise ValueError("models.dev response was not an object")
 
     records: dict[tuple[str, str], ModelCatalogMetadata] = {}
+    record_count = 0
     for provider, provider_value in document.items():
         if not isinstance(provider, str) or not isinstance(provider_value, Mapping):
             continue
@@ -373,6 +375,9 @@ def _parse_models_dev_payload(
         for model_id, entry in models.items():
             if not isinstance(model_id, str) or not isinstance(entry, Mapping):
                 continue
+            record_count += 1
+            if record_count > MAX_RECORDS:
+                raise ValueError("models.dev response exceeded the safe record limit")
             records[(provider, model_id)] = _metadata_from_entry(
                 provider,
                 entry,

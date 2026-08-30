@@ -1,5 +1,7 @@
 """FastAPI route handlers."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 
@@ -56,6 +58,7 @@ async def _create_messages_response(
             generation_id=lease.generation_id,
             usage_store=services.usage,
             model_info_resolver=services.requests.cached_model_info,
+            parent_route_registry=services.model_routes,
         )
         response = await handler.create(
             request_data,
@@ -94,6 +97,7 @@ async def _create_responses_response(
             generation_id=lease.generation_id,
             usage_store=services.usage,
             model_info_resolver=services.requests.cached_model_info,
+            parent_route_registry=services.model_routes,
         )
         response = await handler.create(
             request_data,
@@ -166,12 +170,30 @@ async def probe_responses(_auth=Depends(require_proxy_auth)):
 async def count_tokens(
     request: Request,
     request_data: TokenCountRequest,
+    services: ApiServices = Depends(get_services),
     settings: Settings = Depends(get_settings),
     _auth=Depends(require_proxy_auth),
 ):
     """Count tokens for a request."""
-    handler = TokenCountHandler(settings, token_counter=get_token_count)
-    return handler.count(request_data, request_id=get_request_id(request))
+    claude_session_id = extract_claude_session_id_from_headers(request.headers)
+    if claude_session_id:
+        request_data = request_data.model_copy(
+            update={"claude_session_id": claude_session_id}
+        )
+    generation_id = getattr(services.requests, "current_generation_id", None)
+    if not isinstance(generation_id, int):
+        generation_id = None
+    handler = TokenCountHandler(
+        settings,
+        token_counter=get_token_count,
+        generation_id=generation_id,
+        parent_route_registry=services.model_routes,
+    )
+    return await asyncio.to_thread(
+        handler.count,
+        request_data,
+        request_id=get_request_id(request),
+    )
 
 
 @router.api_route("/v1/messages/count_tokens", methods=["HEAD", "OPTIONS"])

@@ -118,7 +118,7 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
             launch_client=launch,
         )
 
-    launch.assert_called_once_with(False, ())
+    launch.assert_called_once_with(False, (), Path.cwd())
 
 
 def test_home_redraw_uses_passed_settings_without_admin_io(
@@ -483,7 +483,7 @@ def test_profile_menu_selection_is_next_launch_only() -> None:
     assert selected == "coding"
 
 
-def test_repo_menu_uses_live_authenticated_repo_picker_and_records_last_use(
+def test_repo_menu_uses_live_local_repo_picker_and_records_last_use(
     tmp_path: Path,
 ) -> None:
     from free_claude_code.cli import terminal_control
@@ -497,9 +497,7 @@ def test_repo_menu_uses_live_authenticated_repo_picker_and_records_last_use(
     )
     with (
         patch.object(terminal_control, "cache_path", return_value=cache),
-        patch.object(
-            terminal_control, "github_authenticated_user", return_value="acme"
-        ),
+        patch.object(terminal_control, "repository_from_path", return_value=None),
         patch.object(terminal_control, "default_roots", return_value=()),
         patch.object(terminal_control, "discover_repos", return_value=[repo]),
         patch.object(terminal_control, "choose_repo", return_value=repo),

@@ -3,7 +3,11 @@ from unittest.mock import patch
 import pytest
 
 from free_claude_code.application.errors import UnknownProviderError
-from free_claude_code.application.routing import ModelRouter
+from free_claude_code.application.routing import (
+    ModelRouter,
+    ParentRouteRegistry,
+    ResolvedModel,
+)
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
@@ -23,6 +27,7 @@ def settings():
     settings.model_opus = None
     settings.model_sonnet = None
     settings.model_haiku = None
+    settings.subagent_model_inherit = False
     settings.reasoning_policy = ReasoningPreference.CLIENT
     settings.reasoning_fable = ReasoningPreference.INHERIT
     settings.reasoning_opus = ReasoningPreference.INHERIT
@@ -349,3 +354,120 @@ def test_model_router_preserves_typed_error_for_unknown_mapped_provider(settings
     assert str(exc_info.value) == (
         f"Unknown provider_type: 'unknown'. Supported: '{supported}'"
     )
+
+
+def test_model_router_inherits_parent_route_over_stale_child_tier() -> None:
+    settings = Settings().model_copy(
+        update={
+            "model": "opencode_go/parent-model",
+            "model_haiku": "opencode_zen/stale-child-model",
+            "subagent_model_inherit": True,
+        }
+    )
+    router = ModelRouter(settings)
+    parent = router.resolve("openai/gpt-5.6-luna")
+
+    child = router.resolve("claude-3-haiku-20240307", parent_route=parent)
+
+    assert child.provider_id == parent.provider_id == "openai"
+    assert child.provider_model == parent.provider_model == "gpt-5.6-luna"
+    assert (
+        child.provider_model_ref == parent.provider_model_ref == ("openai/gpt-5.6-luna")
+    )
+    assert child.reasoning_preference is parent.reasoning_preference
+    assert child.route_source == "parent_inherited"
+
+
+def test_model_router_resolves_parent_tier_before_inheritance_is_available() -> None:
+    settings = Settings().model_copy(
+        update={
+            "model": "opencode_go/parent-model",
+            "model_haiku": "opencode_zen/stale-child-model",
+        }
+    )
+
+    resolved = ModelRouter(settings).resolve("claude-3-haiku-20240307")
+
+    assert resolved.provider_model_ref == "opencode_zen/stale-child-model"
+    assert resolved.route_source == "model_haiku"
+
+
+def test_model_router_inherits_a_logical_parent_tier_route() -> None:
+    settings = Settings().model_copy(
+        update={
+            "model": "opencode_go/base-model",
+            "model_opus": "openai/parent-opus-model",
+            "model_haiku": "opencode_zen/stale-child-model",
+            "subagent_model_inherit": True,
+        }
+    )
+    router = ModelRouter(settings)
+
+    parent = router.resolve("claude-3-opus-20240229")
+    child = router.resolve("claude-3-haiku-20240307", parent_route=parent)
+
+    assert parent.provider_model_ref == "openai/parent-opus-model"
+    assert child.provider_model_ref == parent.provider_model_ref
+    assert child.provider_model == parent.provider_model
+    assert child.route_source == "parent_inherited"
+
+
+def test_model_router_can_explicitly_restore_independent_tier_routing() -> None:
+    settings = Settings().model_copy(
+        update={
+            "model": "opencode_go/parent-model",
+            "model_haiku": "opencode_zen/stale-child-model",
+            "subagent_model_inherit": False,
+        }
+    )
+
+    router = ModelRouter(settings)
+    parent = router.resolve("openai/gpt-5.6-luna")
+    resolved = router.resolve(
+        "claude-3-haiku-20240307",
+        parent_route=parent,
+    )
+
+    assert resolved.provider_model_ref == "opencode_zen/stale-child-model"
+    assert resolved.route_source == "model_haiku"
+
+
+def test_parent_route_registry_is_generation_scoped_and_does_not_get_poisoned() -> None:
+    registry = ParentRouteRegistry(max_entries=2)
+    parent = ResolvedModel(
+        original_model="openai/gpt-5.6-luna",
+        provider_id="openai",
+        provider_model="gpt-5.6-luna",
+        provider_model_ref="openai/gpt-5.6-luna",
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+    child_override = ResolvedModel(
+        original_model="openai/gpt-5.6-mini",
+        provider_id="openai",
+        provider_model="gpt-5.6-mini",
+        provider_model_ref="openai/gpt-5.6-mini",
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+
+    registry.remember(" session-a ", parent, generation_id=7)
+    registry.remember("session-a", child_override, generation_id=7)
+
+    assert registry.lookup("session-a", generation_id=7) is parent
+    assert registry.lookup("session-a", generation_id=8) is None
+
+
+def test_parent_route_registry_evicts_oldest_entry() -> None:
+    registry = ParentRouteRegistry(max_entries=1)
+    route = ResolvedModel(
+        original_model="opencode_go/model",
+        provider_id="opencode_go",
+        provider_model="model",
+        provider_model_ref="opencode_go/model",
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+
+    registry.remember("first", route, generation_id=1)
+    registry.remember("second", route, generation_id=1)
+
+    assert registry.lookup("first", generation_id=1) is None
+    assert registry.lookup("second", generation_id=1) is route

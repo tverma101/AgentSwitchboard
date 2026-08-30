@@ -224,3 +224,26 @@ async def test_local_provider_does_not_trigger_public_catalog_fetch(
     result = await catalog.enrich_model_infos({"lmstudio": {original}})
 
     assert result == {"lmstudio": frozenset({original})}
+
+
+@pytest.mark.asyncio
+async def test_catalog_rejects_refresh_above_record_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "free_claude_code.providers.runtime.model_metadata_catalog.MAX_RECORDS",
+        1,
+    )
+
+    async def fetch_payload() -> bytes:
+        return _models_dev_payload()
+
+    path = tmp_path / "model-metadata-catalog.json"
+    catalog = ModelMetadataCatalog(path, fetch_payload=fetch_payload)
+    original = ProviderModelInfo("mimo-v2.5-free")
+
+    result = await catalog.enrich_model_infos({"opencode_zen": {original}})
+
+    assert result == {"opencode_zen": frozenset({original})}
+    assert not path.exists()

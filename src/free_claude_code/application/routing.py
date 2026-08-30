@@ -1,6 +1,9 @@
 """Model routing for Claude-compatible requests."""
 
+from collections import OrderedDict
 from dataclasses import dataclass
+from hashlib import sha256
+from threading import RLock
 
 from loguru import logger
 
@@ -44,6 +47,186 @@ class ResolvedModel:
 
 
 @dataclass(frozen=True, slots=True)
+class _ParentRouteEntry:
+    """One generation-scoped route stored for a Claude session."""
+
+    generation_id: int | None
+    resolved: ResolvedModel
+
+
+class ParentRouteRegistry:
+    """Keep bounded parent affinity and non-authoritative token-probe hints.
+
+    Claude Code can use different logical model names for work performed by a
+    subagent. The proxy therefore retains the route selected for the accepted
+    parent request. Token-count preflights need similar short-lived consistency,
+    but they must never establish authoritative session routing before a real
+    parent request succeeds. Probe hints live in a separate namespace that is
+    visible only to token-count routing; normal ``lookup()`` never returns them.
+
+    Only SHA-256 digests of opaque session ids are stored. Both namespaces are
+    generation-scoped so a provider/config reload cannot reuse an old route.
+    """
+
+    def __init__(self, *, max_entries: int = 256) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be positive")
+        self._entries: OrderedDict[str, _ParentRouteEntry] = OrderedDict()
+        self._probe_entries: OrderedDict[str, _ParentRouteEntry] = OrderedDict()
+        self._max_entries = max_entries
+        self._lock = RLock()
+
+    def lookup(
+        self,
+        session_id: str | None,
+        *,
+        generation_id: int | None = None,
+    ) -> ResolvedModel | None:
+        """Return only an accepted parent route for this provider generation."""
+
+        key = _session_key(session_id)
+        if key is None:
+            return None
+        with self._lock:
+            return self._lookup_entry(
+                self._entries,
+                key,
+                generation_id=generation_id,
+            )
+
+    def lookup_probe(
+        self,
+        session_id: str | None,
+        *,
+        generation_id: int | None = None,
+    ) -> ResolvedModel | None:
+        """Return accepted parent affinity, otherwise a token-probe-only hint."""
+
+        key = _session_key(session_id)
+        if key is None:
+            return None
+        with self._lock:
+            committed = self._lookup_entry(
+                self._entries,
+                key,
+                generation_id=generation_id,
+            )
+            if committed is not None:
+                return committed
+            return self._lookup_entry(
+                self._probe_entries,
+                key,
+                generation_id=generation_id,
+            )
+
+    def remember(
+        self,
+        session_id: str | None,
+        resolved: ResolvedModel,
+        *,
+        generation_id: int | None = None,
+    ) -> None:
+        """Store the first accepted parent route for a session.
+
+        Retaining the first accepted route is deliberate: a child may send a
+        direct provider/model request of its own, but that must not change the
+        route inherited by siblings or later parent turns. Any preflight-only
+        hint is discarded as soon as authoritative parent affinity exists.
+        """
+
+        key = _session_key(session_id)
+        if key is None:
+            return
+        with self._lock:
+            self._probe_entries.pop(key, None)
+            existing = self._entries.get(key)
+            if existing is not None and (
+                generation_id is None or existing.generation_id == generation_id
+            ):
+                self._entries.move_to_end(key)
+                return
+            self._entries[key] = _ParentRouteEntry(
+                generation_id=generation_id,
+                resolved=resolved,
+            )
+            self._entries.move_to_end(key)
+            self._trim(self._entries)
+
+    def remember_probe(
+        self,
+        session_id: str | None,
+        resolved: ResolvedModel,
+        *,
+        generation_id: int | None = None,
+    ) -> None:
+        """Remember a token-count hint without creating parent-route affinity."""
+
+        key = _session_key(session_id)
+        if key is None:
+            return
+        with self._lock:
+            committed = self._entries.get(key)
+            if committed is not None and (
+                generation_id is None or committed.generation_id == generation_id
+            ):
+                return
+            existing = self._probe_entries.get(key)
+            if existing is not None and (
+                generation_id is None or existing.generation_id == generation_id
+            ):
+                self._probe_entries.move_to_end(key)
+                return
+            self._probe_entries[key] = _ParentRouteEntry(
+                generation_id=generation_id,
+                resolved=resolved,
+            )
+            self._probe_entries.move_to_end(key)
+            self._trim(self._probe_entries)
+
+    def _lookup_entry(
+        self,
+        entries: OrderedDict[str, _ParentRouteEntry],
+        key: str,
+        *,
+        generation_id: int | None,
+    ) -> ResolvedModel | None:
+        entry = entries.get(key)
+        if entry is None:
+            return None
+        if (
+            generation_id is not None
+            and entry.generation_id is not None
+            and entry.generation_id != generation_id
+        ):
+            entries.pop(key, None)
+            return None
+        entries.move_to_end(key)
+        return entry.resolved
+
+    def _trim(self, entries: OrderedDict[str, _ParentRouteEntry]) -> None:
+        while len(entries) > self._max_entries:
+            entries.popitem(last=False)
+
+    def clear(self) -> None:
+        """Discard all retained parent routes and token-probe hints."""
+
+        with self._lock:
+            self._entries.clear()
+            self._probe_entries.clear()
+
+
+def _session_key(session_id: str | None) -> str | None:
+    """Hash one bounded opaque session id without retaining user identifiers."""
+
+    if not isinstance(session_id, str):
+        return None
+    normalized = session_id.strip()
+    if not normalized or len(normalized) > 512:
+        return None
+    return sha256(normalized.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class RoutedMessagesRequest:
     request: MessagesRequest
     resolved: ResolvedModel
@@ -65,7 +248,14 @@ class ModelRouter:
             getattr(settings, "model_aliases", "")
         )
 
-    def resolve(self, claude_model_name: str) -> ResolvedModel:
+    def resolve(
+        self,
+        claude_model_name: str,
+        *,
+        parent_route: ResolvedModel | None = None,
+    ) -> ResolvedModel:
+        """Resolve a model, inheriting the parent route for logical children."""
+
         normalized_inbound = normalize_model_ref(claude_model_name)
         alias_target = self._model_aliases.resolve_if_configured(
             normalized_inbound.model_ref
@@ -109,6 +299,23 @@ class ModelRouter:
                 alias_applied=alias_applied,
             )
 
+        if (
+            parent_route is not None
+            and self._subagent_model_inheritance_enabled()
+            and not alias_applied
+        ):
+            logger.debug(
+                "MODEL INHERIT: '{}' -> provider='{}' model='{}' source=parent_inherited",
+                claude_model_name,
+                parent_route.provider_id,
+                parent_route.provider_model,
+            )
+            return self._resolve_from_parent(
+                claude_model_name,
+                parent_route,
+                virtual_context_window=virtual_context_window,
+            )
+
         configured_ref, route_source = self._resolve_model_ref_with_source(
             requested_model
         )
@@ -116,7 +323,12 @@ class ModelRouter:
         provider_model_ref = configured_model.model_ref
         if virtual_context_window is None:
             virtual_context_window = configured_model.virtual_context_window
-        reasoning_preference = self._resolve_reasoning_preference(claude_model_name)
+        reasoning_preference = self._resolve_reasoning_preference(
+            claude_model_name,
+            use_route_override=(
+                alias_applied or not self._subagent_model_inheritance_enabled()
+            ),
+        )
         provider_id = parse_provider_type(provider_model_ref)
         self._validate_provider_id(provider_id)
         provider_model = parse_model_name(provider_model_ref)
@@ -137,6 +349,33 @@ class ModelRouter:
             route_source=route_source,
             alias_applied=alias_applied,
         )
+
+    def _resolve_from_parent(
+        self,
+        claude_model_name: str,
+        parent_route: ResolvedModel,
+        *,
+        virtual_context_window: int | None,
+    ) -> ResolvedModel:
+        """Project the parent provider route onto the child's model name."""
+
+        if virtual_context_window is None:
+            virtual_context_window = parent_route.virtual_context_window
+        return ResolvedModel(
+            original_model=claude_model_name,
+            provider_id=parent_route.provider_id,
+            provider_model=parent_route.provider_model,
+            provider_model_ref=parent_route.provider_model_ref,
+            reasoning_preference=parent_route.reasoning_preference,
+            virtual_context_window=virtual_context_window,
+            route_source="parent_inherited",
+            alias_applied=False,
+        )
+
+    def _subagent_model_inheritance_enabled(self) -> bool:
+        """Return the safe default for parent-model inheritance."""
+
+        return bool(getattr(self._settings, "subagent_model_inherit", True))
 
     @staticmethod
     def _validate_provider_id(provider_id: str) -> None:
@@ -182,12 +421,15 @@ class ModelRouter:
         return self._settings.model, "model"
 
     def _resolve_reasoning_preference(
-        self, claude_model_name: str
+        self,
+        claude_model_name: str,
+        *,
+        use_route_override: bool,
     ) -> ReasoningPreference:
         """Resolve a route override without inspecting the provider model."""
 
         route = self._matched_route(claude_model_name)
-        if route is not None:
+        if use_route_override and route is not None:
             preference = getattr(self._settings, route[2])
             if preference is not ReasoningPreference.INHERIT:
                 return preference
@@ -202,10 +444,13 @@ class ModelRouter:
         )
 
     def resolve_messages_request(
-        self, request: MessagesRequest
+        self,
+        request: MessagesRequest,
+        *,
+        parent_route: ResolvedModel | None = None,
     ) -> RoutedMessagesRequest:
         """Return an internal routed request context."""
-        resolved = self.resolve(request.model)
+        resolved = self.resolve(request.model, parent_route=parent_route)
         routed = request.model_copy(deep=True)
         routed.model = resolved.provider_model
         return RoutedMessagesRequest(
@@ -218,10 +463,13 @@ class ModelRouter:
         )
 
     def resolve_token_count_request(
-        self, request: TokenCountRequest
+        self,
+        request: TokenCountRequest,
+        *,
+        parent_route: ResolvedModel | None = None,
     ) -> RoutedTokenCountRequest:
         """Return an internal token-count request context."""
-        resolved = self.resolve(request.model)
+        resolved = self.resolve(request.model, parent_route=parent_route)
         routed = request.model_copy(
             update={"model": resolved.provider_model}, deep=True
         )

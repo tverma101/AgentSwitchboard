@@ -627,6 +627,7 @@ class TestManagedClaudeSession:
             assert env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
             assert env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
             assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+            assert env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "75"
             assert env["DISABLE_TELEMETRY"] == "1"
             assert "ANTHROPIC_API_KEY" not in env
             assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in env

@@ -16,6 +16,7 @@ from free_claude_code.application.helpers import (
 from free_claude_code.cli.codex_computer_use_mcp import (
     CLAUDE_COMPUTER_USE_TOOLS,
     CLAUDE_MCP_TOOL_SCHEMA_MAX_BYTES,
+    MCP_TOOL_LIST_TTL_MS,
     CodexComputerUseMcpServer,
     _elicitation_handler,
     _PendingCall,
@@ -110,6 +111,8 @@ def test_initialize_and_tools_list_are_local_and_deterministic(
     assert messages[0]["result"]["serverInfo"]["name"] == "fcc-codex-computer-use"
     assert messages[0]["result"]["protocolVersion"] == "2025-06-18"
     assert messages[1]["result"]["tools"] == list(CLAUDE_COMPUTER_USE_TOOLS)
+    assert messages[1]["result"]["ttlMs"] == MCP_TOOL_LIST_TTL_MS
+    assert messages[1]["result"]["cacheScope"] == "public"
 
 
 def test_native_result_returns_content_and_metadata_only_receipt(

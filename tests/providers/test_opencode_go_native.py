@@ -10,6 +10,11 @@ import pytest
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
+from free_claude_code.core.anthropic.stream_contracts import (
+    assert_anthropic_stream_contract,
+    parse_sse_text,
+    thinking_content,
+)
 from free_claude_code.core.fault_attribution import (
     AttemptEvidence,
     FaultConfidence,
@@ -53,6 +58,7 @@ class _ResponsesEvent:
 class _ResponsesStream:
     def __init__(self, events: list[dict[str, object]]) -> None:
         self._events = iter(_ResponsesEvent(event) for event in events)
+        self.closed = False
 
     def __aiter__(self) -> AsyncIterator[_ResponsesEvent]:
         return self
@@ -64,7 +70,22 @@ class _ResponsesStream:
             raise StopAsyncIteration from exc
 
     async def aclose(self) -> None:
-        return None
+        self.closed = True
+
+
+class _FailingResponsesStream:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+        self.closed = False
+
+    def __aiter__(self) -> AsyncIterator[_ResponsesEvent]:
+        return self
+
+    async def __anext__(self) -> _ResponsesEvent:
+        raise self._error
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _provider_request(model: str) -> MessagesRequest:
@@ -472,6 +493,265 @@ async def test_responses_stream_retries_pre_payload_transient_status() -> None:
 
     assert provider._responses.responses.create.await_count == 2
     assert any("ok" in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_retries_before_commit_when_iterator_cuts_off() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=2,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    first_stream = _FailingResponsesStream(httpx.ReadError("connection closed"))
+    provider._responses.responses.create = AsyncMock(
+        side_effect=[
+            first_stream,
+            _ResponsesStream(
+                [
+                    {"type": "response.output_text.delta", "delta": "ok"},
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp_after_cutoff",
+                            "usage": {"input_tokens": 1, "output_tokens": 1},
+                        },
+                    },
+                ]
+            ),
+        ]
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                _provider_request("gpt-5.6-luna"),
+                request_id="req_iterator_cutoff",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert provider._responses.responses.create.await_count == 2
+    assert first_stream.closed is True
+    parsed = parse_sse_text("".join(events))
+    assert_anthropic_stream_contract(parsed)
+    assert "ok" in "".join(
+        event.data["delta"]["text"]
+        for event in parsed
+        if event.event == "content_block_delta"
+        and event.data["delta"].get("type") == "text_delta"
+    )
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_retries_when_iterator_ends_without_terminal() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=2,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    first_stream = _ResponsesStream(
+        [{"type": "response.output_text.delta", "delta": "partial"}]
+    )
+    provider._responses.responses.create = AsyncMock(
+        side_effect=[
+            first_stream,
+            _ResponsesStream(
+                [
+                    {"type": "response.output_text.delta", "delta": "complete"},
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp_after_eof",
+                            "usage": {"input_tokens": 1, "output_tokens": 1},
+                        },
+                    },
+                ]
+            ),
+        ]
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                _provider_request("gpt-5.6-luna"),
+                request_id="req_iterator_eof",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    assert provider._responses.responses.create.await_count == 2
+    assert first_stream.closed is True
+    parsed = parse_sse_text("".join(events))
+    assert_anthropic_stream_contract(parsed)
+    text = "".join(
+        event.data["delta"]["text"]
+        for event in parsed
+        if event.event == "content_block_delta"
+        and event.data["delta"].get("type") == "text_delta"
+    )
+    assert text == "complete"
+
+
+@pytest.mark.asyncio
+async def test_luna_responses_stream_hides_reasoning_when_explicitly_off() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    provider._responses.responses.create = AsyncMock(
+        return_value=_ResponsesStream(
+            [
+                {
+                    "type": "response.reasoning_summary_text.delta",
+                    "item_id": "rs_off",
+                    "summary_index": 0,
+                    "delta": "hidden reasoning",
+                },
+                {"type": "response.output_text.delta", "delta": "visible answer"},
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_off",
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                },
+            ]
+        )
+    )
+
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                _provider_request("gpt-5.6-luna"),
+                request_id="req_reasoning_off",
+                reasoning=ReasoningPolicy.off(),
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    parsed = parse_sse_text("".join(events))
+    assert_anthropic_stream_contract(parsed)
+    assert thinking_content(parsed) == ""
+    assert "visible answer" in "".join(
+        event.data["delta"]["text"]
+        for event in parsed
+        if event.event == "content_block_delta"
+        and event.data["delta"].get("type") == "text_delta"
+    )
+    request_kwargs = provider._responses.responses.create.call_args.kwargs
+    assert request_kwargs["reasoning"] == {"effort": "minimal", "summary": "auto"}
+
+
+@pytest.mark.asyncio
+async def test_luna_responses_stream_preserves_final_reasoning_summary() -> None:
+    provider = OpenCodeGoProvider(
+        ProviderConfig(
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        ),
+        admission=ProviderAdmissionController(
+            provider_name="OPENCODE_GO",
+            max_attempts=1,
+            base_delay=0,
+            jitter=0,
+        ),
+    )
+    provider._responses.responses.create = AsyncMock(
+        return_value=_ResponsesStream(
+            [
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {"type": "reasoning", "id": "rs_luna"},
+                },
+                {
+                    "type": "response.reasoning_summary_text.done",
+                    "item_id": "rs_luna",
+                    "output_index": 0,
+                    "summary_index": 0,
+                    "text": "Luna final summary",
+                },
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": {
+                        "type": "reasoning",
+                        "id": "rs_luna",
+                        "summary": [
+                            {"type": "summary_text", "text": "Luna final summary"}
+                        ],
+                    },
+                },
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_luna_summary",
+                        "output": [
+                            {
+                                "type": "reasoning",
+                                "id": "rs_luna",
+                                "summary": [
+                                    {
+                                        "type": "summary_text",
+                                        "text": "Luna final summary",
+                                    }
+                                ],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 4},
+                    },
+                },
+            ]
+        )
+    )
+    try:
+        events = [
+            event
+            async for event in provider.stream_response(
+                _provider_request("gpt-5.6-luna"),
+                request_id="req_luna_summary",
+            )
+        ]
+    finally:
+        await provider.cleanup()
+
+    parsed = parse_sse_text("".join(events))
+    assert_anthropic_stream_contract(parsed)
+    assert thinking_content(parsed) == "Luna final summary"
+    assert [
+        event.data["delta"]["thinking"]
+        for event in parsed
+        if event.event == "content_block_delta"
+        and event.data["delta"].get("type") == "thinking_delta"
+    ] == ["Luna final summary"]
 
 
 @pytest.mark.asyncio

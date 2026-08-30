@@ -63,6 +63,7 @@ class TestSettings:
         assert settings.vertex_location == "global"
         assert settings.model_metadata_catalog_enabled is True
         assert settings.model_metadata_catalog_ttl_hours == 24.0
+        assert settings.subagent_model_inherit is True
 
     def test_default_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
         """Unset CLAUDE_WORKSPACE stores agent data under the fixed path helper."""
@@ -530,6 +531,7 @@ class TestSettings:
         monkeypatch.setenv("REASONING_FABLE", "high")
         monkeypatch.setenv("REASONING_OPUS", "max")
         monkeypatch.setenv("REASONING_HAIKU", "off")
+        monkeypatch.setenv("FCC_SUBAGENT_MODEL_INHERIT", "false")
         settings = Settings()
         router = ModelRouter(settings)
         assert (
@@ -874,6 +876,14 @@ class TestPerModelMapping:
         s = Settings()
         assert s.model_fable == "open_router/anthropic/claude-fable-5"
 
+    def test_subagent_model_inherit_from_env(self, monkeypatch):
+        """FCC_SUBAGENT_MODEL_INHERIT controls parent-route inheritance."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("FCC_SUBAGENT_MODEL_INHERIT", "false")
+        s = Settings()
+        assert s.subagent_model_inherit is False
+
     @pytest.mark.parametrize(
         "env_var", ["MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"]
     )
@@ -1003,6 +1013,7 @@ class TestPerModelMapping:
 
         s = Settings()
         s.model_fable = "open_router/anthropic/claude-fable-5"
+        s.subagent_model_inherit = False
         assert (
             ModelRouter(s).resolve("claude-fable-5").provider_model_ref
             == "open_router/anthropic/claude-fable-5"
@@ -1015,6 +1026,7 @@ class TestPerModelMapping:
 
         s = Settings()
         s.model_opus = "open_router/deepseek/deepseek-r1"
+        s.subagent_model_inherit = False
         router = ModelRouter(s)
         assert (
             router.resolve("claude-opus-4-20250514").provider_model_ref
@@ -1036,6 +1048,7 @@ class TestPerModelMapping:
 
         s = Settings()
         s.model_sonnet = "nvidia_nim/meta/llama-3.3-70b-instruct"
+        s.subagent_model_inherit = False
         router = ModelRouter(s)
         assert (
             router.resolve("claude-sonnet-4-20250514").provider_model_ref
@@ -1053,6 +1066,7 @@ class TestPerModelMapping:
 
         s = Settings()
         s.model_haiku = "lmstudio/qwen2.5-7b"
+        s.subagent_model_inherit = False
         router = ModelRouter(s)
         assert (
             router.resolve("claude-3-haiku-20240307").provider_model_ref
@@ -1115,6 +1129,7 @@ class TestPerModelMapping:
 
         s = Settings()
         s.model_opus = "open_router/opus-model"
+        s.subagent_model_inherit = False
         assert (
             ModelRouter(s).resolve("Claude-OPUS-4").provider_model_ref
             == "open_router/opus-model"

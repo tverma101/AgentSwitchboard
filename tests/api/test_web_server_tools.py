@@ -68,7 +68,10 @@ class FixedProviderModelRouter(ModelRouter):
         self._fixed_provider_model = provider_model
 
     def resolve_messages_request(
-        self, request: MessagesRequest
+        self,
+        request: MessagesRequest,
+        *,
+        parent_route: ResolvedModel | None = None,
     ) -> RoutedMessagesRequest:
         provider_model = self._fixed_provider_model or request.model
         resolved = ResolvedModel(

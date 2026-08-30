@@ -1,6 +1,7 @@
 """Application-owned provider execution contracts."""
 
 from collections.abc import AsyncIterator
+from threading import get_ident
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -123,6 +124,35 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
         }
     ]
     assert provider.stream_close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_runs_token_count_off_the_event_loop() -> None:
+    provider = FakeProvider()
+    routed = _routed_request()
+    event_loop_thread = get_ident()
+    counter_threads: list[int] = []
+
+    def token_counter(_messages, _system, _tools) -> int:
+        counter_threads.append(get_ident())
+        return 17
+
+    executor = ProviderExecutor(
+        lambda _provider_id: provider,
+        token_counter=token_counter,
+    )
+
+    stream = executor.stream(
+        routed,
+        wire_api="messages",
+        raw_log_label="FULL_PAYLOAD",
+        raw_log_payload={},
+        request_id="req_count_thread",
+    )
+
+    assert [chunk async for chunk in stream] == ["event: message_stop\ndata: {}\n\n"]
+    assert counter_threads
+    assert all(thread_id != event_loop_thread for thread_id in counter_threads)
 
 
 @pytest.mark.asyncio

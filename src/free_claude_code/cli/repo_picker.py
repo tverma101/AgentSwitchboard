@@ -1,4 +1,4 @@
-"""Tiny terminal picker for launching ``fccdanger`` in a local GitHub repo."""
+"""Terminal repository inventory and picker for launching ``fccdanger`` locally."""
 
 import argparse
 import json
@@ -8,9 +8,11 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import NoReturn
+from urllib.parse import urlsplit
 
 from .selection import SelectionItem, choose_item
 from .selection import fuzzy_match as match_items
@@ -42,7 +44,7 @@ _SKIP_DIRS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class RepoEntry:
-    """One local GitHub-backed repository shown by the picker."""
+    """One local Git repository shown by the picker."""
 
     name: str
     path: str
@@ -61,13 +63,56 @@ class RepoEntry:
             return f"~{self.path[len(home) :]}"
         return self.path
 
+    @property
+    def repository_name(self) -> str:
+        """Return the repository name, independent of its checkout directory."""
+
+        return self.remote.rsplit("/", 1)[-1] if self.remote else self.name
+
+    @property
+    def identity(self) -> str:
+        """Return the clearest stable repository identity available."""
+
+        return self.remote or self.repository_name
+
+    @property
+    def selection_detail(self) -> str:
+        """Return labeled checkout metadata for the shared terminal picker."""
+
+        checkout = (
+            f"checkout {self.name}"
+            if self.name.casefold() != self.repository_name.casefold()
+            else ""
+        )
+        return " · ".join(
+            value
+            for value in (checkout, f"branch {self.branch}", self.display_path)
+            if value
+        )
+
 
 def default_roots() -> tuple[Path, ...]:
-    """Return existing default scan roots for a personal macOS/Linux setup."""
+    """Return existing roots, prioritizing the current working directory."""
 
     home = Path.home()
-    candidates = (home / "src", home / "Projects", home / "Documents")
-    return tuple(path for path in candidates if path.is_dir())
+    try:
+        current = Path.cwd()
+    except OSError:
+        current = None
+    candidates = (current, home / "src", home / "Projects", home / "Documents")
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        if path is None:
+            continue
+        try:
+            resolved = path.expanduser().resolve(strict=True)
+        except OSError, RuntimeError:
+            continue
+        if resolved.is_dir() and resolved not in seen:
+            seen.add(resolved)
+            roots.append(resolved)
+    return tuple(roots)
 
 
 def cache_path() -> Path:
@@ -119,27 +164,72 @@ def github_authenticated_user() -> str | None:
     return login
 
 
-def _resolved_github_user(github_user: str | None) -> str | None:
-    """Resolve an explicit or current authenticated GitHub account."""
+def _remote_urls(path: Path) -> tuple[tuple[str, str], ...]:
+    """Return configured remote names and URLs without exposing credentials."""
 
-    resolved = github_authenticated_user() if github_user is None else github_user
-    if not isinstance(resolved, str):
-        return None
-    resolved = resolved.strip()
-    return resolved or None
+    output = _run_git(path, "config", "--get-regexp", r"^remote\..*\.url$")
+    remotes: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        key, _, url = line.partition(" ")
+        prefix, _, name = key.partition(".")
+        if prefix != "remote" or not name.endswith(".url"):
+            continue
+        remote_name = name.removesuffix(".url")
+        url = url.strip()
+        if remote_name and url:
+            remotes.append((remote_name, url))
+    return tuple(remotes)
 
 
 def _github_remotes(path: Path) -> tuple[str, ...]:
-    output = _run_git(path, "config", "--get-regexp", r"^remote\..*\.url$")
     remotes: list[str] = []
-    for line in output.splitlines():
-        _, _, url = line.partition(" ")
-        url = url.strip()
+    for _name, url in _remote_urls(path):
         if _is_github_remote(url):
             slug = _remote_slug(url)
             if slug and slug not in remotes:
                 remotes.append(slug)
     return tuple(remotes)
+
+
+def _remote_label(url: str) -> str:
+    """Return a compact remote identity with credentials and query data removed."""
+
+    value = url.strip().removesuffix(".git").rstrip("/")
+    if _is_github_remote(value):
+        return _remote_slug(value)
+
+    if "://" not in value and ":" in value:
+        host, path = value.split(":", 1)
+        host = host.rsplit("@", 1)[-1]
+        path = path.strip("/")
+        return f"{host}/{path}" if host and path else host or path
+
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+    except ValueError:
+        sanitized = value.rsplit("@", 1)[-1]
+        return sanitized
+    path = parsed.path.strip("/")
+    if host and path:
+        return f"{host}/{path}"
+    return path or host
+
+
+def _repository_remote(path: Path, *, github_user: str | None = None) -> str:
+    """Return the preferred remote identity, optionally scoped to a GitHub user."""
+
+    if github_user is not None:
+        return _github_remote(path, github_user=github_user)
+    remotes = _remote_urls(path)
+    for name, url in remotes:
+        label = _remote_label(url)
+        if name == "origin" and label:
+            return label
+    return next(
+        (label for _name, url in remotes if (label := _remote_label(url))),
+        "",
+    )
 
 
 def _github_remote(path: Path, *, github_user: str | None = None) -> str:
@@ -188,25 +278,100 @@ def _branch(path: Path) -> str:
     return f"detached:{detached}" if detached else "?"
 
 
+def _git_root(path: Path) -> Path | None:
+    """Return the canonical Git root for a path or one of its parents."""
+
+    try:
+        candidate = path.expanduser().resolve(strict=True)
+    except OSError, RuntimeError:
+        return None
+    output = _run_git(candidate, "rev-parse", "--show-toplevel")
+    if not output:
+        return None
+    try:
+        root = Path(output).resolve(strict=True)
+    except OSError, RuntimeError:
+        return None
+    return root if root.is_dir() else None
+
+
 def _is_repo_root(path: Path) -> bool:
-    git_marker = path / ".git"
-    if not git_marker.exists():
+    root = _git_root(path)
+    try:
+        return root == path.expanduser().resolve(strict=True)
+    except OSError, RuntimeError:
         return False
-    return _run_git(path, "rev-parse", "--show-toplevel") == str(path.resolve())
+
+
+def _has_git_metadata(path: Path) -> bool:
+    """Return whether a directory has the marker used by a Git checkout."""
+
+    marker = path / ".git"
+    return marker.is_dir() or marker.is_file()
+
+
+def repository_from_path(
+    path: Path,
+    *,
+    github_user: str | None = None,
+    last_used: float = 0.0,
+) -> RepoEntry | None:
+    """Build live repository metadata from a root or a path inside a checkout."""
+
+    root = _git_root(path)
+    if root is None:
+        return None
+    remote = _repository_remote(root, github_user=github_user)
+    if github_user is not None and not remote:
+        return None
+    return RepoEntry(
+        name=root.name,
+        path=str(root),
+        branch=_branch(root),
+        remote=remote,
+        last_used=last_used,
+    )
+
+
+def deduplicate_repos(repos: Iterable[RepoEntry]) -> list[RepoEntry]:
+    """Return one canonical entry per checkout, preserving distinct clones."""
+
+    unique: dict[str, RepoEntry] = {}
+    for repo in repos:
+        try:
+            path = str(Path(repo.path).expanduser().resolve())
+        except OSError, RuntimeError:
+            path = repo.path
+        if path not in unique:
+            unique[path] = repo if repo.path == path else replace(repo, path=path)
+    return sorted(
+        unique.values(),
+        key=lambda repo: (
+            repo.identity.casefold(),
+            repo.repository_name.casefold(),
+            repo.display_path.casefold(),
+        ),
+    )
 
 
 def discover_repos(
     roots: tuple[Path, ...], *, github_user: str | None = None
 ) -> list[RepoEntry]:
-    """Discover local repositories connected to the active GitHub account."""
+    """Discover local Git repositories, optionally scoped to a GitHub account."""
 
-    github_user = _resolved_github_user(github_user)
-    if github_user is None:
-        return []
     discovered: dict[str, RepoEntry] = {}
     for root in roots:
-        root = root.expanduser().resolve()
+        try:
+            root = root.expanduser().resolve(strict=True)
+        except OSError, RuntimeError:
+            continue
         if not root.is_dir():
+            continue
+        containing_repo = repository_from_path(root, github_user=github_user)
+        if containing_repo is not None:
+            discovered[containing_repo.path] = containing_repo
+            # A root inside a checkout is already fully represented. Do not
+            # walk every child just to rediscover the same repository.
             continue
         for current, directories, _files in os.walk(root, topdown=True):
             directories[:] = [
@@ -215,21 +380,17 @@ def discover_repos(
                 if name not in _SKIP_DIRS and not name.startswith(".")
             ]
             candidate = Path(current)
-            if not _is_repo_root(candidate):
+            # Most walked directories are ordinary folders. Checking for the
+            # marker first avoids a Git subprocess for every one of them.
+            if not _has_git_metadata(candidate):
                 continue
 
-            remote = _github_remote(candidate, github_user=github_user)
-            if remote:
-                resolved = str(candidate.resolve())
-                discovered[resolved] = RepoEntry(
-                    name=candidate.name,
-                    path=resolved,
-                    branch=_branch(candidate),
-                    remote=remote,
-                )
+            repo = repository_from_path(candidate, github_user=github_user)
+            if repo is not None:
+                discovered[repo.path] = repo
             directories.clear()
 
-    return sorted(discovered.values(), key=lambda repo: repo.name.casefold())
+    return deduplicate_repos(discovered.values())
 
 
 def load_cached_repos(
@@ -237,15 +398,12 @@ def load_cached_repos(
 ) -> list[RepoEntry]:
     """Load cached paths, rebuilding every display field from live Git state.
 
-    The cache is only a list of recently discovered paths.  Names, branches,
-    and remotes are never trusted from JSON because a stale cache must not make
-    a non-repository or an unrelated remote look like a real GitHub checkout.
+    The cache is only a list of recently discovered paths. Names, branches, and
+    remotes are never trusted from JSON because a stale cache must not make a
+    missing path or an unrelated checkout look like a real repository.
     """
 
     path = cache_path() if path is None else path
-    github_user = _resolved_github_user(github_user)
-    if github_user is None:
-        return []
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except OSError, json.JSONDecodeError, TypeError:
@@ -254,7 +412,6 @@ def load_cached_repos(
         return []
 
     entries: list[RepoEntry] = []
-    seen_paths: set[str] = set()
     for raw in payload.get("repos", []):
         if not isinstance(raw, dict):
             continue
@@ -263,37 +420,29 @@ def load_cached_repos(
             last_used = float(raw.get("last_used", 0.0))
         except KeyError, TypeError, ValueError:
             continue
-        except OSError:
+        except OSError, RuntimeError:
             continue
         if not math.isfinite(last_used) or last_used < 0:
             last_used = 0.0
-        if not candidate.is_dir() or not _is_repo_root(candidate):
-            continue
-        remote = _github_remote(candidate, github_user=github_user)
-        if not remote:
-            continue
-        resolved = str(candidate)
-        if resolved in seen_paths:
-            continue
-        seen_paths.add(resolved)
-        entries.append(
-            RepoEntry(
-                name=candidate.name,
-                path=resolved,
-                branch=_branch(candidate),
-                remote=remote,
-                last_used=last_used,
-            )
+        repo = repository_from_path(
+            candidate,
+            github_user=github_user,
+            last_used=last_used,
         )
-    return entries
+        if repo is not None:
+            entries.append(repo)
+    return deduplicate_repos(entries)
 
 
 def save_cached_repos(repos: list[RepoEntry], path: Path | None = None) -> None:
-    """Persist the bounded discovery cache."""
+    """Persist the bounded, de-duplicated discovery cache."""
 
     path = cache_path() if path is None else path
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"updated_at": time.time(), "repos": [asdict(repo) for repo in repos]}
+    payload = {
+        "updated_at": time.time(),
+        "repos": [asdict(repo) for repo in deduplicate_repos(repos)],
+    }
     temporary = path.with_suffix(f"{path.suffix}.tmp")
     temporary.write_text(
         json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
@@ -314,12 +463,13 @@ def cache_is_fresh(path: Path | None = None) -> bool:
 def fuzzy_match(repos: list[RepoEntry], query: str) -> list[RepoEntry]:
     """Return repositories ranked by the shared terminal picker matcher."""
 
+    repos = deduplicate_repos(repos)
     matches = match_items(
         [
             SelectionItem(
                 item_id=repo.path,
-                label=repo.name,
-                detail=f"{repo.branch} {repo.display_path} {repo.remote}".strip(),
+                label=repo.identity,
+                detail=repo.selection_detail,
                 last_used=repo.last_used,
             )
             for repo in repos
@@ -330,22 +480,29 @@ def fuzzy_match(repos: list[RepoEntry], query: str) -> list[RepoEntry]:
     return [by_path[item.item_id] for item in matches]
 
 
-def choose_repo(repos: list[RepoEntry], initial_query: str = "") -> RepoEntry | None:
+def choose_repo(
+    repos: list[RepoEntry],
+    initial_query: str = "",
+    *,
+    selected_path: str | None = None,
+) -> RepoEntry | None:
     """Open the shared picker and return the selected repository."""
 
+    repos = deduplicate_repos(repos)
     selected = choose_item(
         [
             SelectionItem(
                 item_id=repo.path,
-                label=repo.name,
-                detail=f"{repo.branch} {repo.display_path} {repo.remote}".strip(),
+                label=repo.identity,
+                detail=repo.selection_detail,
                 last_used=repo.last_used,
             )
             for repo in repos
         ],
-        title="Harness repos",
+        title="Harness repositories",
         initial_query=initial_query,
-        footer="type filter · ↑↓ move · enter launch · esc cancel",
+        default_item_id=selected_path,
+        footer="type filter · ↑↓ move · enter launch · esc cancel · * default",
     )
     if selected is None:
         return None
@@ -376,7 +533,7 @@ def launch_repo(repo: RepoEntry) -> NoReturn:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Pick a local GitHub repo and launch fccdanger"
+        description="Pick a local Git repository and launch fccdanger"
     )
     parser.add_argument("query", nargs="?", default="", help="initial fuzzy filter")
     parser.add_argument(
@@ -399,41 +556,41 @@ def main(argv: list[str] | None = None) -> None:
     explicit_roots = bool(args.root)
     roots = tuple(Path(value).expanduser() for value in args.root) or default_roots()
     cache = cache_path()
-    github_user = github_authenticated_user()
-
-    if github_user is None:
-        print(
-            "No active GitHub CLI account found. Run `gh auth login` and try again.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+    current = repository_from_path(Path.cwd())
 
     if explicit_roots:
-        repos = discover_repos(roots, github_user=github_user)
+        repos = discover_repos(roots)
     else:
-        repos = (
-            [] if args.refresh else load_cached_repos(cache, github_user=github_user)
-        )
+        repos = [] if args.refresh else load_cached_repos(cache)
         if args.refresh or not repos or not cache_is_fresh(cache):
             previous_last_used = {repo.path: repo.last_used for repo in repos}
             repos = [
-                RepoEntry(
-                    name=repo.name,
-                    path=repo.path,
-                    branch=repo.branch,
-                    remote=repo.remote,
+                replace(
+                    repo,
                     last_used=previous_last_used.get(repo.path, 0.0),
                 )
-                for repo in discover_repos(roots, github_user=github_user)
+                for repo in discover_repos(roots)
             ]
             save_cached_repos(repos, cache)
+        if current is not None and current.path not in {repo.path for repo in repos}:
+            repos.append(current)
+            repos = deduplicate_repos(repos)
 
     if not repos:
-        print("No local GitHub-backed repositories found.", file=sys.stderr)
+        print("No local Git repositories found.", file=sys.stderr)
         print("Try: fcc-repos --refresh --root ~/src", file=sys.stderr)
         raise SystemExit(1)
 
-    selected = choose_repo(repos, args.query)
+    selected_path = (
+        current.path
+        if current is not None and any(repo.path == current.path for repo in repos)
+        else None
+    )
+    selected = (
+        choose_repo(repos, args.query, selected_path=selected_path)
+        if selected_path is not None
+        else choose_repo(repos, args.query)
+    )
     if selected is None:
         return
     if not explicit_roots:

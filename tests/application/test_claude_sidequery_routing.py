@@ -9,6 +9,7 @@ def _settings() -> Settings:
     settings = Settings()
     settings.model = "opencode_go/muse-spark-1.2-contributor"
     settings.model_haiku = None
+    settings.subagent_model_inherit = False
     return settings
 
 

@@ -110,6 +110,39 @@ def test_create_response_stream_routes_through_provider(
     assert provider.stream_kwargs[0]["request_id"] == response.headers["request-id"]
 
 
+def test_create_response_inherits_parent_route_from_session_header(
+    responses_client: tuple[TestClient, FakeProvider],
+) -> None:
+    client, provider = responses_client
+    headers = {"x-claude-code-session-id": "responses-parent-route-test"}
+
+    parent_response = client.post(
+        "/v1/responses",
+        headers=headers,
+        json={
+            "model": "openai/gpt-5.6-luna",
+            "input": "parent",
+            "max_output_tokens": 32,
+        },
+    )
+    child_response = client.post(
+        "/v1/responses",
+        headers=headers,
+        json={
+            "model": "claude-3-haiku-20240307",
+            "input": "child",
+            "max_output_tokens": 32,
+        },
+    )
+
+    assert parent_response.status_code == 200
+    assert child_response.status_code == 200
+    assert [request.model for request in provider.requests] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-luna",
+    ]
+
+
 def test_create_response_stream_preserves_output_limit_as_incomplete() -> None:
     provider = FakeProvider(
         _anthropic_text_stream("partial output", stop_reason="max_tokens")

@@ -7,6 +7,9 @@ from typing import Any
 
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
+from free_claude_code.core.anthropic.streaming.recovery import continuation_suffix
+from free_claude_code.core.anthropic.usage import reconcile_input_usage
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 
 
 class ResponsesStreamFailure(RuntimeError):
@@ -33,6 +36,7 @@ class _ToolState:
 
 
 _MAX_TOOL_ARGUMENT_BYTES = 65_536
+_MAX_TOKEN_INCOMPLETE_REASONS = frozenset({"max_output_tokens", "max_tokens"})
 
 
 class ResponsesProviderStream:
@@ -46,6 +50,7 @@ class ResponsesProviderStream:
         input_tokens: int,
         log_raw_events: bool = False,
         tool_names: OpenAIToolNameCodec | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         self.ledger = AnthropicStreamLedger(
             message_id,
@@ -53,6 +58,8 @@ class ResponsesProviderStream:
             input_tokens,
             log_raw_events=log_raw_events,
         )
+        self._input_tokens = input_tokens
+        self._reasoning_output_enabled = reasoning.output_enabled
         self.completed = False
         self.generated_output = False
         self.upstream_response_id: str | None = None
@@ -63,12 +70,15 @@ class ResponsesProviderStream:
         self.usage_output_tokens: int | None = None
         self.usage_reasoning_tokens: int | None = None
         self.effective_reasoning_effort: str | None = None
+        self.incomplete_reason: str | None = None
         self.provider_reasoning_item = False
         self.provider_visible_reasoning_summary = False
         self.provider_visible_reasoning_summary_length: int | None = None
         self.provider_reasoning_text = False
         self.provider_opaque_reasoning = False
         self.opaque_reasoning_hash: str | None = None
+        self.provider_refusal = False
+        self.provider_refusal_length: int | None = None
         self.harness_thinking_block = False
         self.harness_thinking_delta = False
         self._tool_names = tool_names or OpenAIToolNameCodec.from_names(())
@@ -76,6 +86,11 @@ class ResponsesProviderStream:
         self._tool_items_by_call_id: dict[str, str] = {}
         self._duplicate_tool_item_ids: set[str] = set()
         self._encrypted_reasoning: dict[str, str] = {}
+        self._output_item_ids_by_index: dict[int, str] = {}
+        self._reasoning_text_by_key: dict[tuple[str, str, int], str] = {}
+        self._output_text_by_key: dict[tuple[str, str, int], str] = {}
+        self._refusal_text_by_key: dict[tuple[str, str, int], str] = {}
+        self._emitted_opaque_reasoning: set[tuple[str, str]] = set()
 
     def start(self) -> list[str]:
         """Return the Anthropic message_start event."""
@@ -93,8 +108,24 @@ class ResponsesProviderStream:
             return self._reasoning_delta(data, summary=False)
         if event_type == "response.reasoning_summary_text.delta":
             return self._reasoning_delta(data, summary=True)
+        if event_type == "response.reasoning_text.done":
+            return self._reasoning_done(data, summary=False)
+        if event_type == "response.reasoning_summary_text.done":
+            return self._reasoning_done(data, summary=True)
+        if event_type == "response.reasoning_summary_part.added":
+            return self._reasoning_part(data, final=False)
+        if event_type == "response.reasoning_summary_part.done":
+            return self._reasoning_part(data, final=True)
         if event_type == "response.output_text.delta":
             return self._text_delta(data)
+        if event_type == "response.output_text.done":
+            return self._text_done(data)
+        if event_type == "response.refusal.delta":
+            return self._refusal_delta(data)
+        if event_type == "response.refusal.done":
+            return self._refusal_done(data)
+        if event_type == "response.content_part.done":
+            return self._content_part_done(data)
         if event_type == "response.function_call_arguments.delta":
             return self._tool_delta(data)
         if event_type == "response.function_call_arguments.done":
@@ -116,6 +147,10 @@ class ResponsesProviderStream:
         if not isinstance(item, dict):
             return []
         item_id = _string(item.get("id"))
+        self._remember_output_item(
+            item_id,
+            _non_negative_integer(data.get("output_index")),
+        )
         if item.get("type") == "function_call" and item_id:
             call_id = _string(item.get("call_id")) or item_id
             name = self._tool_names.decode(_string(item.get("name")))
@@ -138,30 +173,170 @@ class ResponsesProviderStream:
                     state.name = name
         if item.get("type") == "reasoning":
             self.provider_reasoning_item = True
-        if item.get("type") == "reasoning" and item_id:
-            encrypted = item.get("encrypted_content")
-            if isinstance(encrypted, str) and encrypted:
-                self._remember_opaque_reasoning(item_id, encrypted)
+            return self._reasoning_item(
+                item,
+                identity=item_id or self._output_identity(data),
+                include_opaque=False,
+            )
         return []
 
     def _reasoning_delta(self, data: dict[str, Any], *, summary: bool) -> list[str]:
         delta = data.get("delta")
         if not isinstance(delta, str) or not delta:
             return []
+        return self._emit_reasoning_text(
+            delta,
+            summary=summary,
+            identity=self._reasoning_identity(data),
+            index=self._reasoning_index(data, summary=summary),
+            final=False,
+        )
+
+    def _reasoning_done(self, data: dict[str, Any], *, summary: bool) -> list[str]:
+        text = data.get("text")
+        if not isinstance(text, str) or not text:
+            return []
+        return self._emit_reasoning_text(
+            text,
+            summary=summary,
+            identity=self._reasoning_identity(data),
+            index=self._reasoning_index(data, summary=summary),
+            final=True,
+        )
+
+    def _reasoning_part(self, data: dict[str, Any], *, final: bool) -> list[str]:
+        part = data.get("part")
+        if not isinstance(part, dict) or part.get("type") != "summary_text":
+            return []
+        text = part.get("text")
+        if not isinstance(text, str) or not text:
+            return []
+        return self._emit_reasoning_text(
+            text,
+            summary=True,
+            identity=self._reasoning_identity(data),
+            index=self._reasoning_index(data, summary=True),
+            final=final,
+        )
+
+    def _reasoning_item(
+        self,
+        item: dict[str, Any],
+        *,
+        identity: str,
+        include_opaque: bool,
+    ) -> list[str]:
+        if item.get("type") != "reasoning":
+            return []
         self.provider_reasoning_item = True
+        events: list[str] = []
+        content = item.get("content")
+        if isinstance(content, list):
+            for index, part in enumerate(content):
+                if not isinstance(part, dict) or part.get("type") != "reasoning_text":
+                    continue
+                text = part.get("text")
+                if isinstance(text, str) and text:
+                    events.extend(
+                        self._emit_reasoning_text(
+                            text,
+                            summary=False,
+                            identity=identity,
+                            index=index,
+                            final=True,
+                        )
+                    )
+        summary = item.get("summary")
+        if isinstance(summary, list):
+            for index, part in enumerate(summary):
+                if not isinstance(part, dict) or part.get("type") != "summary_text":
+                    continue
+                text = part.get("text")
+                if isinstance(text, str) and text:
+                    events.extend(
+                        self._emit_reasoning_text(
+                            text,
+                            summary=True,
+                            identity=identity,
+                            index=index,
+                            final=True,
+                        )
+                    )
+        encrypted = item.get("encrypted_content")
+        if isinstance(encrypted, str) and encrypted:
+            self._remember_opaque_reasoning(identity, encrypted)
+            if include_opaque:
+                events.extend(self._emit_opaque_reasoning(identity, encrypted))
+        return events
+
+    def _emit_reasoning_text(
+        self,
+        text: str,
+        *,
+        summary: bool,
+        identity: str,
+        index: int,
+        final: bool,
+    ) -> list[str]:
+        self.provider_reasoning_item = True
+        key = ("summary" if summary else "text", identity, index)
+        existing = self._reasoning_text_by_key.get(key, "")
+        if final:
+            emitted = continuation_suffix(existing, text)
+            if emitted is None:
+                # A final snapshot is authoritative. A provider should send it
+                # as the streamed prefix plus a suffix, but preserving a
+                # divergent snapshot is safer than silently dropping it.
+                emitted = text
+            self._reasoning_text_by_key[key] = text
+        else:
+            emitted = text
+            self._reasoning_text_by_key[key] = existing + text
+
         if summary:
-            self.provider_visible_reasoning_summary = True
-            self.provider_visible_reasoning_summary_length = (
-                self.provider_visible_reasoning_summary_length or 0
-            ) + len(delta)
+            self._refresh_summary_telemetry()
         else:
             self.provider_reasoning_text = True
+        if not self._reasoning_output_enabled:
+            return []
+        if not emitted:
+            return []
+
         events = list(self.ledger.ensure_thinking_block())
         self.harness_thinking_block = True
-        events.append(self.ledger.emit_thinking_delta(delta))
+        events.append(self.ledger.emit_thinking_delta(emitted))
         self.harness_thinking_delta = True
         self.generated_output = True
         return events
+
+    def _refresh_summary_telemetry(self) -> None:
+        summary_length = sum(
+            len(text)
+            for (kind, _identity, _index), text in self._reasoning_text_by_key.items()
+            if kind == "summary" and text
+        )
+        if summary_length:
+            self.provider_visible_reasoning_summary = True
+            self.provider_visible_reasoning_summary_length = summary_length
+
+    def _output_identity(self, data: dict[str, Any]) -> str:
+        item_id = _string(data.get("item_id")) or _string(data.get("id"))
+        if item_id:
+            return item_id
+        output_index = _non_negative_integer(data.get("output_index"))
+        if output_index is not None:
+            return self._output_item_ids_by_index.get(
+                output_index, f"output:{output_index}"
+            )
+        return "response"
+
+    def _reasoning_identity(self, data: dict[str, Any]) -> str:
+        return self._output_identity(data)
+
+    @staticmethod
+    def _reasoning_index(data: dict[str, Any], *, summary: bool) -> int:
+        field = "summary_index" if summary else "content_index"
+        return _non_negative_integer(data.get(field)) or 0
 
     def _remember_opaque_reasoning(self, item_id: str, encrypted: str) -> None:
         self.provider_reasoning_item = True
@@ -175,10 +350,157 @@ class ResponsesProviderStream:
         delta = data.get("delta")
         if not isinstance(delta, str) or not delta:
             return []
+        return self._emit_visible_text(
+            delta,
+            kind="text",
+            identity=self._output_identity(data),
+            index=self._content_index(data),
+            final=False,
+        )
+
+    def _text_done(self, data: dict[str, Any]) -> list[str]:
+        text = data.get("text")
+        if not isinstance(text, str) or not text:
+            return []
+        return self._emit_visible_text(
+            text,
+            kind="text",
+            identity=self._output_identity(data),
+            index=self._content_index(data),
+            final=True,
+        )
+
+    def _refusal_delta(self, data: dict[str, Any]) -> list[str]:
+        delta = data.get("delta")
+        if not isinstance(delta, str) or not delta:
+            return []
+        return self._emit_visible_text(
+            delta,
+            kind="refusal",
+            identity=self._output_identity(data),
+            index=self._content_index(data),
+            final=False,
+        )
+
+    def _refusal_done(self, data: dict[str, Any]) -> list[str]:
+        text = data.get("refusal", data.get("text"))
+        if not isinstance(text, str) or not text:
+            return []
+        return self._emit_visible_text(
+            text,
+            kind="refusal",
+            identity=self._output_identity(data),
+            index=self._content_index(data),
+            final=True,
+        )
+
+    def _content_part_done(self, data: dict[str, Any]) -> list[str]:
+        part = data.get("part")
+        if not isinstance(part, dict):
+            return []
+        part_type = part.get("type")
+        if part_type == "output_text":
+            text = part.get("text")
+            kind = "text"
+        elif part_type == "refusal":
+            text = part.get("refusal", part.get("text"))
+            kind = "refusal"
+        else:
+            return []
+        if not isinstance(text, str) or not text:
+            return []
+        return self._emit_visible_text(
+            text,
+            kind=kind,
+            identity=self._output_identity(data),
+            index=self._content_index(data),
+            final=True,
+        )
+
+    def _emit_visible_text(
+        self,
+        text: str,
+        *,
+        kind: str,
+        identity: str,
+        index: int,
+        final: bool,
+    ) -> list[str]:
+        stores = {
+            "text": self._output_text_by_key,
+            "refusal": self._refusal_text_by_key,
+        }
+        store = stores[kind]
+        key = (kind, identity, index)
+        existing = store.get(key, "")
+        if final:
+            emitted = continuation_suffix(existing, text)
+            if emitted is None:
+                emitted = text
+            store[key] = text
+        else:
+            emitted = text
+            store[key] = existing + text
+        if kind == "refusal":
+            self.provider_refusal = True
+            self.provider_refusal_length = sum(
+                len(value)
+                for (
+                    _kind,
+                    _identity,
+                    _index,
+                ), value in self._refusal_text_by_key.items()
+                if value
+            )
+        if not emitted:
+            return []
         events = list(self.ledger.ensure_text_block())
-        events.append(self.ledger.emit_text_delta(delta))
+        events.append(self.ledger.emit_text_delta(emitted))
         self.generated_output = True
         return events
+
+    @staticmethod
+    def _content_index(data: dict[str, Any]) -> int:
+        return _non_negative_integer(data.get("content_index")) or 0
+
+    def _remember_output_item(self, item_id: str, output_index: int | None) -> None:
+        if output_index is None:
+            return
+        previous = self._output_item_ids_by_index.get(output_index)
+        synthetic = f"output:{output_index}"
+        previous_identity = previous or synthetic
+        identity = item_id or previous_identity
+        self._output_item_ids_by_index[output_index] = identity
+        if item_id and previous_identity != item_id:
+            self._rekey_output_identity(previous_identity, item_id)
+            self._output_item_ids_by_index[output_index] = item_id
+        if not item_id:
+            self._rekey_output_identity("response", identity)
+
+    def _rekey_output_identity(self, previous: str, current: str) -> None:
+        if previous == current:
+            return
+        for store in (
+            self._reasoning_text_by_key,
+            self._output_text_by_key,
+            self._refusal_text_by_key,
+        ):
+            for key, value in list(store.items()):
+                kind, identity, index = key
+                if identity != previous:
+                    continue
+                replacement = (kind, current, index)
+                if replacement not in store:
+                    store[replacement] = value
+                del store[key]
+        for store in (self._encrypted_reasoning,):
+            if previous in store and current not in store:
+                store[current] = store[previous]
+            store.pop(previous, None)
+        self._emitted_opaque_reasoning = {
+            (current if identity == previous else identity, digest)
+            for identity, digest in self._emitted_opaque_reasoning
+        }
 
     def _tool_delta(self, data: dict[str, Any]) -> list[str]:
         item_id = _string(data.get("item_id"))
@@ -258,6 +580,8 @@ class ResponsesProviderStream:
             return []
         item_type = item.get("type")
         item_id = _string(item.get("id"))
+        output_index = _non_negative_integer(data.get("output_index"))
+        self._remember_output_item(item_id, output_index)
         if item_type == "function_call":
             if item_id in self._duplicate_tool_item_ids:
                 return []
@@ -300,23 +624,119 @@ class ResponsesProviderStream:
                 self.ledger.blocks.tool_states[state.tool_index].started = False
             return events
         if item_type == "reasoning":
+            identity = item_id or self._output_identity(data)
             encrypted = item.get("encrypted_content")
             if not isinstance(encrypted, str) or not encrypted:
-                encrypted = self._encrypted_reasoning.get(item_id)
-            if isinstance(encrypted, str) and encrypted:
-                self._remember_opaque_reasoning(item_id, encrypted)
-                events = list(self.ledger.close_content_blocks())
-                index = self.ledger.blocks.allocate_index()
-                events.append(
-                    self.ledger.content_block_start(
-                        index, "redacted_thinking", data=encrypted
+                encrypted = self._encrypted_reasoning.get(identity)
+                if encrypted:
+                    item = {**item, "encrypted_content": encrypted}
+            return self._reasoning_item(
+                item,
+                identity=identity,
+                include_opaque=True,
+            )
+        if item_type == "message":
+            return self._message_item(item, output_index=output_index)
+        return []
+
+    def _emit_opaque_reasoning(self, item_id: str, encrypted: str) -> list[str]:
+        digest = hashlib.sha256(encrypted.encode("utf-8")).hexdigest()
+        marker = (item_id, digest)
+        if marker in self._emitted_opaque_reasoning:
+            return []
+        self._emitted_opaque_reasoning.add(marker)
+        if not self._reasoning_output_enabled:
+            return []
+        events = list(self.ledger.close_content_blocks())
+        index = self.ledger.blocks.allocate_index()
+        events.append(
+            self.ledger.content_block_start(index, "redacted_thinking", data=encrypted)
+        )
+        events.append(self.ledger.content_block_stop(index))
+        self.generated_output = True
+        self.harness_thinking_block = True
+        return events
+
+    def _message_item(
+        self,
+        item: dict[str, Any],
+        *,
+        output_index: int | None,
+    ) -> list[str]:
+        item_id = _string(item.get("id"))
+        identity_data: dict[str, Any] = {"id": item_id}
+        if output_index is not None:
+            identity_data["output_index"] = output_index
+        identity = self._output_identity(identity_data)
+        content = item.get("content")
+        if isinstance(content, str):
+            content_parts: list[tuple[int, dict[str, Any]]] = [
+                (0, {"type": "output_text", "text": content})
+            ]
+        elif isinstance(content, list):
+            content_parts = [
+                (content_index, part)
+                for content_index, part in enumerate(content)
+                if isinstance(part, dict)
+            ]
+        else:
+            return []
+        events: list[str] = []
+        for content_index, part in content_parts:
+            part_type = part.get("type")
+            if part_type == "output_text":
+                text = part.get("text")
+                kind = "text"
+            elif part_type == "refusal":
+                text = part.get("refusal", part.get("text"))
+                kind = "refusal"
+            else:
+                continue
+            if isinstance(text, str) and text:
+                events.extend(
+                    self._emit_visible_text(
+                        text,
+                        kind=kind,
+                        identity=identity,
+                        index=content_index,
+                        final=True,
                     )
                 )
-                events.append(self.ledger.content_block_stop(index))
-                self.generated_output = True
-                self.harness_thinking_block = True
-                return events
-        return []
+        return events
+
+    def _capture_response_output(self, response: dict[str, Any]) -> list[str]:
+        output = response.get("output")
+        if not isinstance(output, list):
+            return []
+        events: list[str] = []
+        for output_index, candidate in enumerate(output):
+            if not isinstance(candidate, dict):
+                continue
+            candidate = {str(key): value for key, value in candidate.items()}
+            item_id = _string(candidate.get("id"))
+            self._remember_output_item(item_id, output_index)
+            identity = self._output_identity(
+                {"id": item_id, "output_index": output_index}
+            )
+            item_type = candidate.get("type")
+            if item_type == "reasoning":
+                events.extend(
+                    self._reasoning_item(
+                        candidate,
+                        identity=identity,
+                        include_opaque=True,
+                    )
+                )
+            elif item_type == "message":
+                events.extend(self._message_item(candidate, output_index=output_index))
+        return events
+
+    def _terminal_stop_reason(self, *, incomplete: bool) -> str:
+        if self.provider_refusal:
+            return "end_turn"
+        if incomplete and self.incomplete_reason in _MAX_TOKEN_INCOMPLETE_REASONS:
+            return "max_tokens"
+        return "end_turn"
 
     def _ensure_tool_started(self, state: _ToolState) -> list[str]:
         if state.started:
@@ -364,6 +784,12 @@ class ResponsesProviderStream:
         response = response if isinstance(response, dict) else {}
         self.upstream_response_id = _string(response.get("id")) or None
         self.terminal_event = terminal_event
+        details = response.get("incomplete_details")
+        if not isinstance(details, dict):
+            details = data.get("incomplete_details")
+        details = details if isinstance(details, dict) else {}
+        reason = details.get("reason")
+        self.incomplete_reason = reason if isinstance(reason, str) else None
         for state in self._tools.values():
             self._validate_tool_arguments(state)
             if not state.stopped:
@@ -371,7 +797,8 @@ class ResponsesProviderStream:
                     "OpenAI completed a function call without its output-item terminal.",
                     code="missing_tool_terminal",
                 )
-        events = list(self.ledger.close_all_blocks())
+        events = self._capture_response_output(response)
+        events.extend(self.ledger.close_all_blocks())
         if not self.generated_output or not self.ledger.has_content_block():
             raise ResponsesStreamFailure(
                 "OpenAI completed a Responses stream without output.",
@@ -379,34 +806,39 @@ class ResponsesProviderStream:
             )
         usage = response.get("usage")
         usage = usage if isinstance(usage, dict) else {}
-        input_tokens = _non_negative_integer(usage.get("input_tokens"))
+        reported_input_tokens = _first_non_negative_integer(
+            usage.get("input_tokens"),
+            usage.get("prompt_tokens"),
+        )
         output_tokens = _non_negative_integer(usage.get("output_tokens"))
-        details = usage.get("input_tokens_details")
-        details = details if isinstance(details, dict) else {}
+        detail_mappings = _usage_detail_mappings(usage)
         output_details = usage.get("output_tokens_details")
         output_details = output_details if isinstance(output_details, dict) else {}
-        cached_tokens = _non_negative_integer(details.get("cached_tokens"))
-        if cached_tokens is not None and input_tokens is not None:
-            if cached_tokens <= input_tokens:
-                # OpenAI-style Responses counts cached reads inside input_tokens;
-                # Anthropic's input_tokens bucket is disjoint from cache reads.
-                input_tokens -= cached_tokens
-            else:
-                # An impossible provider breakdown is less useful than omitting
-                # the suspect cache field and preserving the reported total.
-                cached_tokens = None
-        elif cached_tokens is not None:
-            # Without a valid total, the ledger's input estimate already covers
-            # the prompt. Retaining cached reads would double-count that input.
-            cached_tokens = None
-        cache_write_tokens = _non_negative_integer(
-            details.get("cache_write_tokens", usage.get("cache_write_tokens"))
+        cached_tokens = _first_usage_counter(
+            usage,
+            detail_mappings,
+            "cached_tokens",
+            "cache_read_input_tokens",
+            "prompt_cache_hit_tokens",
         )
-        if cache_write_tokens is None:
-            cache_write_tokens = _non_negative_integer(
-                usage.get("cache_creation_input_tokens")
+        cache_write_tokens = _first_usage_counter(
+            usage,
+            detail_mappings,
+            "cache_write_tokens",
+            "cache_creation_input_tokens",
+            "prompt_cache_write_tokens",
+            "prompt_cache_creation_tokens",
+            "cache_creation_tokens",
+        )
+        if reported_input_tokens is not None:
+            reported_input_tokens, cached_tokens, cache_write_tokens = (
+                _partition_reported_input_tokens(
+                    reported_input_tokens,
+                    cached_tokens,
+                    cache_write_tokens,
+                )
             )
-        self.usage_input_tokens = input_tokens
+        self.usage_input_tokens = reported_input_tokens
         self.usage_cache_read_tokens = cached_tokens
         self.usage_cache_write_tokens = cache_write_tokens
         self.usage_output_tokens = output_tokens
@@ -426,14 +858,19 @@ class ResponsesProviderStream:
             usage_fields["cache_read_input_tokens"] = cached_tokens
         if cache_write_tokens is not None:
             usage_fields["cache_creation_input_tokens"] = cache_write_tokens
-        stop_reason = "max_tokens" if incomplete else "end_turn"
+        client_input_tokens, usage_fields = reconcile_input_usage(
+            self._input_tokens,
+            usage_fields,
+            fallback_input_tokens=reported_input_tokens,
+        )
+        stop_reason = self._terminal_stop_reason(incomplete=incomplete)
         events.append(
             self.ledger.message_delta(
                 self.ledger.final_stop_reason(stop_reason),
                 output_tokens
                 if output_tokens is not None
                 else self.ledger.estimate_output_tokens(),
-                input_tokens=input_tokens,
+                input_tokens=client_input_tokens,
                 usage_fields=usage_fields or None,
             )
         )
@@ -483,3 +920,64 @@ def _non_negative_integer(value: Any) -> int | None:
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0
         else None
     )
+
+
+def _first_non_negative_integer(*values: Any) -> int | None:
+    for value in values:
+        normalized = _non_negative_integer(value)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _usage_detail_mappings(usage: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Return Responses and OpenAI-compatible prompt detail mappings in order."""
+
+    details: list[dict[str, Any]] = []
+    for field_name in ("input_tokens_details", "prompt_tokens_details"):
+        value = usage.get(field_name)
+        if isinstance(value, dict):
+            details.append(value)
+    return tuple(details)
+
+
+def _first_usage_counter(
+    usage: dict[str, Any],
+    detail_mappings: tuple[dict[str, Any], ...],
+    *field_names: str,
+) -> int | None:
+    for details in detail_mappings:
+        for field_name in field_names:
+            value = _non_negative_integer(details.get(field_name))
+            if value is not None:
+                return value
+    return _first_non_negative_integer(*(usage.get(name) for name in field_names))
+
+
+def _partition_reported_input_tokens(
+    total_input_tokens: int,
+    cached_tokens: int | None,
+    cache_write_tokens: int | None,
+) -> tuple[int, int | None, int | None]:
+    """Convert an inclusive provider total into disjoint cache buckets.
+
+    OpenAI Responses reports both cache counters inside ``input_tokens``. The
+    Anthropic usage contract reports them separately, so ordinary input is the
+    remaining total after each valid counter. An impossible counter is omitted
+    instead of allowing a malformed provider response to inflate usage.
+    """
+
+    ordinary = total_input_tokens
+    normalized_cache_read = cached_tokens
+    normalized_cache_write = cache_write_tokens
+    if normalized_cache_read is not None:
+        if normalized_cache_read <= ordinary:
+            ordinary -= normalized_cache_read
+        else:
+            normalized_cache_read = None
+    if normalized_cache_write is not None:
+        if normalized_cache_write <= ordinary:
+            ordinary -= normalized_cache_write
+        else:
+            normalized_cache_write = None
+    return ordinary, normalized_cache_read, normalized_cache_write

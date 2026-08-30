@@ -1,7 +1,5 @@
 from free_claude_code.core.fault_attribution import AttemptEvidence
-from free_claude_code.core.openai_responses.provider_stream import (
-    ResponsesProviderStream,
-)
+from free_claude_code.core.openai_responses import ResponsesProviderStream
 from free_claude_code.providers.opencode_go.provider import (
     _sync_responses_evidence,
 )

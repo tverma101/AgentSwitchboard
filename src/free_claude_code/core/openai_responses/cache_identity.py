@@ -1,10 +1,13 @@
 """Conservative metadata-only identity selection for Responses caching."""
 
+import hashlib
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-_MAX_CACHE_KEY_LENGTH = 256
+_MAX_CACHE_KEY_SOURCE_LENGTH = 256
+_PROVIDER_CACHE_KEY_LENGTH = 64
+_CACHE_KEY_HASH_DOMAIN = b"fcc-prompt-cache-key-v1:"
 _SAFE_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}")
 _UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
@@ -85,7 +88,7 @@ def _safe_identifier(
     normalized = candidate.strip()
     if (
         not normalized
-        or len(normalized) > _MAX_CACHE_KEY_LENGTH
+        or len(normalized) > _MAX_CACHE_KEY_SOURCE_LENGTH
         or _SAFE_IDENTIFIER_RE.fullmatch(normalized) is None
     ):
         return None
@@ -102,7 +105,9 @@ def _safe_identifier(
         or lowered in {"anonymous", "default", "none", "null", "unknown"}
     ):
         return None
-    return normalized
+    if len(normalized) <= _PROVIDER_CACHE_KEY_LENGTH:
+        return normalized
+    return hashlib.sha256(_CACHE_KEY_HASH_DOMAIN + normalized.encode()).hexdigest()
 
 
 def _matches_content(candidate: str, content_values: tuple[str, ...]) -> bool:

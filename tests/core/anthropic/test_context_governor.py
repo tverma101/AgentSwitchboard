@@ -10,8 +10,13 @@ from free_claude_code.core.anthropic.context_governor import (
     ContextGovernanceError,
     ContextGovernorConfig,
     govern_messages_request,
+    govern_token_count_request,
 )
-from free_claude_code.core.anthropic.models import Message, MessagesRequest
+from free_claude_code.core.anthropic.models import (
+    Message,
+    MessagesRequest,
+    TokenCountRequest,
+)
 
 
 def _request(content: object) -> MessagesRequest:
@@ -101,6 +106,40 @@ def test_large_text_result_is_redirected_to_private_artifact(tmp_path) -> None:
     assert hashlib.sha256(artifact.read_bytes()).hexdigest() == record.artifact_sha256
     assert stat.S_IMODE(artifact.stat().st_mode) == 0o600
     assert stat.S_IMODE(tmp_path.stat().st_mode) & 0o077 == 0
+
+
+def test_token_count_request_uses_the_same_governed_messages(tmp_path) -> None:
+    text = "HEAD marker\n" + ("large-output\n" * 10_000) + "TAIL marker\n"
+    request = TokenCountRequest(
+        model="opencode_go/muse-spark-1.2-contributor",
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_large",
+                        "content": text,
+                    }
+                ],
+            )
+        ],
+    )
+
+    governed = govern_token_count_request(
+        request,
+        ContextGovernorConfig(tool_result_max_bytes=4096, artifact_dir=tmp_path),
+    )
+
+    assert governed.request is not request
+    assert len(governed.records) == 1
+    block = governed.request.messages[0].content[0]
+    replacement = get_block_attr(block, "content")
+    assert isinstance(replacement, str)
+    assert "tool result redirected" in replacement
+    assert "HEAD marker" in replacement
+    assert "TAIL marker" in replacement
+    assert len(replacement.encode()) <= 4096
 
 
 def test_existing_artifact_with_digest_prefix_collision_fails_closed(tmp_path) -> None:
@@ -281,6 +320,51 @@ def test_large_media_result_is_preserved_by_default(tmp_path) -> None:
     assert governed.request is request
     assert governed.records == ()
     assert not list(tmp_path.iterdir())
+
+
+def test_large_text_in_media_result_is_redirected_without_changing_media(
+    tmp_path,
+) -> None:
+    image = {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "x" * 10_000,
+        },
+    }
+    content = [
+        {"type": "text", "text": "HEAD marker\n"},
+        image,
+        {"type": "text", "text": "middle\n" * 2_000},
+        {"type": "text", "text": "TAIL marker"},
+    ]
+    request = _request(content)
+
+    governed = govern_messages_request(
+        request,
+        ContextGovernorConfig(tool_result_max_bytes=4096, artifact_dir=tmp_path),
+    )
+
+    assert len(governed.records) == 1
+    record = governed.records[0]
+    assert record.pressure_mode == "mixed_media_text_redirected"
+    assert record.semantic_verification == "text_only_preserved_media"
+    governed_content = get_block_attr(
+        governed.request.messages[0].content[0], "content"
+    )
+    assert isinstance(governed_content, list)
+    assert image in governed_content
+    text_blocks = [
+        item for item in governed_content if get_block_attr(item, "type") == "text"
+    ]
+    assert len(text_blocks) == 1
+    replacement = get_block_attr(text_blocks[0], "text")
+    assert isinstance(replacement, str)
+    assert "HEAD marker" in replacement
+    assert "TAIL marker" in replacement
+    assert len(replacement.encode()) <= 4096
+    assert record.artifact_path in replacement
 
 
 def test_disabled_governor_does_not_write_artifacts(tmp_path) -> None:

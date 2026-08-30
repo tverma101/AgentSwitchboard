@@ -157,6 +157,20 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Fallback provider/model route for all Claude model names.",
     ),
     ConfigFieldSpec(
+        "FCC_SUBAGENT_MODEL_INHERIT",
+        "Inherit Parent Model",
+        "models",
+        "boolean",
+        settings_attr="subagent_model_inherit",
+        default="true",
+        restart_required=True,
+        session_sensitive=True,
+        description=(
+            "Keep Claude Code subagents on the parent provider/model route. "
+            "Set false to enable the per-tier MODEL_* overrides."
+        ),
+    ),
+    ConfigFieldSpec(
         "MODEL_FABLE",
         "Fable Override",
         "models",

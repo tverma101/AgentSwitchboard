@@ -1,7 +1,7 @@
 """Runtime capabilities consumed by the HTTP API adapter."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from free_claude_code.application.connected_accounts import (
@@ -10,6 +10,7 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import RequestRuntimePort, TaskController
+from free_claude_code.application.routing import ParentRouteRegistry
 from free_claude_code.usage import UsageStore
 
 
@@ -78,3 +79,4 @@ class ApiServices:
     admin: AdminRuntimePort
     tasks: TaskController
     usage: UsageStore | None = None
+    model_routes: ParentRouteRegistry = field(default_factory=ParentRouteRegistry)

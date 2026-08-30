@@ -73,9 +73,10 @@ from .repo_picker import (
     RepoEntry,
     cache_path,
     choose_repo,
+    deduplicate_repos,
     default_roots,
     discover_repos,
-    github_authenticated_user,
+    repository_from_path,
     save_cached_repos,
 )
 from .selection import SelectionItem, choose_item
@@ -157,7 +158,7 @@ def run_control_menu(
 
     displayed_model = settings.model
     next_profile = configured_profile()
-    selected_repo: RepoEntry | None = None
+    selected_repo = repository_from_path(Path.cwd())
     while True:
         _print_home(
             settings,
@@ -247,7 +248,11 @@ def _print_home(
     )
     displayed_model = settings.model if model is None else model
     displayed_profile = configured_profile() if profile is None else profile
-    displayed_repo = repo.display_path if repo is not None else Path.cwd().name
+    displayed_repo = (
+        f"{repo.identity} · {repo.display_path}"
+        if repo is not None
+        else f"(current directory) {Path.cwd()}"
+    )
     fcc_account = fcc_provider_account_summary()
     try:
         codex_account = codex_accounts.active_account_summary()
@@ -563,31 +568,26 @@ def _run_reviewer_menu(profile: str) -> None:
 
 
 def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
-    """Select a repository from the live authenticated local inventory."""
+    """Select a repository from the live local inventory."""
 
     cache = cache_path()
-    github_user = github_authenticated_user()
-    repos = (
-        discover_repos(default_roots(), github_user=github_user)
-        if github_user is not None
-        else []
-    )
-    if github_user is not None:
-        save_cached_repos(repos, cache)
+    current = current or repository_from_path(Path.cwd())
+    if current is not None:
+        current = deduplicate_repos([current])[0]
+    repos = discover_repos(default_roots())
+    save_cached_repos(repos, cache)
     if current is not None and current.path not in {repo.path for repo in repos}:
-        current = None
+        repos.append(current)
     while True:
         print()
         print("Repositories")
         print("------------")
         if current is not None:
-            print(f"Current: {current.display_path}")
+            print(f"Current: {current.identity} · {current.display_path}")
         elif repos:
             print("Current: terminal working directory")
-        elif github_user is None:
-            print("No active GitHub CLI account. Run `gh auth login`.")
         else:
-            print(f"No local GitHub repositories found for {github_user}.")
+            print("No local Git repositories found.")
         print("[S] Select  [R] Refresh local roots  [B] Back")
         try:
             choice = input("Repos> ").strip().casefold()
@@ -597,25 +597,27 @@ def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
         if choice in {"b", "back", "q", "quit"}:
             return current
         if choice in {"r", "refresh"}:
-            github_user = github_authenticated_user()
-            if github_user is None:
-                repos = []
-                current = None
-                print("No active GitHub CLI account. Run `gh auth login`.")
-                continue
-            repos = discover_repos(default_roots(), github_user=github_user)
+            repos = discover_repos(default_roots())
+            if current is not None and current.path not in {
+                repo.path for repo in repos
+            }:
+                repos.append(current)
             save_cached_repos(repos, cache)
-            print(f"Discovered {len(repos)} local GitHub repos for {github_user}.")
+            print(f"Discovered {len(repos)} local Git repositories.")
             continue
         if choice in {"s", "select", ""}:
             if not repos:
                 print("No repositories available. Choose Refresh first.")
                 continue
-            selected = choose_repo(repos)
+            selected = choose_repo(
+                repos, selected_path=current.path if current else None
+            )
             if selected is None:
                 continue
             save_cached_repos(_mark_repo_used(repos, selected), cache)
-            print(f"Next launch repository: {selected.display_path}")
+            print(
+                f"Next launch repository: {selected.identity} · {selected.display_path}"
+            )
             return selected
         print("Unknown repository action. Use S, R, or B.")
 

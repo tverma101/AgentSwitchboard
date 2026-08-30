@@ -846,7 +846,9 @@ async def test_wire_messages_keep_prefix_across_tool_thinking_fallback(
 
 
 @pytest.mark.asyncio
-async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provider):
+async def test_stream_uses_chat_completions_and_bounds_cache_usage_to_estimate(
+    deepseek_provider,
+):
     request = MessagesRequest(
         model="m",
         messages=[Message(role="user", content="hi")],
@@ -904,12 +906,7 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
     usage = next(
         event.data["usage"] for event in parsed if event.event == "message_delta"
     )
-    assert usage == {
-        "input_tokens": 30,
-        "output_tokens": 3,
-        "cache_read_input_tokens": 10,
-        "cache_creation_input_tokens": 20,
-    }
+    assert usage == {"input_tokens": 7, "output_tokens": 3}
 
 
 def test_preserves_extra_body_for_openai_chat_request(deepseek_provider):

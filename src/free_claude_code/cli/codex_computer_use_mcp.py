@@ -41,6 +41,10 @@ SERVER_NAME = "fcc-codex-computer-use"
 SERVER_VERSION = "1"
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 CLAUDE_MCP_TOOL_SCHEMA_MAX_BYTES = 16_384
+# The catalog is fixed for the lifetime of this process and contains no
+# user-specific data. This hint avoids repeated ``tools/list`` round trips;
+# it does not change the first schema payload or Claude's deferred loading.
+MCP_TOOL_LIST_TTL_MS = 24 * 60 * 60 * 1000
 _CONTROLLER_MODEL_ENV = "FCC_CONTROLLER_MODEL_REF"
 
 _READ_ANNOTATIONS = {
@@ -281,7 +285,14 @@ class CodexComputerUseMcpServer:
             self._write_result(request_id, {})
             return
         if method == "tools/list":
-            self._write_result(request_id, {"tools": list(CLAUDE_COMPUTER_USE_TOOLS)})
+            self._write_result(
+                request_id,
+                {
+                    "tools": list(CLAUDE_COMPUTER_USE_TOOLS),
+                    "ttlMs": MCP_TOOL_LIST_TTL_MS,
+                    "cacheScope": "public",
+                },
+            )
             return
         if method == "tools/call":
             self._enqueue_tool_call(request_id, parameters)

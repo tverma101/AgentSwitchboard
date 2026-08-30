@@ -37,8 +37,15 @@ def build_responses_provider_request(
     *,
     reasoning: ReasoningPolicy,
     prompt_cache_key: str | None = None,
+    explicit_prompt_cache_breakpoint: bool = False,
 ) -> dict[str, Any]:
-    """Build a stateless Responses request without silently dropping fields."""
+    """Build a stateless Responses request without silently dropping fields.
+
+    ``explicit_prompt_cache_breakpoint`` is an opt-in for a caller that has
+    verified the target Responses endpoint supports GPT-5.6 cache breakpoints.
+    The public ``instructions`` field cannot carry a breakpoint, so the stable
+    system prefix is represented as a developer input message when enabled.
+    """
 
     _validate_supported_request(request)
     tool_names = OpenAIToolNameCodec.from_request(request)
@@ -80,7 +87,17 @@ def build_responses_provider_request(
     ):
         body["prompt_cache_key"] = cache_key
     if instructions:
-        body["instructions"] = "\n\n".join(instructions)
+        instruction_text = "\n\n".join(instructions)
+        if explicit_prompt_cache_breakpoint:
+            input_items.insert(
+                0,
+                _developer_message(
+                    instruction_text,
+                    prompt_cache_breakpoint=True,
+                ),
+            )
+        else:
+            body["instructions"] = instruction_text
     if request.max_tokens is not None:
         body["max_output_tokens"] = request.max_tokens
     if request.temperature is not None:
@@ -495,6 +512,17 @@ def _assistant_message(content: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _user_message(content: list[dict[str, Any]]) -> dict[str, Any]:
     return {"type": "message", "role": "user", "content": content}
+
+
+def _developer_message(
+    text: str,
+    *,
+    prompt_cache_breakpoint: bool,
+) -> dict[str, Any]:
+    content: dict[str, Any] = {"type": "input_text", "text": text}
+    if prompt_cache_breakpoint:
+        content["prompt_cache_breakpoint"] = {"mode": "explicit"}
+    return {"type": "message", "role": "developer", "content": [content]}
 
 
 def _tool_choice(
