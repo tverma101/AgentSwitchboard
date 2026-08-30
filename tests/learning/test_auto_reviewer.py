@@ -173,7 +173,8 @@ def test_foreground_agent_hooks_auto_persist_and_return_parent_context(
     run_hook("agent-post", profile="coding")
     post = json.loads(capsys.readouterr().out)
     context = post["hookSpecificOutput"]["additionalContext"]
-    assert "X1|st=DONE" in context
+    assert "status=DONE" in context
+    assert "X1|" not in context
     assert "auto-learn: promoted" in context
     assert len(ScarRegistry("coding").load()) == 1
 
