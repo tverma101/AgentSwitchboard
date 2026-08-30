@@ -6,6 +6,13 @@ from pathlib import Path
 from free_claude_code.learning.hooks import install_hooks, uninstall_hooks
 
 
+def _command(candidate: object) -> str | None:
+    if not isinstance(candidate, dict):
+        return None
+    command = candidate.get("command")
+    return command if isinstance(command, str) else None
+
+
 def _commands(payload: dict[str, object], event: str) -> list[str]:
     hooks = payload.get("hooks")
     if not isinstance(hooks, dict):
@@ -20,9 +27,11 @@ def _commands(payload: dict[str, object], event: str) -> list[str]:
         candidates = group.get("hooks")
         if not isinstance(candidates, list):
             continue
-        for candidate in candidates:
-            if isinstance(candidate, dict) and isinstance(candidate.get("command"), str):
-                commands.append(candidate["command"])
+        commands.extend(
+            command
+            for candidate in candidates
+            if (command := _command(candidate)) is not None
+        )
     return commands
 
 
