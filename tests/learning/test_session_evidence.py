@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ from free_claude_code.learning.stop_hook import enqueue_stop
 from free_claude_code.learning.store import LearningStore
 
 
-def _claude_transcript(tmp_path: Path, lines: list[object]) -> tuple[Path, Path]:
+def _claude_transcript(tmp_path: Path, lines: Sequence[object]) -> tuple[Path, Path]:
     config = tmp_path / ".claude"
     transcript = config / "projects" / "repo" / "session.jsonl"
     transcript.parent.mkdir(parents=True)
@@ -103,7 +104,10 @@ def test_transcript_path_must_remain_inside_claude_projects(tmp_path: Path) -> N
     config = tmp_path / ".claude"
     (config / "projects").mkdir(parents=True)
     outside = tmp_path / "private.jsonl"
-    outside.write_text(json.dumps(_queued("do not read me")) + "\n", encoding="utf-8")
+    outside.write_text(
+        json.dumps(_queued("do not read me")) + "\n",
+        encoding="utf-8",
+    )
 
     result = recover_queued_human_steers(
         outside,
@@ -161,10 +165,7 @@ def test_oversized_transcript_fails_closed(
 
 def test_human_steering_is_redacted_and_bounded(tmp_path: Path) -> None:
     lines = [
-        _queued(
-            f"message {index}",
-            source_uuid=f"steer-{index}",
-        )
+        _queued(f"message {index}", source_uuid=f"steer-{index}")
         for index in range(6)
     ]
     lines.append(
