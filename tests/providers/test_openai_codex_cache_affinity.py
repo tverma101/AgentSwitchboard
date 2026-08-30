@@ -116,5 +116,5 @@ async def test_codex_session_header_reuses_prompt_cache_identity() -> None:
     payload = json.loads(upstream.content)
     assert payload["prompt_cache_key"] == session_id
     assert upstream.headers["session-id"] == session_id
-    assert "session_id" not in upstream.headers
+    assert upstream.headers["session_id"] == session_id
     await client.aclose()
