@@ -279,7 +279,7 @@ async def _run_firecrawl_search(query: str) -> list[dict[str, str]]:
         client.stream(
             "POST",
             _FIRECRAWL_SEARCH_URL,
-            json={"query": query, "limit": _MAX_SEARCH_RESULTS, "origin": "mcp"},
+            json={"query": query, "limit": _MAX_SEARCH_RESULTS},
         ) as response,
     ):
         response.raise_for_status()
