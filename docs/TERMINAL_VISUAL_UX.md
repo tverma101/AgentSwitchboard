@@ -28,8 +28,9 @@ card-only form.
 
 This command is a local acknowledgement companion, not an image transport
 adapter. Claude Code's own input surface and FCC's protocol boundary remain
-responsible for sending an image to the selected model; #19 owns that
-end-to-end transport contract.
+responsible for sending an image to the selected model. End-to-end image
+transport remains a separate protocol acceptance boundary; the historical issue
+reference is not an open-backlog claim.
 
 ## Capability detection
 

@@ -6,7 +6,8 @@
 > black-box receipts for fresh/resume/fork, compact/resume, foreground
 > subagents, background attach/tool execution, steering, and queued prompts.
 > Candidate-version promotion/quarantine and the exhaustive compatibility matrix
-> below remain active design work tracked by #31.
+> below remain active design work. The former receipt-only issue reference is
+> retained only in historical issue records, not as an open-backlog claim.
 
 Claude Code is an external moving dependency. AgentSwitchboard should treat each Claude
 version like a protocol dependency that must be certified before promotion.

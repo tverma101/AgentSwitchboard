@@ -822,7 +822,8 @@ On Windows, run `scripts/uninstall.ps1` in PowerShell.
 ## Project Links
 
 - [Report bugs or request features](https://github.com/tverma101/AgentSwitchboard/issues)
-- [Documentation index and release evidence](docs/README.md)
+- [Documentation catalogue](docs/README.md)
+- [Documentation maintenance policy](docs/DOCUMENTATION.md)
 - [Architecture and extension guide](ARCHITECTURE.md)
 - [Configuration reference](docs/CONFIGURATION.md)
 - [Claude context policy](docs/CLAUDE_CONTEXT_POLICY.md)

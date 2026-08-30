@@ -1,6 +1,10 @@
 # Codex browser upstream harvest
 
-Issue: #21. This branch treats public repositories as a parts bin and keeps Luna as the controller. It does **not** add Playwright as a required runtime and does not rebuild a CDP/browser engine.
+This is a provenance and design note for the browser-helper seam. The earlier
+issue reference is historical traceability, not an open-backlog claim. This
+branch treats public repositories as a parts bin and keeps Luna as the
+controller. It does **not** add Playwright as a required runtime and does not
+rebuild a CDP/browser engine.
 
 ## Primary port: Botmux
 

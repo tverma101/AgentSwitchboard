@@ -66,7 +66,9 @@ No Electron dependency, daemon, generic MCP process manager, browser runtime, co
 
 ## First concrete adapters
 
-The Codex Computer Use work in #102/#103 is the first target for this seam:
+The Codex Computer Use work is the first target for this seam. The earlier issue
+references are historical traceability; native/device acceptance remains a
+separate evidence boundary:
 
 `Luna -> #30 capability plan -> ApprovedHelperExecutor -> signed Codex Computer Use broker`
 

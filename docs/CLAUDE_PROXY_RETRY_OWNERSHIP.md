@@ -8,4 +8,5 @@ The managed Claude environment therefore disables Claude Code's stream-to-nonstr
 
 This rule does not change direct/native Claude launches that do not use the FCC proxy.
 
-Tracks #181.
+This implemented boundary decision is retained as historical traceability for the
+proxy-retry work; the earlier issue reference is not an open-backlog claim.

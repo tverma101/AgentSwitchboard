@@ -1,7 +1,10 @@
-# Remaining-issue certification
+# Shared certification commands
 
-The remaining AgentSwitchboard backlog is intentionally consolidated onto shared evidence
-machinery instead of one runner per GitHub issue.
+This page documents reusable validation machinery that was originally assembled
+for issue-sweep work. It is not a live inventory of the GitHub backlog, and a
+certification step can remain useful after its associated receipt-only issue is
+closed. The registry is intentionally consolidated onto shared evidence machinery
+instead of one runner per GitHub issue.
 
 ## Deterministic default
 

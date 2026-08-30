@@ -6,7 +6,8 @@
 > visible excerpts, fail-closed structured/media handling, and secret-safe
 > redaction. The remaining important gap is a controlled OFF-vs-ON black-box
 > receipt showing materially lower context growth/compaction without semantic
-> loss (#63/#64 follow-up).
+> loss. The earlier issue references are historical traceability; the efficacy
+> receipt remains a separate acceptance gate rather than an open-backlog claim.
 
 AgentSwitchboard should treat compaction as a safety valve rather than the normal result
 of accidental megadumps.
@@ -121,4 +122,7 @@ or large-result model effectiveness; those remain separate acceptance gates.
 The leash does not replace auto-compaction. It reduces avoidable pressure and
 should be tested alongside the compaction conformance suite.
 
-Tracked primarily by #63/#64 and validated alongside #58-#61.
+The implementation is validated alongside the compaction conformance suite. The
+controlled OFF-vs-ON efficacy receipt remains a separate acceptance gate; issue
+references in older records are historical traceability, not current backlog
+status.

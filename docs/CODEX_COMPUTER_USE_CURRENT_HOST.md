@@ -1,6 +1,9 @@
 # Current Codex Computer Use host contract
 
-This note supplements `CODEX_COMPUTER_USE_UPSTREAMS.md` with newer compatibility evidence found while implementing #102/#103.
+This note supplements `CODEX_COMPUTER_USE_UPSTREAMS.md` with newer compatibility
+evidence found while implementing the Codex Computer Use host seam. The earlier
+issue references are historical traceability; native/device acceptance remains
+a separate evidence boundary rather than an open-backlog claim.
 
 ## Current primary evidence
 
