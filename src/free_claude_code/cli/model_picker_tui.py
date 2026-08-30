@@ -329,21 +329,21 @@ class TuiuiControlCenterApp(ControlCenterApp):
 
     #model-inspector-title {
         height: auto;
-        min-height: 2;
+        min-height: 1;
         color: $text;
         text-style: bold;
     }
 
     #model-inspector-status {
         height: auto;
-        min-height: 2;
+        min-height: 1;
         margin-top: 1;
         color: $text-success;
     }
 
     #model-inspector-meta {
         height: auto;
-        min-height: 7;
+        min-height: 6;
         margin: 1 0;
         color: $text-muted;
     }
@@ -351,7 +351,7 @@ class TuiuiControlCenterApp(ControlCenterApp):
     #model-inspector-hint {
         height: auto;
         min-height: 2;
-        margin-bottom: 1;
+        margin-top: 1;
         color: $text-muted;
     }
 
@@ -467,10 +467,10 @@ class TuiuiControlCenterApp(ControlCenterApp):
                     with Vertical(id="model-inspector"):
                         yield Static("Select a model", id="model-inspector-title")
                         yield Static("", id="model-inspector-status")
-                        yield Static("", id="model-inspector-meta")
-                        yield Static("", id="model-inspector-hint")
                         yield Button("★ Make default", id="model-set-default")
                         yield Button("Enable model", id="model-toggle-access")
+                        yield Static("", id="model-inspector-meta")
+                        yield Static("", id="model-inspector-hint")
                 yield DataTable(id="table", cursor_type="row")
                 yield VerticalScroll(id="content")
                 yield Horizontal(id="actions")
