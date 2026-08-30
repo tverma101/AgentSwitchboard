@@ -243,9 +243,10 @@ async def test_provider_decline_replays_original_provider_stream() -> None:
         response = await _service(provider).create(
             _automatic_request(), request_id="req_auto_decline"
         )
+        assert isinstance(response, StreamingResponse)
+        raw = await _body_text(response)
 
-    assert isinstance(response, StreamingResponse)
-    assert await _body_text(response) == "".join(events)
+    assert raw == "".join(events)
     search.assert_not_awaited()
     assert provider.close_count == 1
     assert len(provider.requests) == 1
@@ -270,9 +271,9 @@ async def test_provider_selected_query_executes_local_search_once() -> None:
         response = await _service(provider).create(
             _automatic_request(), request_id="req_auto_selected"
         )
+        assert isinstance(response, StreamingResponse)
+        raw = await _body_text(response)
 
-    assert isinstance(response, StreamingResponse)
-    raw = await _body_text(response)
     events = parse_sse_text(raw)
     assert_anthropic_stream_contract(events)
     search.assert_awaited_once_with("model selected query")
