@@ -116,8 +116,9 @@ def plan_automatic_web_search(
         return None
     if not web_tools_enabled:
         raise InvalidRequestError(
-            "Anthropic web_search is disabled (ENABLE_WEB_SERVER_TOOLS=false). "
-            "Enable local web tools or remove web_search from the request."
+            "FCC cannot pass listed Anthropic web_search while local web tools are "
+            "disabled (ENABLE_WEB_SERVER_TOOLS=false). Enable local web tools or "
+            "remove web_search from the request."
         )
     if _has_server_tool_history(request):
         raise InvalidRequestError(
