@@ -14,9 +14,10 @@ from .auto_reviewer import (
     process_background_subagent_stop,
 )
 from .config import learning_enabled
+from .memory_context import bounded_memory_context
 from .reviewer_flow import reviewer_context_for_task
 from .stop_hook import spawn_queue_worker
-from .store import LearningStore, format_memory_context, project_identity
+from .store import LearningStore, project_identity
 
 _HOOK_MODULE = "free_claude_code.learning.cli"
 _STOP_HOOK_MODULE = "free_claude_code.learning.stop_hook"
@@ -238,7 +239,7 @@ def handle_session_start(payload: dict[str, Any], store: LearningStore) -> None:
     project_key = project_identity(cwd)
     rows = store.relevant_memories(project_key=project_key, limit=12)
     context = f"FCC Learning active profile: {store.profile}."
-    memory_context = format_memory_context(rows, profile=store.profile)
+    memory_context = bounded_memory_context(rows, profile=store.profile)
     if memory_context:
         context = f"{context}\n{memory_context}"
     _emit_hook_context(
@@ -263,7 +264,7 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
         prompt=prompt_text,
         limit=8,
     )
-    context_parts = [format_memory_context(rows, profile=store.profile)]
+    context_parts = [bounded_memory_context(rows, profile=store.profile)]
     context_parts.append(reviewer_context_for_task(prompt_text, profile=store.profile))
     _emit_hook_context(
         "UserPromptSubmit", "\n".join(part for part in context_parts if part)
@@ -282,7 +283,7 @@ def handle_agent_pre(payload: dict[str, Any], store: LearningStore) -> None:
         return
     try:
         updated = augment_agent_input(tool_input, profile=store.profile)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         updated = None
     if updated is None:
         _emit_empty_hook_result()
