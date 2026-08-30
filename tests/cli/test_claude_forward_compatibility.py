@@ -56,9 +56,7 @@ def test_managed_newer_patch_is_forward_compatible(tmp_path, monkeypatch) -> Non
     assert status.known_good_version == "2.1.228"
 
 
-def test_managed_newer_minor_stays_inside_claude_2x_envelope(
-    tmp_path, monkeypatch
-) -> None:
+def test_managed_newer_minor_is_forward_compatible(tmp_path, monkeypatch) -> None:
     binary = _fake_claude(tmp_path, "2.2.0 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
 
@@ -67,33 +65,24 @@ def test_managed_newer_minor_stays_inside_claude_2x_envelope(
     assert status.state == "forward_compatible"
 
 
-def test_future_major_requires_explicit_canary(tmp_path, monkeypatch) -> None:
+def test_newer_major_is_forward_compatible_when_contract_still_holds(
+    tmp_path, monkeypatch
+) -> None:
     binary = _fake_claude(tmp_path, "3.0.0 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
-    _disable_receipt(monkeypatch)
 
-    with pytest.raises(claude_firewall.ClaudeCompatibilityError):
-        claude_firewall.enforce_claude_compatibility(
-            binary,
-            base_env=_managed_env(),
-            wrapper_path=wrapper,
-        )
+    status = _enforce(binary, wrapper, _managed_env(), monkeypatch)
 
-    canary = _enforce(
-        binary,
-        wrapper,
-        _managed_env(**{CLAUDE_ALLOW_UNCERTIFIED_ENV: "1"}),
-        monkeypatch,
-    )
-    assert canary.state == "canary_opt_in"
+    assert status.version == "3.0.0"
+    assert status.state == "forward_compatible"
 
 
 def test_known_bad_version_can_be_blocked_without_repinning_every_release(
     tmp_path, monkeypatch
 ) -> None:
-    binary = _fake_claude(tmp_path, "2.1.250 Claude Code")
+    binary = _fake_claude(tmp_path, "3.1.0 Claude Code")
     wrapper = ensure_process_wrapper(tmp_path / "wrapper")
-    blocked_env = _managed_env(**{CLAUDE_BLOCKED_VERSIONS_ENV: "2.1.249,2.1.250"})
+    blocked_env = _managed_env(**{CLAUDE_BLOCKED_VERSIONS_ENV: "2.1.249,3.1.0"})
     _disable_receipt(monkeypatch)
 
     with pytest.raises(claude_firewall.ClaudeCompatibilityError):
@@ -115,7 +104,7 @@ def test_known_bad_version_can_be_blocked_without_repinning_every_release(
 def test_forward_compatible_version_still_requires_valid_wrapper(
     tmp_path, monkeypatch
 ) -> None:
-    binary = _fake_claude(tmp_path, "2.1.250 Claude Code")
+    binary = _fake_claude(tmp_path, "4.0.0 Claude Code")
     _disable_receipt(monkeypatch)
 
     with pytest.raises(claude_firewall.ClaudeCompatibilityError):
