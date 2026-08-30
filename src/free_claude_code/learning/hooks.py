@@ -16,14 +16,17 @@ from .delegated_worker import (
 )
 from .memory_context import select_bounded_memory_context
 from .reviewer_flow import reviewer_context_for_task
+from .session_ledger import SessionEvidenceLedger
 from .stop_hook import spawn_queue_worker
 from .store import LearningStore, project_identity
 from .worker_reviewer import process_background_worker_stop, process_worker_event
 
 _HOOK_MODULE = "free_claude_code.learning.cli"
 _STOP_HOOK_MODULE = "free_claude_code.learning.stop_hook"
+_SESSION_END_HOOK_MODULE = "free_claude_code.learning.session_end"
 _HOOK_EVENTS: dict[str, tuple[str, int, bool]] = {
     "SessionStart": ("session-start", 10, False),
+    "SessionEnd": ("session-end", 15, False),
     "UserPromptSubmit": ("user-prompt", 10, False),
     "PreToolUse": ("agent-pre", 10, False),
     "PostToolUse": ("agent-post", 10, False),
@@ -41,6 +44,8 @@ def _hook_definition(event: str) -> dict[str, Any]:
     hook_name, timeout, asynchronous = _HOOK_EVENTS[event]
     if event == "Stop":
         command = f"{shlex.quote(sys.executable)} -m {_STOP_HOOK_MODULE}"
+    elif event == "SessionEnd":
+        command = f"{shlex.quote(sys.executable)} -m {_SESSION_END_HOOK_MODULE}"
     else:
         command = f"{shlex.quote(sys.executable)} -m {_HOOK_MODULE} hook {hook_name}"
     hook: dict[str, Any] = {
@@ -82,7 +87,11 @@ def _is_our_hook(hook: object) -> bool:
     command = hook.get("command")
     if not isinstance(command, str):
         return False
-    return f"-m {_HOOK_MODULE} hook " in command or f"-m {_STOP_HOOK_MODULE}" in command
+    return (
+        f"-m {_HOOK_MODULE} hook " in command
+        or f"-m {_STOP_HOOK_MODULE}" in command
+        or f"-m {_SESSION_END_HOOK_MODULE}" in command
+    )
 
 
 def install_hooks(config_dir: Path | None = None) -> bool:
@@ -260,6 +269,15 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
     prompt = payload.get("prompt")
     prompt_text = prompt if isinstance(prompt, str) else ""
     store.record_prompt(session_id=session_id, cwd=cwd, prompt=prompt_text)
+    if prompt_text:
+        source = payload.get("prompt_id", payload.get("uuid", ""))
+        SessionEvidenceLedger(store).record(
+            session_id=session_id,
+            kind="human_prompt",
+            text=prompt_text,
+            source_id=source if isinstance(source, str) else "",
+            metadata={"source": "UserPromptSubmit"},
+        )
     project_key = project_identity(cwd)
     rows = store.relevant_memories(
         project_key=project_key,
