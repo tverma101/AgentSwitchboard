@@ -6,10 +6,10 @@ append-only snapshots while preventing divergent terminal replacements and
 unknown incomplete reasons from being presented as successful Anthropic turns.
 """
 
-from .provider_stream import (
-    ResponsesProviderStream as _BaseResponsesProviderStream,
-    ResponsesStreamFailure,
-)
+from . import provider_stream
+
+_BaseResponsesProviderStream = provider_stream.ResponsesProviderStream
+ResponsesStreamFailure = provider_stream.ResponsesStreamFailure
 
 _MAX_TOKEN_INCOMPLETE_REASONS = frozenset({"max_output_tokens", "max_tokens"})
 
