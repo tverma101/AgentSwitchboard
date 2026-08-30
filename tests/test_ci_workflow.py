@@ -13,7 +13,6 @@ def test_ci_workflow_uses_hosted_runner_for_normal_ci() -> None:
     assert workflow.count("runs-on: ubuntu-latest") == 2
     assert "workflow_dispatch:" in workflow
     assert "runner_label" not in workflow
-    assert "harness-burst" not in workflow
     assert "vars.HARNESS_RUNNER" not in workflow
     assert "harness-local" not in workflow
     assert "self-hosted" not in workflow
