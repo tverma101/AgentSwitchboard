@@ -61,7 +61,9 @@ def _duplicate_definition_issues(path: Path) -> list[str]:
         for statement in body:
             if not isinstance(statement, DEFINITION_TYPES):
                 continue
-            if isinstance(statement, FUNCTION_TYPES) and _allows_redefinition(statement):
+            if isinstance(statement, FUNCTION_TYPES) and _allows_redefinition(
+                statement
+            ):
                 pass
             elif statement.name in seen:
                 issues.append(
@@ -100,7 +102,9 @@ def _duplicate_test_implementation_issues(path: Path) -> list[str]:
     def inspect_scope(body: list[ast.stmt], classes: tuple[str, ...]) -> None:
         seen: dict[str, tuple[str, int]] = {}
         for statement in body:
-            if isinstance(statement, FUNCTION_TYPES) and statement.name.startswith("test_"):
+            if isinstance(statement, FUNCTION_TYPES) and statement.name.startswith(
+                "test_"
+            ):
                 fingerprint = _test_fingerprint(statement)
                 previous = seen.get(fingerprint)
                 if previous is not None:
@@ -128,7 +132,10 @@ def _parametrize_duplicate_issues(path: Path) -> list[str]:
         for decorator in node.decorator_list:
             if not isinstance(decorator, ast.Call):
                 continue
-            if _decorator_name(decorator.func) != "parametrize" or len(decorator.args) < 2:
+            if (
+                _decorator_name(decorator.func) != "parametrize"
+                or len(decorator.args) < 2
+            ):
                 continue
             if any(keyword.arg == "ids" for keyword in decorator.keywords):
                 continue
@@ -184,10 +191,7 @@ def _all_repository_issues() -> list[str]:
 def test_redundancy_audit_rejects_overwritten_definitions(tmp_path: Path) -> None:
     path = tmp_path / "sample.py"
     path.write_text(
-        "def helper():\n"
-        "    return 1\n\n"
-        "def helper():\n"
-        "    return 2\n",
+        "def helper():\n    return 1\n\ndef helper():\n    return 2\n",
         encoding="utf-8",
     )
 

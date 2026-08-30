@@ -102,21 +102,6 @@ def test_build_request_body_preserves_request_disabled_thinking(wafer_provider):
     assert body["reasoning_effort"] == "none"
 
 
-def test_build_request_body_uses_resolved_policy_without_inspecting_model(
-    wafer_provider,
-):
-    request = MessagesRequest.model_validate(
-        {
-            "model": "DeepSeek-V4-Pro",
-            "messages": [{"role": "user", "content": "Explore the codebase."}],
-        }
-    )
-
-    body = wafer_provider._build_request_body(request, reasoning=REASONING_OFF)
-
-    assert body["reasoning_effort"] == "none"
-
-
 @pytest.mark.asyncio
 async def test_lists_models_from_openai_models_endpoint(wafer_provider):
     wafer_provider._client.models.list = AsyncMock(
