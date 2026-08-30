@@ -203,7 +203,7 @@ def ensure_learning_hooks() -> None:
 def _read_hook_input() -> dict[str, Any]:
     try:
         payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return {}
     return payload if isinstance(payload, dict) else {}
 
