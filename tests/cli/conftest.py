@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from free_claude_code.cli import control_tui
@@ -39,7 +37,7 @@ def deterministic_control_tui_repo_context(
     )
 
     def repository_from_path(
-        path: Path,
+        path: object,
         *,
         github_user: str | None = None,
         last_used: float = 0.0,
