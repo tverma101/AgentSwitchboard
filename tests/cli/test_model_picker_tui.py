@@ -16,6 +16,7 @@ from free_claude_code.config.settings import Settings
 
 MODEL_A = "open_router/provider/alpha"
 MODEL_B = "open_router/provider/beta"
+CLICK_INSIDE = (2, 1)
 
 
 def _settings() -> Settings:
@@ -106,17 +107,23 @@ async def test_model_picker_batches_default_and_visibility_into_one_save() -> No
             await app._show_page("models")
             await pilot.pause()
 
-            await pilot.click(_default_button(app, MODEL_B))
+            assert await pilot.click(
+                _default_button(app, MODEL_B), offset=CLICK_INSIDE
+            )
             await pilot.pause()
             assert _default_button(app, MODEL_B).has_class("model-default-pending")
             assert _access_button(app, MODEL_B).disabled
             assert not _access_button(app, MODEL_A).disabled
 
-            await pilot.click(_access_button(app, MODEL_A))
+            assert await pilot.click(
+                _access_button(app, MODEL_A), offset=CLICK_INSIDE
+            )
             await pilot.pause()
             assert not app.query_one("#models-save", Button).disabled
 
-            await pilot.click(app.query_one("#models-save", Button))
+            assert await pilot.click(
+                app.query_one("#models-save", Button), offset=CLICK_INSIDE
+            )
             await pilot.pause()
 
     apply.assert_called_once()
@@ -147,11 +154,15 @@ async def test_model_picker_discard_restores_saved_state_without_writing() -> No
             await app._show_page("models")
             await pilot.pause()
 
-            await pilot.click(_default_button(app, MODEL_B))
+            assert await pilot.click(
+                _default_button(app, MODEL_B), offset=CLICK_INSIDE
+            )
             await pilot.pause()
             assert not app.query_one("#models-discard", Button).disabled
 
-            await pilot.click(app.query_one("#models-discard", Button))
+            assert await pilot.click(
+                app.query_one("#models-discard", Button), offset=CLICK_INSIDE
+            )
             await pilot.pause()
 
             assert _default_button(app, MODEL_A).has_class("model-default-pending")
@@ -172,7 +183,9 @@ async def test_model_picker_keeps_default_enabled_when_user_switches_models() ->
             await app._show_page("models")
             await pilot.pause()
 
-            await pilot.click(_default_button(app, MODEL_B))
+            assert await pilot.click(
+                _default_button(app, MODEL_B), offset=CLICK_INSIDE
+            )
             await pilot.pause()
 
             assert MODEL_B in app._model_pending_enabled
