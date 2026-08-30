@@ -86,21 +86,22 @@ class ResponsesProviderStream(_BaseResponsesProviderStream):
 
 
 def _terminal_continuation_suffix(existing: str, candidate: str) -> str | None:
-    """Return an append-only suffix; reject a terminal replacement snapshot."""
+    """Return the suffix of a full terminal snapshot that extends streamed bytes.
+
+    Responses ``*.done`` events are full snapshots, not arbitrary continuation
+    chunks. Once bytes have escaped to the Anthropic client, accepting a merely
+    overlapping replacement can duplicate or corrupt output. Therefore a final
+    snapshot is valid only when it contains the entire streamed prefix.
+    """
 
     existing = existing or ""
     candidate = candidate or ""
     if not candidate:
-        return ""
+        return "" if not existing else None
     if not existing:
         return candidate
     if candidate.startswith(existing):
         return candidate[len(existing) :]
-
-    max_overlap = min(len(existing), len(candidate))
-    for size in range(max_overlap, 0, -1):
-        if existing.endswith(candidate[:size]):
-            return candidate[size:]
     return None
 
 
