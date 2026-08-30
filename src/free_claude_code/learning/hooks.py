@@ -8,8 +8,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .auto_reviewer import (
+    augment_agent_input,
+    process_agent_result,
+    process_background_subagent_stop,
+)
 from .config import learning_enabled
-from .reviewer_flow import parse_exit_ticket, reviewer_context_for_task
+from .reviewer_flow import reviewer_context_for_task
 from .stop_hook import spawn_queue_worker
 from .store import LearningStore, format_memory_context, project_identity
 
@@ -18,9 +23,15 @@ _STOP_HOOK_MODULE = "free_claude_code.learning.stop_hook"
 _HOOK_EVENTS: dict[str, tuple[str, int, bool]] = {
     "SessionStart": ("session-start", 10, False),
     "UserPromptSubmit": ("user-prompt", 10, False),
+    "PreToolUse": ("agent-pre", 10, False),
+    "PostToolUse": ("agent-post", 10, False),
     "SubagentStart": ("subagent-start", 10, False),
     "SubagentStop": ("subagent-stop", 10, False),
     "Stop": ("stop", 60, True),
+}
+_HOOK_MATCHERS = {
+    "PreToolUse": "Agent",
+    "PostToolUse": "Agent",
 }
 
 
@@ -87,6 +98,7 @@ def install_hooks(config_dir: Path | None = None) -> bool:
     changed = False
     for event in _HOOK_EVENTS:
         expected = _hook_definition(event)
+        expected_matcher = _HOOK_MATCHERS.get(event)
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ValueError(f"Claude settings hooks.{event} must be an array")
@@ -94,6 +106,11 @@ def install_hooks(config_dir: Path | None = None) -> bool:
         found = False
         for group in groups:
             if not isinstance(group, dict):
+                continue
+            if (
+                expected_matcher is not None
+                and group.get("matcher") != expected_matcher
+            ):
                 continue
             candidates = group.get("hooks")
             if not isinstance(candidates, list):
@@ -105,7 +122,10 @@ def install_hooks(config_dir: Path | None = None) -> bool:
                         candidates[index] = dict(expected)
                         changed = True
         if not found:
-            groups.append({"hooks": [dict(expected)]})
+            group: dict[str, Any] = {"hooks": [dict(expected)]}
+            if expected_matcher is not None:
+                group["matcher"] = expected_matcher
+            groups.append(group)
             changed = True
 
     if not changed:
@@ -196,6 +216,23 @@ def _emit_hook_context(
     print(json.dumps(output))
 
 
+def _emit_updated_input(updated_input: dict[str, object]) -> None:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "updatedInput": updated_input,
+                }
+            }
+        )
+    )
+
+
+def _emit_empty_hook_result() -> None:
+    print("{}")
+
+
 def handle_session_start(payload: dict[str, Any], store: LearningStore) -> None:
     cwd = str(payload.get("cwd") or os.getcwd())
     project_key = project_identity(cwd)
@@ -233,8 +270,38 @@ def handle_user_prompt(payload: dict[str, Any], store: LearningStore) -> None:
     )
 
 
+def handle_agent_pre(payload: dict[str, Any], store: LearningStore) -> None:
+    """Attach task-matched reviewer context to the actual Agent prompt."""
+
+    if payload.get("tool_name") != "Agent":
+        _emit_empty_hook_result()
+        return
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        _emit_empty_hook_result()
+        return
+    try:
+        updated = augment_agent_input(tool_input, profile=store.profile)
+    except OSError, ValueError:
+        updated = None
+    if updated is None:
+        _emit_empty_hook_result()
+        return
+    _emit_updated_input(updated)
+
+
+def handle_agent_post(payload: dict[str, Any], store: LearningStore) -> None:
+    """Auto-learn from a completed Agent result or register a background plan."""
+
+    result = process_agent_result(payload, profile=store.profile)
+    if result is None:
+        _emit_empty_hook_result()
+        return
+    _emit_hook_context("PostToolUse", result.parent_context())
+
+
 def handle_subagent_start(payload: dict[str, Any], store: LearningStore) -> None:
-    """Inject only the task-matched compact reviewer slice into a subagent."""
+    """Keep a small fallback X1 contract for directly spawned subagent events."""
 
     _emit_hook_context(
         "SubagentStart",
@@ -243,11 +310,10 @@ def handle_subagent_start(payload: dict[str, Any], store: LearningStore) -> None
 
 
 def handle_subagent_stop(payload: dict[str, Any], store: LearningStore) -> None:
-    """Return the validated X1 result to the parent without reading a transcript."""
+    """Persist a background Agent result without reading its transcript."""
 
-    del store
-    result = parse_exit_ticket(payload.get("last_assistant_message"))
-    _emit_hook_context("SubagentStop", result.parent_context())
+    process_background_subagent_stop(payload, profile=store.profile)
+    _emit_empty_hook_result()
 
 
 def run_hook(event: str, *, profile: str | None = None) -> None:
@@ -261,6 +327,10 @@ def run_hook(event: str, *, profile: str | None = None) -> None:
         handle_session_start(payload, store)
     elif event == "user-prompt":
         handle_user_prompt(payload, store)
+    elif event == "agent-pre":
+        handle_agent_pre(payload, store)
+    elif event == "agent-post":
+        handle_agent_post(payload, store)
     elif event == "subagent-start":
         handle_subagent_start(payload, store)
     elif event == "subagent-stop":
