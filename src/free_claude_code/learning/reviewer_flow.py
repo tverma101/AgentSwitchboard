@@ -96,18 +96,39 @@ class ReviewerTaskPlan:
 
 @dataclass(frozen=True, slots=True)
 class ExitTicketResult:
-    """A sanitized result that a parent can consume without a transcript."""
+    """A parsed private ticket plus its minimal Claude-visible projection."""
 
     ticket: SubagentExitTicket | None
     reason: str
 
-    def parent_context(self) -> str:
-        if self.ticket is None:
+    def model_projection(self) -> str:
+        """Return actionable semantics without private receipt/protocol fields."""
+
+        ticket = self.ticket
+        if ticket is None:
             return (
-                "FCC reviewer exit: X1 invalid; status=UNVERIFIED; "
-                f"reason={self.reason}; parent must request a bounded ticket."
+                "FCC reviewer result unavailable; status=UNVERIFIED; "
+                "parent should request a bounded reviewer result."
             )
-        return f"FCC reviewer exit accepted: {self.ticket.compact()}"
+
+        parts = [
+            "FCC reviewer result:",
+            f"status={ticket.status.value};",
+            f"implemented={int(ticket.implemented)};",
+            f"verification={ticket.verification.value};",
+        ]
+        if ticket.blocker != "-":
+            parts.append(f"blocker={ticket.blocker};")
+        if ticket.cave != "-":
+            parts.append(f"cave={ticket.cave};")
+        if ticket.next_action != "-":
+            parts.append(f"next={ticket.next_action};")
+        return " ".join(parts).rstrip(";")
+
+    def parent_context(self) -> str:
+        """Compatibility alias for the model-safe parent projection."""
+
+        return self.model_projection()
 
 
 def fingerprint_task(value: Mapping[str, object] | str) -> TaskFingerprint:
