@@ -1,5 +1,6 @@
-import pytest
 from free_claude_code.cli import control_tui
+
+import pytest
 
 
 _CWD_SENSITIVE_REPO_TESTS = frozenset(
