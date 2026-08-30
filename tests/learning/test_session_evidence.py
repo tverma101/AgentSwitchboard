@@ -79,7 +79,9 @@ def test_recovers_only_positive_human_queued_command_markers(tmp_path: Path) -> 
     ]
 
 
-def test_rejects_wrong_session_sidechain_and_nonexternal_records(tmp_path: Path) -> None:
+def test_rejects_wrong_session_sidechain_and_nonexternal_records(
+    tmp_path: Path,
+) -> None:
     wrong_session = _queued("wrong", session_id="other", source_uuid="wrong")
     sidechain = _queued("sidechain", source_uuid="side")
     sidechain["isSidechain"] = True
@@ -295,7 +297,9 @@ def test_user_prompt_and_stop_stage_idempotent_session_evidence(tmp_path: Path) 
     ]
 
 
-def test_session_end_hook_installs_and_uninstalls_with_fcc_hooks(tmp_path: Path) -> None:
+def test_session_end_hook_installs_and_uninstalls_with_fcc_hooks(
+    tmp_path: Path,
+) -> None:
     settings = tmp_path / "settings.json"
     settings.write_text("{}", encoding="utf-8")
 
