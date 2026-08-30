@@ -1,6 +1,6 @@
-# FCC Learning session evidence boundary
+# AgentSwitchboard FCC Learning session evidence boundary
 
-FCC Learning needs session-level evidence before it can make a reliable end-of-session learning decision. Claude Code remains the agent harness; FCC only observes supported lifecycle hooks and keeps a small private evidence layer for later admission into durable docs, memory, or skills.
+AgentSwitchboard FCC Learning needs session-level evidence before it can make a reliable end-of-session learning decision. Claude Code remains the agent harness; FCC only observes supported lifecycle hooks and keeps a small private evidence layer for later admission into durable docs, memory, or skills.
 
 ## Lifecycle
 
