@@ -154,22 +154,23 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(
     stop_commands = [
         hook["command"] for group in payload["hooks"]["Stop"] for hook in group["hooks"]
     ]
-    assert "printf existing" in stop_commands
-    assert any(
-        "free_claude_code.learning.stop_hook" in command for command in stop_commands
-    )
-    assert any(
-        "hook subagent-start" in hook["command"]
-        for group in payload["hooks"]["SubagentStart"]
+    assert stop_commands == ["printf existing"]
+    session_start_commands = [
+        hook["command"]
+        for group in payload["hooks"]["SessionStart"]
         for hook in group["hooks"]
-    )
-    assert any(
-        "hook subagent-stop" in hook["command"]
-        for group in payload["hooks"]["SubagentStop"]
-        for hook in group["hooks"]
-    )
+    ]
+    assert len(session_start_commands) == 1
+    assert "hook session-start" in session_start_commands[0]
+    for event in (
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "SubagentStart",
+        "SubagentStop",
+    ):
+        assert event not in payload["hooks"]
     assert (tmp_path / "settings.json.fcc-learning.bak").exists()
-    assert (tmp_path / "skills").is_dir()
 
     assert uninstall_hooks(tmp_path)
     restored = json.loads(settings.read_text())
@@ -180,9 +181,6 @@ def test_hook_install_is_idempotent_and_preserves_existing_hooks(
     ]
     assert stop_commands == ["printf existing"]
     assert "SessionStart" not in restored["hooks"]
-    assert "UserPromptSubmit" not in restored["hooks"]
-    assert "SubagentStart" not in restored["hooks"]
-    assert "SubagentStop" not in restored["hooks"]
 
 
 def test_apply_learning_result_rejects_low_confidence_and_writes_global_skill(
