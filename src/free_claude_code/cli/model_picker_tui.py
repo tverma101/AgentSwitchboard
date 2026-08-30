@@ -211,9 +211,7 @@ class GuiModelControlCenterApp(ControlCenterApp):
         await super()._render_models(table, refresh=refresh)
         result = await self._load_model_catalog()
         model_list = self.query_one("#model-list", VerticalScroll)
-        filtered_refs = tuple(
-            row.model_ref for row in model_list.query(ModelToggleButton)
-        )
+        filtered_refs = tuple(row.model_ref for row in model_list.query(ModelToggleButton))
 
         visible_models = result.get("models")
         visible_refs = (
@@ -367,8 +365,10 @@ class GuiModelControlCenterApp(ControlCenterApp):
                 )
         self._update_model_editor_summary()
 
-    @on(Button.Pressed, "#model-list .model-default-button")
+    @on(Button.Pressed, ".model-default-button")
     def choose_default_model(self, event: Button.Pressed) -> None:
+        """Stage a new default model from its large row button."""
+
         if not isinstance(event.button, ModelDefaultButton):
             return
         model = event.button.model_ref
@@ -377,8 +377,10 @@ class GuiModelControlCenterApp(ControlCenterApp):
         self.selected_model = model
         self._refresh_model_editor_widgets()
 
-    @on(Button.Pressed, "#model-list .model-access-button")
+    @on(Button.Pressed, ".model-access-button")
     def toggle_model_access(self, event: Button.Pressed) -> None:
+        """Stage direct access for one model without a separate bulk-selection mode."""
+
         if not isinstance(event.button, ModelAccessButton):
             return
         model = event.button.model_ref
