@@ -2,7 +2,7 @@
 
 The original model page exposes a powerful catalog, but it asks users to reason
 about a temporary bulk selection and then choose a separate enable/disable
-operation.  This module keeps the existing discovery/filtering backend while
+operation. This module keeps the existing discovery/filtering backend while
 presenting model state like a small settings GUI: click a model to make it the
 default, click its access button to enable/disable it, then save all edits once.
 """
@@ -10,7 +10,6 @@ default, click its access button to enable/disable it, then save all edits once.
 import asyncio
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
 
 from textual import on
 from textual.containers import Horizontal, VerticalScroll
@@ -25,7 +24,6 @@ from free_claude_code.learning.config import configured_profile
 
 from .control_tui import (
     ControlCenterApp,
-    ControlResult,
     ModelToggleButton,
     _format_launch_failure,
     _model_catalog_effective_models,
@@ -354,12 +352,8 @@ class GuiModelControlCenterApp(ControlCenterApp):
         )
         self.query_one("#summary", Static).update(self._model_summary_text)
         dirty = self._model_editor_dirty()
-        save = self.query("#models-save")
-        if save:
-            self.query_one("#models-save", Button).disabled = not dirty
-        discard = self.query("#models-discard")
-        if discard:
-            self.query_one("#models-discard", Button).disabled = not dirty
+        self.query_one("#models-save", Button).disabled = not dirty
+        self.query_one("#models-discard", Button).disabled = not dirty
 
     def _refresh_model_editor_widgets(self) -> None:
         for button in self.query("#model-list .model-default-button"):
