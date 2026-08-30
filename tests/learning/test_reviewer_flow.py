@@ -1,13 +1,9 @@
-"""Contracts for reviewer hook integration and X1 consumption."""
+"""Contracts for legacy reviewer records kept outside Claude orchestration."""
 
-import io
-import json
-import sys
 from pathlib import Path
 
 import pytest
 
-from free_claude_code.learning.hooks import run_hook
 from free_claude_code.learning.reviewer_flow import (
     MAX_REVIEW_CONTEXT_BYTES,
     admit_exit_candidate,
@@ -139,41 +135,3 @@ def test_persist_requires_explicitly_supplied_candidate(
 
     assert decision.promote is True
     assert len(registry.load()) == 1
-
-
-def test_subagent_hooks_inject_fallback_contract_without_parent_reinjection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("FCC_LEARNING_ENABLED", "1")
-    monkeypatch.setenv("FCC_LEARNING_HOME", str(tmp_path / "learning"))
-    registry = ScarRegistry("coding")
-    registry.upsert(admit_scar_candidate(_candidate()))
-
-    monkeypatch.setattr(
-        sys,
-        "stdin",
-        io.StringIO(
-            json.dumps(
-                {
-                    "prompt": "Fix the Chrome browser backend on macOS",
-                    "agent_type": "worker",
-                }
-            )
-        ),
-    )
-    run_hook("subagent-start", profile="coding")
-    start = json.loads(capsys.readouterr().out)
-    start_context = start["hookSpecificOutput"]["additionalContext"]
-    assert "pack=edge-cases" in start_context
-    assert "metadata-only" in start_context
-    assert "X1" in start_context
-
-    monkeypatch.setattr(
-        sys,
-        "stdin",
-        io.StringIO(json.dumps({"last_assistant_message": _ticket().compact()})),
-    )
-    run_hook("subagent-stop", profile="coding")
-    assert json.loads(capsys.readouterr().out) == {}
