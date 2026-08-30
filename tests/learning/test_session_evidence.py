@@ -167,8 +167,7 @@ def test_oversized_transcript_fails_closed(
 
 def test_human_steering_is_redacted_and_bounded(tmp_path: Path) -> None:
     lines = [
-        _queued(f"message {index}", source_uuid=f"steer-{index}")
-        for index in range(6)
+        _queued(f"message {index}", source_uuid=f"steer-{index}") for index in range(6)
     ]
     lines.append(
         _queued(
