@@ -240,6 +240,7 @@ class OpenAICodexProvider(BaseProvider):
                             **_auth_headers(access),
                             "Accept": "text/event-stream",
                             "session-id": session_id,
+                            "session_id": session_id,
                         },
                     ),
                     stream=True,
