@@ -48,26 +48,31 @@ class ResolvedModel:
 
 @dataclass(frozen=True, slots=True)
 class _ParentRouteEntry:
-    """One generation-scoped parent route stored for a Claude session."""
+    """One generation-scoped route stored for a Claude session."""
 
     generation_id: int | None
     resolved: ResolvedModel
 
 
 class ParentRouteRegistry:
-    """Keep a bounded, private parent route snapshot for each Claude session.
+    """Keep bounded parent affinity and non-authoritative token-probe hints.
 
     Claude Code can use different logical model names for work performed by a
-    subagent.  The proxy therefore needs a small amount of session state to
-    retain the route selected for the parent request.  Only a SHA-256 digest of
-    the opaque session id is stored, and entries are invalidated when the
-    provider generation changes so a config reload cannot reuse an old route.
+    subagent. The proxy therefore retains the route selected for the accepted
+    parent request. Token-count preflights need similar short-lived consistency,
+    but they must never establish authoritative session routing before a real
+    parent request succeeds. Probe hints live in a separate namespace that is
+    visible only to token-count routing; normal ``lookup()`` never returns them.
+
+    Only SHA-256 digests of opaque session ids are stored. Both namespaces are
+    generation-scoped so a provider/config reload cannot reuse an old route.
     """
 
     def __init__(self, *, max_entries: int = 256) -> None:
         if max_entries < 1:
             raise ValueError("max_entries must be positive")
         self._entries: OrderedDict[str, _ParentRouteEntry] = OrderedDict()
+        self._probe_entries: OrderedDict[str, _ParentRouteEntry] = OrderedDict()
         self._max_entries = max_entries
         self._lock = RLock()
 
@@ -77,24 +82,42 @@ class ParentRouteRegistry:
         *,
         generation_id: int | None = None,
     ) -> ResolvedModel | None:
-        """Return the session route when it belongs to this provider generation."""
+        """Return only an accepted parent route for this provider generation."""
 
         key = _session_key(session_id)
         if key is None:
             return None
         with self._lock:
-            entry = self._entries.get(key)
-            if entry is None:
-                return None
-            if (
-                generation_id is not None
-                and entry.generation_id is not None
-                and entry.generation_id != generation_id
-            ):
-                self._entries.pop(key, None)
-                return None
-            self._entries.move_to_end(key)
-            return entry.resolved
+            return self._lookup_entry(
+                self._entries,
+                key,
+                generation_id=generation_id,
+            )
+
+    def lookup_probe(
+        self,
+        session_id: str | None,
+        *,
+        generation_id: int | None = None,
+    ) -> ResolvedModel | None:
+        """Return accepted parent affinity, otherwise a token-probe-only hint."""
+
+        key = _session_key(session_id)
+        if key is None:
+            return None
+        with self._lock:
+            committed = self._lookup_entry(
+                self._entries,
+                key,
+                generation_id=generation_id,
+            )
+            if committed is not None:
+                return committed
+            return self._lookup_entry(
+                self._probe_entries,
+                key,
+                generation_id=generation_id,
+            )
 
     def remember(
         self,
@@ -103,17 +126,19 @@ class ParentRouteRegistry:
         *,
         generation_id: int | None = None,
     ) -> None:
-        """Store the first route for a session, replacing it only on restart.
+        """Store the first accepted parent route for a session.
 
-        Retaining the first route is deliberate: a child may send a direct
-        provider/model request of its own, but that must not change the route
-        inherited by its siblings or by later turns of the parent session.
+        Retaining the first accepted route is deliberate: a child may send a
+        direct provider/model request of its own, but that must not change the
+        route inherited by siblings or later parent turns. Any preflight-only
+        hint is discarded as soon as authoritative parent affinity exists.
         """
 
         key = _session_key(session_id)
         if key is None:
             return
         with self._lock:
+            self._probe_entries.pop(key, None)
             existing = self._entries.get(key)
             if existing is not None and (
                 generation_id is None or existing.generation_id == generation_id
@@ -125,14 +150,69 @@ class ParentRouteRegistry:
                 resolved=resolved,
             )
             self._entries.move_to_end(key)
-            while len(self._entries) > self._max_entries:
-                self._entries.popitem(last=False)
+            self._trim(self._entries)
+
+    def remember_probe(
+        self,
+        session_id: str | None,
+        resolved: ResolvedModel,
+        *,
+        generation_id: int | None = None,
+    ) -> None:
+        """Remember a token-count hint without creating parent-route affinity."""
+
+        key = _session_key(session_id)
+        if key is None:
+            return
+        with self._lock:
+            committed = self._entries.get(key)
+            if committed is not None and (
+                generation_id is None or committed.generation_id == generation_id
+            ):
+                return
+            existing = self._probe_entries.get(key)
+            if existing is not None and (
+                generation_id is None or existing.generation_id == generation_id
+            ):
+                self._probe_entries.move_to_end(key)
+                return
+            self._probe_entries[key] = _ParentRouteEntry(
+                generation_id=generation_id,
+                resolved=resolved,
+            )
+            self._probe_entries.move_to_end(key)
+            self._trim(self._probe_entries)
+
+    def _lookup_entry(
+        self,
+        entries: OrderedDict[str, _ParentRouteEntry],
+        key: str,
+        *,
+        generation_id: int | None,
+    ) -> ResolvedModel | None:
+        entry = entries.get(key)
+        if entry is None:
+            return None
+        if (
+            generation_id is not None
+            and entry.generation_id is not None
+            and entry.generation_id != generation_id
+        ):
+            entries.pop(key, None)
+            return None
+        entries.move_to_end(key)
+        return entry.resolved
+
+    def _trim(self, entries: OrderedDict[str, _ParentRouteEntry]) -> None:
+        while len(entries) > self._max_entries:
+            entries.popitem(last=False)
 
     def clear(self) -> None:
-        """Discard all retained session routes."""
+        """Discard all retained parent routes and token-probe hints."""
 
         with self._lock:
             self._entries.clear()
+            self._probe_entries.clear()
 
 
 def _session_key(session_id: str | None) -> str | None:
