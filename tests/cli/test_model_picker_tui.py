@@ -21,7 +21,8 @@ CLICK_BUTTON = (2, 1)
 TEST_TERMINAL_SIZE = (120, 40)
 
 
-def _settings() -> Settings:
+def _settings(*, beta_enabled: bool = False) -> Settings:
+    allowlist = f"{MODEL_A}, {MODEL_B}" if beta_enabled else MODEL_A
     return Settings.model_construct(
         host="0.0.0.0",
         port=8082,
@@ -29,7 +30,7 @@ def _settings() -> Settings:
         model=MODEL_A,
         reasoning_policy=ReasoningPreference.CLIENT,
         model_catalog_mode=ModelCatalogMode.CURATED,
-        model_catalog_allowlist=MODEL_A,
+        model_catalog_allowlist=allowlist,
     )
 
 
@@ -46,6 +47,17 @@ def _catalog() -> dict[str, object]:
 
 def _row(app: TuiuiControlCenterApp, model: str) -> ModelListButton:
     return next(row for row in app.query(ModelListButton) if row.model_ref == model)
+
+
+async def _inspect_model(
+    app: TuiuiControlCenterApp, pilot: object, model: str
+) -> None:
+    row = _row(app, model)
+    row.focus()
+    await pilot.pause()
+    assert await pilot.click(row, offset=CLICK_ROW)
+    await pilot.pause()
+    assert app._model_inspector_ref == model
 
 
 @pytest.mark.asyncio
@@ -97,7 +109,7 @@ async def test_default_model_can_be_disabled_with_automatic_handoff() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nondefault_model_enable_disable_is_direct_and_mouse_clickable() -> None:
+async def test_nondefault_model_enable_is_direct_and_mouse_clickable() -> None:
     app = TuiuiControlCenterApp(_settings(), supervisor=None)
     with patch(
         "free_claude_code.cli.control_tui.get_models",
@@ -106,13 +118,7 @@ async def test_nondefault_model_enable_disable_is_direct_and_mouse_clickable() -
         async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
             await app._show_page("models")
             await pilot.pause()
-
-            beta = _row(app, MODEL_B)
-            beta.focus()
-            await pilot.pause()
-            assert await pilot.click(beta, offset=CLICK_ROW)
-            await pilot.pause()
-            assert app._model_inspector_ref == MODEL_B
+            await _inspect_model(app, pilot, MODEL_B)
 
             access = app.query_one("#model-toggle-access", Button)
             assert str(access.label) == "Enable model"
@@ -120,12 +126,33 @@ async def test_nondefault_model_enable_disable_is_direct_and_mouse_clickable() -
             await pilot.pause()
             assert await pilot.click(access, offset=CLICK_BUTTON)
             await pilot.pause()
+
             assert MODEL_B in app._model_pending_enabled
+            assert _row(app, MODEL_B).has_class("model-row-enabled")
             assert str(access.label) == "Disable model"
 
+
+@pytest.mark.asyncio
+async def test_nondefault_model_disable_is_direct_and_mouse_clickable() -> None:
+    app = TuiuiControlCenterApp(_settings(beta_enabled=True), supervisor=None)
+    with patch(
+        "free_claude_code.cli.control_tui.get_models",
+        return_value=_catalog(),
+    ):
+        async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+            await _inspect_model(app, pilot, MODEL_B)
+
+            access = app.query_one("#model-toggle-access", Button)
+            assert str(access.label) == "Disable model"
+            access.focus()
+            await pilot.pause()
             assert await pilot.click(access, offset=CLICK_BUTTON)
             await pilot.pause()
+
             assert MODEL_B not in app._model_pending_enabled
+            assert not _row(app, MODEL_B).has_class("model-row-enabled")
             assert str(access.label) == "Enable model"
 
 
@@ -145,12 +172,7 @@ async def test_model_picker_batches_default_and_visibility_into_one_save() -> No
         async with app.run_test(size=TEST_TERMINAL_SIZE) as pilot:
             await app._show_page("models")
             await pilot.pause()
-
-            beta = _row(app, MODEL_B)
-            beta.focus()
-            await pilot.pause()
-            assert await pilot.click(beta, offset=CLICK_ROW)
-            await pilot.pause()
+            await _inspect_model(app, pilot, MODEL_B)
 
             make_default = app.query_one("#model-set-default", Button)
             make_default.focus()
