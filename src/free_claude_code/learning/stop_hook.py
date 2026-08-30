@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import PROFILE_ENV, learning_enabled, normalize_profile
 from .engine import learn_from_turn
+from .session_ledger import SessionEvidenceLedger
 from .store import LearningStore
 
 _WORKER_FLAG = "FCC_LEARNING_WORKER"
@@ -34,7 +35,7 @@ def _attribution(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def enqueue_stop(payload: dict[str, Any], store: LearningStore) -> str | None:
-    """Persist the completed turn locally and return its deterministic queue id."""
+    """Persist one turn and stage its result without treating Stop as session end."""
 
     if payload.get("stop_hook_active"):
         return None
@@ -49,13 +50,22 @@ def enqueue_stop(payload: dict[str, Any], store: LearningStore) -> str | None:
     payload_cwd = payload.get("cwd")
     if isinstance(payload_cwd, str) and payload_cwd:
         cwd = payload_cwd
-    return store.enqueue_learning(
+    attribution = _attribution(payload)
+    queue_id = store.enqueue_learning(
         session_id=session_id,
         cwd=cwd,
         user_prompt=prompt,
         assistant_message=assistant_message,
-        attribution=_attribution(payload),
+        attribution=attribution,
     )
+    SessionEvidenceLedger(store).record(
+        session_id=session_id,
+        kind="turn_result",
+        text=assistant_message,
+        source_id=queue_id,
+        metadata={"source": "Stop", "fault_attribution": attribution},
+    )
+    return queue_id
 
 
 def spawn_queue_worker(*, profile: str | None = None) -> None:
