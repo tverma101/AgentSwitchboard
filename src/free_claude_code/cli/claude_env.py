@@ -17,6 +17,7 @@ CLAUDE_CONTEXT_CAP_MIN = 32_000
 CLAUDE_CONTEXT_CAP_MAX = 1_000_000
 CLAUDE_CONTEXT_CAP_ENV = "FCC_CLAUDE_CONTEXT_TOKENS"
 CLAUDE_BINARY_NAME = "claude"
+CLAUDE_DISABLE_NONSTREAMING_FALLBACK_ENV = "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"
 
 # Claude Code applies this public limit to MCP tool results. Keep the default
 # below the client warning threshold so a verbose local server cannot consume
@@ -313,6 +314,10 @@ def build_claude_proxy_env(
     env["ANTHROPIC_BASE_URL"] = proxy_root_url
     env["ANTHROPIC_AUTH_TOKEN"] = proxy_auth_token(auth_token)
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
+    # Claude owns the loop, but FCC owns retry/replay at the gateway boundary.
+    # Do not let Claude independently replay a failed streaming request through
+    # its non-streaming fallback after provider-visible work may have started.
+    env[CLAUDE_DISABLE_NONSTREAMING_FALLBACK_ENV] = "1"
 
     window = effective_context_window(model_id, base_env)
     env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(window)
