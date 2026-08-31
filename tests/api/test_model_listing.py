@@ -9,6 +9,7 @@ from free_claude_code.application.model_metadata import (
     ReasoningCapabilityStatus,
 )
 from free_claude_code.config.model_catalog import ModelCatalogMode
+from free_claude_code.config.model_labels import model_display_name
 from free_claude_code.config.settings import Settings
 from tests.api.support import create_test_app, provider_manager_for_app
 
@@ -66,13 +67,11 @@ def test_models_list_includes_configured_refs_cached_provider_models_and_aliases
     assert ids.count("anthropic/deepseek/deepseek-chat") == 1
     assert ids.count("anthropic/open_router/anthropic/claude-opus") == 1
     display_names = {item["id"]: item["display_name"] for item in data["data"]}
-    assert (
-        display_names["anthropic/open_router/meta/llama-3.3"]
-        == "open_router/meta/llama-3.3"
-    )
+    llama_label = model_display_name("open_router/meta/llama-3.3")
+    assert display_names["anthropic/open_router/meta/llama-3.3"] == llama_label
     assert (
         display_names["claude-3-freecc-no-thinking/open_router/meta/llama-3.3"]
-        == "open_router/meta/llama-3.3 (no thinking)"
+        == f"{llama_label} (no thinking)"
     )
     assert "claude-sonnet-4-20250514" in ids
     assert "claude-fable-5" in ids
@@ -303,16 +302,16 @@ def test_models_list_refilters_cached_catalog_after_policy_edit_and_keeps_config
     response = TestClient(app).get("/v1/models")
 
     assert response.status_code == 200
-    ids = [item["display_name"] for item in response.json()["data"]]
-    assert "open_router/unknown-configured-model" in ids
-    assert "open_router/visible-model" in ids
-    assert "open_router/hidden-model" not in ids
+    names = [item["display_name"] for item in response.json()["data"]]
+    assert model_display_name("open_router/unknown-configured-model") in names
+    assert model_display_name("open_router/visible-model") in names
+    assert model_display_name("open_router/hidden-model") not in names
 
     settings.model_catalog_mode = ModelCatalogMode.ALL
     response = TestClient(app).get("/v1/models")
 
-    ids = [item["display_name"] for item in response.json()["data"]]
-    assert "open_router/hidden-model" in ids
+    names = [item["display_name"] for item in response.json()["data"]]
+    assert model_display_name("open_router/hidden-model") in names
 
 
 def test_models_list_exposes_stable_aliases_without_replacing_exact_refs():
