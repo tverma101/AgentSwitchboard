@@ -11,7 +11,10 @@ from free_claude_code.application.model_metadata import (
 )
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.model_aliases import parse_model_aliases
-from free_claude_code.config.model_labels import model_display_name
+from free_claude_code.config.model_labels import (
+    disambiguate_model_labels,
+    model_display_name,
+)
 from free_claude_code.config.model_refs import (
     configured_chat_model_refs,
     parse_model_name,
@@ -190,12 +193,22 @@ def build_models_list_response(
     for model in SUPPORTED_CLAUDE_MODELS:
         _append_unique_model(models, seen, model)
 
+    _disambiguate_registry_display_names(models)
     return ModelsListResponse(
         data=models,
         first_id=models[0].id if models else None,
         has_more=False,
         last_id=models[-1].id if models else None,
     )
+
+
+def _disambiguate_registry_display_names(models: list[ModelResponse]) -> None:
+    """Keep Claude's registry readable when friendly names collide."""
+    display_names = disambiguate_model_labels(
+        {model.id: model.display_name for model in models}
+    )
+    for model in models:
+        model.display_name = display_names[model.id]
 
 
 def _discovered_model_response(
