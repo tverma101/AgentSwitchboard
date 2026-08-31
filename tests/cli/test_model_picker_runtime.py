@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pytest
+from textual.widgets import Static
 
 from free_claude_code.cli.model_picker_runtime import ReliableModelControlCenterApp
 from free_claude_code.config.model_catalog import ModelCatalogMode
@@ -22,16 +23,26 @@ def _settings(*, model: str = MODEL) -> Settings:
     )
 
 
+def _catalog() -> dict[str, object]:
+    return {
+        "models": [MODEL],
+        "catalog_models": [MODEL],
+        "model_labels": {MODEL: "GPT-5.6 Sol"},
+        "catalog_model_labels": {MODEL: "GPT-5.6 Sol"},
+        "model_evidence": {},
+        "catalog_model_evidence": {},
+    }
+
+
 @pytest.mark.asyncio
 async def test_picker_rechecks_server_snapshot_after_short_ui_cache() -> None:
     now = [10.0]
-    catalog = {"models": [MODEL], "catalog_models": [MODEL]}
     app = ReliableModelControlCenterApp(_settings(), supervisor=None)
 
     with (
         patch(
             "free_claude_code.cli.control_tui.get_models",
-            return_value=catalog,
+            return_value=_catalog(),
         ) as get_models,
         patch(
             "free_claude_code.cli.model_picker_runtime.time.monotonic",
@@ -60,3 +71,21 @@ def test_settings_reload_invalidates_picker_snapshot() -> None:
     assert app.settings is latest
     assert app._model_catalog_result is None
     assert app._model_picker_snapshot_at == 0.0
+
+
+@pytest.mark.asyncio
+async def test_picker_marks_saved_default_unavailable_without_replacing_it() -> None:
+    missing = "openai/model-no-longer-advertised"
+    app = ReliableModelControlCenterApp(_settings(model=missing), supervisor=None)
+
+    with patch(
+        "free_claude_code.cli.control_tui.get_models",
+        return_value=_catalog(),
+    ):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+            summary = str(app.query_one("#summary", Static).content)
+            assert "default unavailable" in summary
+            assert app._model_pending_default == missing
