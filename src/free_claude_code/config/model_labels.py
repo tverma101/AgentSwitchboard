@@ -17,21 +17,42 @@ _KNOWN_LABELS = {
 
 
 def model_display_name(model_ref: str) -> str:
-    """Return a readable label while preserving ``model_ref`` for routing."""
+    """Return a readable label while preserving exact route identity.
+
+    Aggregating providers commonly return nested ids such as
+    ``openai/gpt-model``.  The old labeler threw the namespace away and could
+    render several distinct routes as the same ``GPT Model`` row.  Keep the
+    pretty leaf, but surface the nested provider/model suffix whenever dropping
+    it would hide routing identity.
+    """
     display_ref = model_ref.removeprefix("anthropic/")
     provider_id, separator, model_id = display_ref.partition("/")
     if not separator:
         return _pretty_model_id(model_ref)
     provider = PROVIDER_CATALOG.get(provider_id)
     provider_label = provider.display_name if provider is not None else provider_id
-    return f"{provider_label} · {_pretty_model_id(model_id)}"
+    friendly = f"{provider_label} · {_pretty_model_id(model_id)}"
+    if "/" in model_id:
+        return f"{friendly} [{model_id}]"
+    return friendly
 
 
 def model_display_names(
     model_refs: list[str] | tuple[str, ...] | set[str],
 ) -> dict[str, str]:
-    """Return labels keyed by the exact model ids used in config and requests."""
-    return {model_ref: model_display_name(model_ref) for model_ref in model_refs}
+    """Return readable, collision-free labels keyed by exact model refs."""
+    refs = tuple(dict.fromkeys(model_refs))
+    labels = {model_ref: model_display_name(model_ref) for model_ref in refs}
+    collisions: dict[str, list[str]] = {}
+    for model_ref, label in labels.items():
+        collisions.setdefault(label.casefold(), []).append(model_ref)
+
+    for model_ref, label in tuple(labels.items()):
+        if len(collisions[label.casefold()]) <= 1:
+            continue
+        exact_ref = model_ref.removeprefix("anthropic/")
+        labels[model_ref] = f"{label} [{exact_ref}]"
+    return labels
 
 
 def _pretty_model_id(model_id: str) -> str:
