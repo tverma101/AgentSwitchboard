@@ -241,6 +241,19 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "FCC_CLAUDE_CONTEXT_TOKENS",
+        "Claude Context Window (tokens)",
+        "models",
+        "number",
+        settings_attr="claude_context_tokens",
+        default="256000",
+        description=(
+            "Context window presented to Claude Code for new FCC-launched sessions. "
+            "Default 256000; raise it only when the selected model supports the "
+            "larger window. Valid range: 32000 through 1000000."
+        ),
+    ),
+    ConfigFieldSpec(
         "MODEL_METADATA_CATALOG_ENABLED",
         "Public Model Metadata",
         "models",
