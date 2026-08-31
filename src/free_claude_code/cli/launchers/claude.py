@@ -8,6 +8,7 @@ from pathlib import Path
 from free_claude_code.application.session_policy import parse_allowed_helper_ids
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
+    CLAUDE_CONTEXT_CAP_DEFAULT,
     CLAUDE_CONTEXT_CAP_ENV,
     build_claude_proxy_env,
     resolved_model_id,
@@ -95,8 +96,14 @@ def launch(
     settings = get_settings()
     # Settings loads the managed FCC env file without mutating os.environ. Copy
     # the validated context-window choice into this child launch only so the TUI
-    # setting and direct env override share the existing Claude env policy.
-    launch_environment[CLAUDE_CONTEXT_CAP_ENV] = str(settings.claude_context_tokens)
+    # setting and direct env override share the existing Claude env policy. Keep
+    # the established 256K default for partial/legacy Settings-like callers.
+    context_tokens = getattr(
+        settings,
+        "claude_context_tokens",
+        CLAUDE_CONTEXT_CAP_DEFAULT,
+    )
+    launch_environment[CLAUDE_CONTEXT_CAP_ENV] = str(context_tokens)
     proxy_root_url = local_proxy_root_url(settings)
     if error := preflight_proxy(proxy_root_url):
         started = False
