@@ -6,7 +6,7 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
@@ -16,7 +16,6 @@ from free_claude_code.cli.claude_env import context_cap_tokens
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.local_admin import (
-    LocalAdminError,
     apply_admin_values,
     apply_custom_provider,
     cancel_connected_account_login,
@@ -39,6 +38,7 @@ from free_claude_code.config.provider_catalog import (
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.diagnostics import format_user_error_preview
 from free_claude_code.learning.bundle import (
     BundleError,
     export_from_store,
@@ -62,7 +62,6 @@ from free_claude_code.learning.reviewer_config import ReviewerPackSettings
 from free_claude_code.learning.reviewer_flow import reviewer_status
 from free_claude_code.learning.reviewer_scars import (
     ReviewerPack,
-    ReviewerScarError,
     ScarRegistry,
     ScarState,
 )
@@ -76,12 +75,15 @@ from .repo_picker import (
     deduplicate_repos,
     default_roots,
     discover_repos,
+    github_authenticated_user,
+    mark_repo_used,
     repository_from_path,
     save_cached_repos,
 )
 from .selection import SelectionItem, choose_item
 
 CONTROL_STARTUP_TIMEOUT_SECONDS = 30.0
+CONTROL_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 LOG_PREVIEW_LINES = 30
 
 
@@ -104,7 +106,13 @@ def terminal_control_available(
 
     stdin = sys.stdin if input_stream is None else input_stream
     stdout = sys.stdout if output_stream is None else output_stream
-    return stdin.isatty() and stdout.isatty()
+    try:
+        return bool(stdin.isatty()) and bool(stdout.isatty())
+    except Exception:
+        # File-like wrappers used by IDEs and test runners are not required to
+        # implement a reliable ``isatty`` method. Fail closed to the simple
+        # non-interactive launcher instead of crashing before startup.
+        return False
 
 
 def run_owned_control_center(
@@ -127,7 +135,7 @@ def run_owned_control_center(
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
         if initial_argv is not None:
-            launch_client(False, initial_argv)
+            _call_launcher(launch_client, False, initial_argv)
         run_control_menu(
             settings,
             supervisor=supervisor,
@@ -135,7 +143,13 @@ def run_owned_control_center(
         )
     finally:
         supervisor.request_stop()
-        server_thread.join()
+        server_thread.join(CONTROL_SHUTDOWN_TIMEOUT_SECONDS)
+        if server_thread.is_alive() is True:
+            print(
+                "FCC server worker did not stop within 5 seconds; "
+                "leaving the stop request in place.",
+                file=sys.stderr,
+            )
 
 
 def run_attached_control_center(
@@ -158,7 +172,14 @@ def run_control_menu(
 
     displayed_model = settings.model
     next_profile = configured_profile()
-    selected_repo = repository_from_path(Path.cwd())
+    try:
+        selected_repo = repository_from_path(Path.cwd())
+    except Exception as exc:
+        selected_repo = None
+        print(
+            f"Current repository unavailable: {format_user_error_preview(exc)}",
+            file=sys.stderr,
+        )
     while True:
         _print_home(
             settings,
@@ -248,15 +269,20 @@ def _print_home(
     )
     displayed_model = settings.model if model is None else model
     displayed_profile = configured_profile() if profile is None else profile
-    displayed_repo = (
-        f"{repo.identity} · {repo.display_path}"
-        if repo is not None
-        else f"(current directory) {Path.cwd()}"
-    )
-    fcc_account = fcc_provider_account_summary()
+    if repo is not None:
+        displayed_repo = f"{repo.identity} · {repo.display_path}"
+    else:
+        try:
+            displayed_repo = f"(current directory) {Path.cwd()}"
+        except OSError:
+            displayed_repo = "(current directory unavailable)"
+    try:
+        fcc_account = fcc_provider_account_summary()
+    except Exception:
+        fcc_account = "needs attention"
     try:
         codex_account = codex_accounts.active_account_summary()
-    except codex_accounts.CodexAccountError:
+    except Exception:
         codex_account = "needs attention"
     print()
     print("FCC Harness")
@@ -281,8 +307,11 @@ def _print_policy_status(settings: Settings) -> None:
 
     try:
         status = get_admin_status(settings)
-    except LocalAdminError as exc:
+    except Exception as exc:
         print(f"Policy status unavailable: {exc}")
+        return
+    if not isinstance(status, Mapping):
+        print("Policy status unavailable: server returned malformed data.")
         return
     policy = status.get("session_policy")
     if not isinstance(policy, Mapping):
@@ -308,7 +337,7 @@ def _print_policy_status(settings: Settings) -> None:
 
 
 def _string_values(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list):
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return ()
     return tuple(str(item) for item in value)
 
@@ -328,14 +357,40 @@ def _launch_selected(
     previous_profile = os.environ.get(PROFILE_ENV)
     try:
         if repo is None:
-            launch_client(danger, argv)
+            _call_launcher(launch_client, danger, argv)
         else:
-            launch_client(danger, argv, Path(repo.path))
+            _call_launcher(launch_client, danger, argv, Path(repo.path))
     finally:
         if previous_profile is None:
             os.environ.pop(PROFILE_ENV, None)
         else:
             os.environ[PROFILE_ENV] = previous_profile
+
+
+def _call_launcher(
+    launch_client: ControlClientLauncher,
+    danger: bool,
+    argv: Sequence[str],
+    cwd: Path | None = None,
+) -> bool:
+    """Keep a failed child launch inside the menu instead of killing it."""
+
+    try:
+        if cwd is None:
+            launch_client(danger, argv)
+        else:
+            launch_client(danger, argv, cwd)
+    except SystemExit as exc:
+        if exc.code not in {None, 0}:
+            print(f"Claude launch failed: exit status {exc.code}.", file=sys.stderr)
+            return False
+    except Exception as exc:
+        print(
+            f"Claude launch failed: {format_user_error_preview(exc, max_len=300)}",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def _profile_items(
@@ -378,9 +433,23 @@ def _run_profile_menu(next_profile: str) -> str:
         try:
             profiles = list_profiles()
             archived = list_archived_profiles()
-        except LearningProfileError as exc:
-            print(f"Profiles unavailable: {exc}")
+        except Exception as exc:
+            print(f"Profiles unavailable: {format_user_error_preview(exc)}")
             return next_profile
+        if not isinstance(profiles, Sequence) or isinstance(profiles, (str, bytes)):
+            profiles = ()
+        profiles = tuple(
+            profile.strip()
+            for profile in profiles
+            if isinstance(profile, str) and profile.strip()
+        )
+        if not isinstance(archived, Sequence) or isinstance(archived, (str, bytes)):
+            archived = ()
+        archived = tuple(
+            profile.strip()
+            for profile in archived
+            if isinstance(profile, str) and profile.strip()
+        )
         print()
         print("Profiles")
         print("--------")
@@ -421,8 +490,8 @@ def _run_profile_menu(next_profile: str) -> str:
                 continue
             try:
                 next_profile = create_profile(name)
-            except LearningProfileError as exc:
-                print(f"Could not create profile: {exc}")
+            except Exception as exc:
+                print(f"Could not create profile: {format_user_error_preview(exc)}")
             else:
                 print(f"Created and selected profile: {next_profile}")
             continue
@@ -440,8 +509,8 @@ def _run_profile_menu(next_profile: str) -> str:
                 continue
             try:
                 renamed = rename_profile(profile, new_name)
-            except LearningProfileError as exc:
-                print(f"Could not rename profile: {exc}")
+            except Exception as exc:
+                print(f"Could not rename profile: {format_user_error_preview(exc)}")
             else:
                 if next_profile == profile:
                     next_profile = renamed
@@ -453,8 +522,8 @@ def _run_profile_menu(next_profile: str) -> str:
                 continue
             try:
                 archived_name = archive_profile(profile)
-            except LearningProfileError as exc:
-                print(f"Could not archive profile: {exc}")
+            except Exception as exc:
+                print(f"Could not archive profile: {format_user_error_preview(exc)}")
             else:
                 if next_profile == archived_name:
                     next_profile = active_profile
@@ -471,8 +540,8 @@ def _run_profile_menu(next_profile: str) -> str:
                 continue
             try:
                 restored = restore_profile(profile)
-            except LearningProfileError as exc:
-                print(f"Could not restore profile: {exc}")
+            except Exception as exc:
+                print(f"Could not restore profile: {format_user_error_preview(exc)}")
             else:
                 next_profile = restored
                 print(f"Restored and selected profile: {restored}")
@@ -497,18 +566,26 @@ def _run_reviewer_menu(profile: str) -> None:
     while True:
         try:
             status = reviewer_status(profile=profile)
-        except (LearningProfileError, ReviewerScarError) as exc:
-            print(f"Reviewer state unavailable: {exc}")
+        except Exception as exc:
+            print(f"Reviewer state unavailable: {format_user_error_preview(exc)}")
+            return
+        if not isinstance(status, Mapping):
+            print("Reviewer state unavailable: provider returned malformed data.")
             return
         print()
         print(f"Reviewers ({profile})")
         print("----------------")
-        for pack in status["packs"]:
+        packs = status.get("packs", ())
+        if not isinstance(packs, Sequence) or isinstance(packs, (str, bytes)):
+            packs = ()
+        for pack in packs:
             if not isinstance(pack, Mapping):
                 continue
             print(f"  {pack.get('pack', '?')}: {pack.get('mode', 'automatic')}")
-        scars = status["scars"]
-        if isinstance(scars, list) and scars:
+        scars = status.get("scars", ())
+        if not isinstance(scars, Sequence) or isinstance(scars, (str, bytes)):
+            scars = ()
+        if scars:
             print("Scars:")
             for scar in scars[:24]:
                 if isinstance(scar, Mapping):
@@ -543,8 +620,10 @@ def _run_reviewer_menu(profile: str) -> None:
                 pack = ReviewerPack(raw_pack)
                 enabled = choice in {"e", "enable"}
                 ReviewerPackSettings(profile).set_override(pack, enabled)
-            except (LearningProfileError, ReviewerScarError, ValueError) as exc:
-                print(f"Could not update reviewer pack: {exc}")
+            except Exception as exc:
+                print(
+                    f"Could not update reviewer pack: {format_user_error_preview(exc)}"
+                )
             else:
                 print(
                     f"Reviewer pack {pack.value}: {'enabled' if enabled else 'disabled'}"
@@ -559,8 +638,8 @@ def _run_reviewer_menu(profile: str) -> None:
                     else ScarState.SUPERSEDED
                 )
                 record = ScarRegistry(profile).update_state(scar_id, state)
-            except (LearningProfileError, ReviewerScarError, ValueError) as exc:
-                print(f"Could not update scar: {exc}")
+            except Exception as exc:
+                print(f"Could not update scar: {format_user_error_preview(exc)}")
             else:
                 print(f"Scar {record.scar_id}: {record.state.value}")
             continue
@@ -571,13 +650,51 @@ def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
     """Select a repository from the live local inventory."""
 
     cache = cache_path()
-    current = current or repository_from_path(Path.cwd())
+    try:
+        github_user = github_authenticated_user()
+    except Exception as exc:
+        github_user = None
+        print(f"GitHub identity unavailable: {format_user_error_preview(exc)}")
+
     if current is not None:
-        current = deduplicate_repos([current])[0]
-    repos = discover_repos(default_roots())
-    save_cached_repos(repos, cache)
-    if current is not None and current.path not in {repo.path for repo in repos}:
-        repos.append(current)
+        current_path: Path | None = Path(current.path)
+    else:
+        try:
+            current_path = Path.cwd()
+        except OSError as exc:
+            print(f"Current repository unavailable: {format_user_error_preview(exc)}")
+            current_path = None
+    if current_path is not None:
+        try:
+            current = repository_from_path(current_path, github_user=github_user)
+        except Exception as exc:
+            print(f"Current repository unavailable: {format_user_error_preview(exc)}")
+            current = None
+
+    def with_current(discovered: Iterable[RepoEntry]) -> list[RepoEntry]:
+        entries = list(discovered)
+        if current is not None:
+            entries.append(current)
+        return deduplicate_repos(entries)
+
+    def discover() -> list[RepoEntry]:
+        roots = default_roots()
+        if github_user:
+            return discover_repos(roots, github_user=github_user)
+        return discover_repos(roots)
+
+    discovery_succeeded = True
+    try:
+        repos = with_current(discover())
+    except Exception as exc:
+        print(f"Repository discovery failed: {format_user_error_preview(exc)}")
+        repos = with_current(())
+        discovery_succeeded = False
+    if discovery_succeeded:
+        try:
+            save_cached_repos(repos, cache, github_user=github_user)
+        except Exception as exc:
+            print(f"Repository cache unavailable: {format_user_error_preview(exc)}")
     while True:
         print()
         print("Repositories")
@@ -597,12 +714,15 @@ def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
         if choice in {"b", "back", "q", "quit"}:
             return current
         if choice in {"r", "refresh"}:
-            repos = discover_repos(default_roots())
-            if current is not None and current.path not in {
-                repo.path for repo in repos
-            }:
-                repos.append(current)
-            save_cached_repos(repos, cache)
+            try:
+                repos = with_current(discover())
+            except Exception as exc:
+                print(f"Repository refresh failed: {format_user_error_preview(exc)}")
+                continue
+            try:
+                save_cached_repos(repos, cache, github_user=github_user)
+            except Exception as exc:
+                print(f"Repository cache unavailable: {format_user_error_preview(exc)}")
             print(f"Discovered {len(repos)} local Git repositories.")
             continue
         if choice in {"s", "select", ""}:
@@ -614,26 +734,19 @@ def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
             )
             if selected is None:
                 continue
-            save_cached_repos(_mark_repo_used(repos, selected), cache)
+            try:
+                save_cached_repos(
+                    mark_repo_used(repos, selected),
+                    cache,
+                    github_user=github_user,
+                )
+            except Exception as exc:
+                print(f"Repository cache unavailable: {format_user_error_preview(exc)}")
             print(
                 f"Next launch repository: {selected.identity} · {selected.display_path}"
             )
             return selected
         print("Unknown repository action. Use S, R, or B.")
-
-
-def _mark_repo_used(repos: Sequence[RepoEntry], selected: RepoEntry) -> list[RepoEntry]:
-    now = time.time()
-    return [
-        RepoEntry(
-            name=repo.name,
-            path=repo.path,
-            branch=repo.branch,
-            remote=repo.remote,
-            last_used=now if repo.path == selected.path else repo.last_used,
-        )
-        for repo in repos
-    ]
 
 
 def _selection_values(raw: str) -> tuple[str, ...] | None:
@@ -651,11 +764,24 @@ def _selection_ids(raw: str) -> tuple[int, ...] | None:
     values = _selection_values(raw)
     if values is None:
         return None
-    try:
-        return tuple(int(value) for value in values)
-    except ValueError:
+    parsed: list[int] = []
+    for value in values:
+        if not value.isdecimal():
+            print("Memory IDs must be comma-separated positive integers.")
+            return ()
+        try:
+            number = int(value)
+        except ValueError:
+            print("Memory IDs must be comma-separated positive integers.")
+            return ()
+        if number < 1 or number > 2_147_483_647:
+            print("Memory IDs must be comma-separated positive integers.")
+            return ()
+        parsed.append(number)
+    if not parsed:
         print("Memory IDs must be comma-separated positive integers.")
         return ()
+    return tuple(parsed)
 
 
 def _print_bundle_plan(result: dict[str, Any]) -> None:
@@ -790,8 +916,11 @@ def _run_settings_menu(settings: Settings) -> str | None:
     while True:
         try:
             config = get_admin_config(settings)
-        except LocalAdminError as exc:
-            print(f"Settings unavailable: {exc}")
+        except Exception as exc:
+            print(f"Settings unavailable: {format_user_error_preview(exc)}")
+            return displayed_model
+        if not isinstance(config, Mapping):
+            print("Settings unavailable: Admin returned malformed data.")
             return displayed_model
         fields = _field_map(config)
         model = fields.get("MODEL", {})
@@ -843,7 +972,7 @@ def _run_settings_menu(settings: Settings) -> str | None:
 
 def _edit_setting(
     settings: Settings,
-    field: dict[str, Any],
+    field: Mapping[str, Any],
     *,
     key: str,
     prompt: str,
@@ -865,8 +994,11 @@ def _edit_setting(
         return None
     try:
         result = apply_admin_values(settings, {key: value})
-    except LocalAdminError as exc:
-        print(f"Could not apply {key}: {exc}")
+    except Exception as exc:
+        print(f"Could not apply {key}: {format_user_error_preview(exc)}")
+        return None
+    if not isinstance(result, Mapping):
+        print(f"Could not apply {key}: Admin returned malformed data.")
         return None
     if result.get("applied") is True:
         get_settings.cache_clear()
@@ -876,46 +1008,50 @@ def _edit_setting(
     return value if result.get("applied") is True and key == "MODEL" else None
 
 
-def _print_apply_result(key: str, result: dict[str, Any]) -> None:
+def _print_apply_result(key: str, result: Mapping[str, Any]) -> None:
     if result.get("applied") is not True:
         errors = result.get("errors")
-        if isinstance(errors, list) and errors:
+        if (
+            isinstance(errors, Sequence)
+            and not isinstance(errors, (str, bytes))
+            and errors
+        ):
             print(f"Rejected {key}: " + "; ".join(str(error) for error in errors))
         else:
             print(f"Rejected {key}.")
         return
     print(f"Applied {key}.")
     restart = result.get("restart")
-    if isinstance(restart, dict) and restart.get("automatic") is True:
+    if isinstance(restart, Mapping) and restart.get("automatic") is True:
         print("FCC is applying the required server restart.")
 
 
-def _field_map(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _field_map(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     fields = config.get("fields")
-    if not isinstance(fields, list):
+    if not isinstance(fields, Sequence) or isinstance(fields, (str, bytes)):
         return {}
     mapped: dict[str, dict[str, Any]] = {}
     for field in fields:
-        if not isinstance(field, dict):
+        if not isinstance(field, Mapping):
             continue
         key = field.get("key")
         if isinstance(key, str):
-            mapped[key] = field
+            mapped[key] = dict(field)
     return mapped
 
 
-def _field_value(field: dict[str, Any], fallback: str) -> str:
+def _field_value(field: Mapping[str, Any], fallback: str) -> str:
     value = field.get("value")
     return str(value) if value is not None else fallback
 
 
-def _field_options(field: dict[str, Any]) -> tuple[str, ...]:
+def _field_options(field: Mapping[str, Any]) -> tuple[str, ...]:
     options = field.get("options")
-    if not isinstance(options, list):
+    if not isinstance(options, Sequence) or isinstance(options, (str, bytes)):
         return ()
     values: list[str] = []
     for option in options:
-        if not isinstance(option, dict):
+        if not isinstance(option, Mapping):
             continue
         value = option.get("value")
         if isinstance(value, str) and value:
@@ -928,8 +1064,11 @@ def _run_provider_menu(settings: Settings) -> None:
 
     try:
         config = get_admin_config(settings)
-    except LocalAdminError as exc:
-        print(f"Providers unavailable: {exc}")
+    except Exception as exc:
+        print(f"Providers unavailable: {format_user_error_preview(exc)}")
+        return
+    if not isinstance(config, Mapping):
+        print("Providers unavailable: Admin returned malformed data.")
         return
     statuses = _provider_statuses(config)
     if not statuses:
@@ -957,10 +1096,13 @@ def _run_provider_menu(settings: Settings) -> None:
             _edit_custom_provider(settings)
             try:
                 config = get_admin_config(settings)
-                statuses = _provider_statuses(config)
-            except LocalAdminError as exc:
-                print(f"Provider refresh unavailable: {exc}")
+            except Exception as exc:
+                print(f"Provider refresh unavailable: {format_user_error_preview(exc)}")
                 return
+            if not isinstance(config, Mapping):
+                print("Provider refresh unavailable: Admin returned malformed data.")
+                return
+            statuses = _provider_statuses(config)
             continue
         provider = _select_provider(statuses, selection)
         if provider is None:
@@ -969,23 +1111,26 @@ def _run_provider_menu(settings: Settings) -> None:
         _run_provider_detail(settings, provider, config)
         try:
             config = get_admin_config(settings)
-            statuses = _provider_statuses(config)
-        except LocalAdminError as exc:
-            print(f"Provider refresh unavailable: {exc}")
+        except Exception as exc:
+            print(f"Provider refresh unavailable: {format_user_error_preview(exc)}")
             return
+        if not isinstance(config, Mapping):
+            print("Provider refresh unavailable: Admin returned malformed data.")
+            return
+        statuses = _provider_statuses(config)
 
 
-def _provider_statuses(config: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+def _provider_statuses(config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
     statuses = config.get("provider_status")
-    if not isinstance(statuses, list):
+    if not isinstance(statuses, Sequence) or isinstance(statuses, (str, bytes)):
         return ()
-    return tuple(status for status in statuses if isinstance(status, dict))
+    return tuple(dict(status) for status in statuses if isinstance(status, Mapping))
 
 
 def _select_provider(
     statuses: Sequence[dict[str, Any]], selection: str
 ) -> dict[str, Any] | None:
-    if selection.isdigit():
+    if selection.isdecimal() and len(selection) <= 9:
         index = int(selection) - 1
         return statuses[index] if 0 <= index < len(statuses) else None
     normalized = selection.casefold()
@@ -1056,12 +1201,13 @@ def _custom_provider_values(provider: dict[str, Any] | None) -> dict[str, Any] |
         models_text = input(
             f"Model ids, comma-separated [{', '.join(_string_values(provider.get('model_ids', [])) if provider else ())}]> "
         ).strip()
+        existing_models = (
+            _string_values(provider.get("model_ids", [])) if provider else ()
+        )
         models = (
             [item.strip() for item in models_text.split(",") if item.strip()]
             if models_text
-            else list(provider.get("model_ids", []))
-            if provider
-            else []
+            else list(existing_models)
         )
     except EOFError, KeyboardInterrupt:
         print()
@@ -1096,8 +1242,11 @@ def _edit_custom_provider(
             values,
             existing_provider_id=existing_id,
         )
-    except LocalAdminError as exc:
-        print(f"Could not save custom provider: {exc}")
+    except Exception as exc:
+        print(f"Could not save custom provider: {format_user_error_preview(exc)}")
+        return False
+    if not isinstance(result, Mapping):
+        print("Could not save custom provider: Admin returned malformed data.")
         return False
     _print_apply_result("custom provider", result)
     return result.get("applied") is True
@@ -1121,7 +1270,11 @@ def _run_custom_provider_detail(settings: Settings, provider: dict[str, Any]) ->
             + ("configured" if provider.get("proxy_configured") else "missing")
         )
         model_ids = provider.get("model_ids")
-        if isinstance(model_ids, list) and model_ids:
+        if (
+            isinstance(model_ids, Sequence)
+            and not isinstance(model_ids, (str, bytes))
+            and model_ids
+        ):
             print("Models: " + ", ".join(str(model) for model in model_ids))
         enabled = provider.get("enabled") is not False
         print("[E] Edit  [T] Test  [D] " + ("Disable" if enabled else "Enable"))
@@ -1145,11 +1298,20 @@ def _run_custom_provider_detail(settings: Settings, provider: dict[str, Any]) ->
                     {"enabled": not enabled},
                     existing_provider_id=provider_id,
                 )
-            except LocalAdminError as exc:
-                print(f"Could not update custom provider: {exc}")
+            except Exception as exc:
+                print(
+                    "Could not update custom provider: "
+                    f"{format_user_error_preview(exc)}"
+                )
             else:
-                _print_apply_result("custom provider", result)
-                if result.get("applied") is True:
+                if not isinstance(result, Mapping):
+                    print(
+                        "Could not update custom provider: "
+                        "Admin returned malformed data."
+                    )
+                else:
+                    _print_apply_result("custom provider", result)
+                if isinstance(result, Mapping) and result.get("applied") is True:
                     return
         elif choice in {"x", "remove", "delete"}:
             try:
@@ -1162,11 +1324,20 @@ def _run_custom_provider_detail(settings: Settings, provider: dict[str, Any]) ->
                 continue
             try:
                 result = remove_custom_provider(settings, provider_id)
-            except LocalAdminError as exc:
-                print(f"Could not remove custom provider: {exc}")
+            except Exception as exc:
+                print(
+                    "Could not remove custom provider: "
+                    f"{format_user_error_preview(exc)}"
+                )
             else:
-                _print_apply_result("custom provider", result)
-                if result.get("applied") is True:
+                if not isinstance(result, Mapping):
+                    print(
+                        "Could not remove custom provider: "
+                        "Admin returned malformed data."
+                    )
+                else:
+                    _print_apply_result("custom provider", result)
+                if isinstance(result, Mapping) and result.get("applied") is True:
                     return
         else:
             print("Unknown custom-provider action. Use E, T, D, X, or B.")
@@ -1175,7 +1346,7 @@ def _run_custom_provider_detail(settings: Settings, provider: dict[str, Any]) ->
 def _run_provider_detail(
     settings: Settings,
     provider: dict[str, Any],
-    config: dict[str, Any],
+    config: Mapping[str, Any],
 ) -> None:
     provider_id = str(provider.get("provider_id", ""))
     if not provider_id:
@@ -1193,8 +1364,14 @@ def _run_provider_detail(
         ):
             try:
                 account_status = connected_account_status(settings, provider_id)
-            except LocalAdminError as exc:
-                print(f"Connected-account status unavailable: {exc}")
+            except Exception as exc:
+                print(
+                    "Connected-account status unavailable: "
+                    f"{format_user_error_preview(exc)}"
+                )
+        if account_status is not None and not isinstance(account_status, Mapping):
+            print("Connected-account status unavailable: malformed response.")
+            account_status = None
         print()
         print(f"{provider.get('display_name', provider_id)} ({provider_id})")
         print(f"Status: {provider.get('label', provider.get('status', 'unknown'))}")
@@ -1271,7 +1448,7 @@ def _run_provider_detail(
 
 
 def _provider_fields(
-    config: dict[str, Any], provider_id: str
+    config: Mapping[str, Any], provider_id: str
 ) -> tuple[tuple[str, dict[str, Any]], ...]:
     field_map = _field_map(config)
     descriptor = PROVIDER_CATALOG.get(provider_id)
@@ -1313,7 +1490,10 @@ def _edit_provider_fields(
     except EOFError, KeyboardInterrupt:
         print()
         return
-    if selection.casefold() in {"b", "back"} or not selection.isdigit():
+    if selection.casefold() in {"b", "back"} or not selection.isdecimal():
+        return
+    if len(selection) > 9:
+        print("Unknown field.")
         return
     index = int(selection) - 1
     if not 0 <= index < len(fields):
@@ -1337,8 +1517,11 @@ def _edit_provider_fields(
         return
     try:
         result = apply_admin_values(settings, {key: value})
-    except LocalAdminError as exc:
-        print(f"Could not apply {key}: {exc}")
+    except Exception as exc:
+        print(f"Could not apply {key}: {format_user_error_preview(exc)}")
+        return
+    if not isinstance(result, Mapping):
+        print(f"Could not apply {key}: Admin returned malformed data.")
         return
     _print_apply_result(key, result)
 
@@ -1346,32 +1529,42 @@ def _edit_provider_fields(
 def _test_provider(settings: Settings, provider_id: str) -> None:
     try:
         result = test_provider(settings, provider_id)
-    except LocalAdminError as exc:
-        print(f"Provider test failed: {exc}")
+    except Exception as exc:
+        print(f"Provider test failed: {format_user_error_preview(exc)}")
+        return
+    if not isinstance(result, Mapping):
+        print("Provider test failed: Admin returned malformed data.")
         return
     if result.get("ok") is not True:
         print(f"Provider test failed ({result.get('error_type', 'unknown error')}).")
         return
     models = result.get("models")
-    count = len(models) if isinstance(models, list) else 0
+    count = (
+        len(models)
+        if isinstance(models, Sequence) and not isinstance(models, (str, bytes))
+        else 0
+    )
     print(f"Provider test passed; {count} model(s) discovered.")
 
 
 def _show_local_provider(settings: Settings, provider_id: str) -> None:
     try:
         result = get_local_provider_status(settings)
-    except LocalAdminError as exc:
-        print(f"Local provider check failed: {exc}")
+    except Exception as exc:
+        print(f"Local provider check failed: {format_user_error_preview(exc)}")
+        return
+    if not isinstance(result, Mapping):
+        print("Local provider check failed: Admin returned malformed data.")
         return
     providers = result.get("providers")
-    if not isinstance(providers, list):
+    if not isinstance(providers, Sequence) or isinstance(providers, (str, bytes)):
         print("No local-provider status was returned.")
         return
     match = next(
         (
             entry
             for entry in providers
-            if isinstance(entry, dict) and entry.get("provider_id") == provider_id
+            if isinstance(entry, Mapping) and entry.get("provider_id") == provider_id
         ),
         None,
     )
@@ -1386,8 +1579,11 @@ def _start_account_login(
 ) -> None:
     try:
         status = start_connected_account_login(settings, provider_id, mode)
-    except LocalAdminError as exc:
-        print(f"Could not start {mode.value} login: {exc}")
+    except Exception as exc:
+        print(f"Could not start {mode.value} login: {format_user_error_preview(exc)}")
+        return
+    if not isinstance(status, Mapping):
+        print(f"Could not start {mode.value} login: malformed response.")
         return
     print(f"Login state: {status.get('state', 'unknown')}")
     url = status.get("authorization_url") or status.get("verification_url")
@@ -1406,26 +1602,37 @@ def _account_action(
 ) -> None:
     try:
         status = action(settings, provider_id)
-    except LocalAdminError as exc:
-        print(f"Account action failed: {exc}")
+    except Exception as exc:
+        print(f"Account action failed: {format_user_error_preview(exc)}")
+        return
+    if not isinstance(status, Mapping):
+        print("Account action failed: Admin returned malformed data.")
         return
     print(f"{success_message}: {status.get('state', 'unknown')}")
 
 
-def _model_items(result: dict[str, Any]) -> list[SelectionItem]:
+def _model_items(result: Mapping[str, Any]) -> list[SelectionItem]:
     models = result.get("models")
-    model_list = [str(model) for model in models] if isinstance(models, list) else []
+    model_list = (
+        [
+            model.strip()
+            for model in models
+            if isinstance(model, str) and model.strip() and model.casefold() != "none"
+        ]
+        if isinstance(models, Sequence) and not isinstance(models, (str, bytes))
+        else []
+    )
     labels = result.get("model_labels")
     evidence = result.get("model_evidence")
     items: list[SelectionItem] = []
     for model in model_list:
         label = model
-        if isinstance(labels, dict) and isinstance(labels.get(model), str):
+        if isinstance(labels, Mapping) and isinstance(labels.get(model), str):
             friendly = str(labels[model])
             if friendly and friendly != model:
                 label = f"{friendly} · {model}"
         detail = ""
-        if isinstance(evidence, dict) and isinstance(evidence.get(model), dict):
+        if isinstance(evidence, Mapping) and isinstance(evidence.get(model), Mapping):
             source = evidence[model].get("evidence_source")
             if isinstance(source, str) and source:
                 detail = source
@@ -1434,13 +1641,23 @@ def _model_items(result: dict[str, Any]) -> list[SelectionItem]:
 
 
 def _run_models_menu(settings: Settings) -> str | None:
+    result: Mapping[str, Any] | None = None
     while True:
+        if result is None:
+            try:
+                candidate = get_models(settings)
+            except Exception as exc:
+                print(f"Models unavailable: {format_user_error_preview(exc)}")
+                return None
+            if not isinstance(candidate, Mapping):
+                print("Models unavailable: provider returned malformed data.")
+                return None
+            result = candidate
         try:
-            result = get_models(settings)
-        except LocalAdminError as exc:
-            print(f"Models unavailable: {exc}")
+            items = _model_items(result)
+        except Exception as exc:
+            print(f"Models unavailable: {format_user_error_preview(exc)}")
             return None
-        items = _model_items(result)
         print()
         print(f"Models ({len(items)})")
         print("--------")
@@ -1473,8 +1690,11 @@ def _run_models_menu(settings: Settings) -> str | None:
                     settings,
                     {"MODEL": selected.item_id},
                 )
-            except LocalAdminError as exc:
-                print(f"Could not apply MODEL: {exc}")
+            except Exception as exc:
+                print(f"Could not apply MODEL: {format_user_error_preview(exc)}")
+                continue
+            if not isinstance(applied, Mapping):
+                print("Could not apply MODEL: server returned malformed data.")
                 continue
             _print_apply_result("MODEL", applied)
             if applied.get("applied") is True:
@@ -1484,11 +1704,19 @@ def _run_models_menu(settings: Settings) -> str | None:
             continue
         if choice in {"r", "refresh"}:
             try:
-                result = get_models(settings, refresh=True)
-            except LocalAdminError as exc:
-                print(f"Model refresh failed: {exc}")
+                candidate = get_models(settings, refresh=True)
+            except Exception as exc:
+                print(f"Model refresh failed: {format_user_error_preview(exc)}")
                 continue
-            refreshed_items = _model_items(result)
+            if not isinstance(candidate, Mapping):
+                print("Model refresh failed: provider returned malformed data.")
+                continue
+            try:
+                refreshed_items = _model_items(candidate)
+            except Exception as exc:
+                print(f"Model refresh failed: {format_user_error_preview(exc)}")
+                continue
+            result = candidate
             print(f"Model refresh completed ({len(refreshed_items)} visible).")
         else:
             print("Unknown models action. Use S, R, or B.")
@@ -1500,20 +1728,33 @@ def _run_usage_menu(settings: Settings) -> None:
     except EOFError, KeyboardInterrupt:
         print()
         return
-    days = 30 if not raw_days else int(raw_days) if raw_days.isdigit() else 0
+    if not raw_days:
+        days = 30
+    elif not raw_days.isdecimal():
+        print("Usage range must be between 1 and 366 days.")
+        return
+    else:
+        significant = raw_days.lstrip("0") or "0"
+        if len(significant) > 3:
+            print("Usage range must be between 1 and 366 days.")
+            return
+        days = int(significant)
     if days < 1 or days > 366:
         print("Usage range must be between 1 and 366 days.")
         return
     try:
         result = get_usage(settings, days=days)
-    except (LocalAdminError, ValueError) as exc:
-        print(f"Usage unavailable: {exc}")
+    except Exception as exc:
+        print(f"Usage unavailable: {format_user_error_preview(exc)}")
+        return
+    if not isinstance(result, Mapping):
+        print("Usage unavailable: server returned malformed data.")
         return
     totals = result.get("totals")
     print()
     print(f"Usage ({days} days)")
     print("--------------")
-    if isinstance(totals, dict) and totals:
+    if isinstance(totals, Mapping) and totals:
         for key, value in totals.items():
             print(f"{key}: {value}")
     else:
@@ -1522,8 +1763,13 @@ def _run_usage_menu(settings: Settings) -> None:
     if isinstance(models, list) and models:
         print("By model:")
         for row in models[:20]:
-            if isinstance(row, dict):
-                print("  " + ", ".join(f"{key}={value}" for key, value in row.items()))
+            if isinstance(row, Mapping):
+                label = row.get("tracking_label") or row.get("model") or "unknown"
+                print(
+                    f"  {label}: requests={row.get('requests', 0)}, "
+                    f"input={row.get('input_tokens', 0)}, "
+                    f"output={row.get('output_tokens', 0)}"
+                )
 
 
 def _run_diagnostics_menu(settings: Settings) -> None:
@@ -1535,12 +1781,20 @@ def _run_diagnostics_menu(settings: Settings) -> None:
         print()
         return
     shapes = tuple(shape.strip() for shape in shapes_text.split(",") if shape.strip())
+    if not shapes:
+        print("Diagnostics requires at least one capability shape.")
+        return
     try:
         result = route_diagnostic(settings, model=model, shapes=shapes, mode=mode)
-    except LocalAdminError as exc:
-        print(f"Diagnostics unavailable: {exc}")
+    except Exception as exc:
+        print(f"Diagnostics unavailable: {format_user_error_preview(exc)}")
         return
-    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    try:
+        print(
+            json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True, default=str)
+        )
+    except (TypeError, ValueError) as exc:
+        print(f"Diagnostics unavailable: {format_user_error_preview(exc)}")
 
 
 def _run_logs_menu() -> None:
@@ -1593,15 +1847,24 @@ def _render_log_line(line: str) -> str:
     try:
         payload = json.loads(line)
     except json.JSONDecodeError:
-        return line
+        return _clip_terminal_line(line)
     if not isinstance(payload, dict):
-        return line
+        return _clip_terminal_line(line)
     timestamp = str(payload.get("time", ""))
     if "T" in timestamp:
         timestamp = timestamp.split("T", 1)[1][:8]
     level = str(payload.get("level", "INFO"))
-    message = str(payload.get("message", ""))
+    message = _clip_terminal_line(str(payload.get("message", "")))
     return f"{timestamp:>8} {level:<8} {message}".rstrip()
+
+
+def _clip_terminal_line(value: str, *, limit: int = 2_000) -> str:
+    """Keep one log record from flooding the line-oriented terminal UI."""
+
+    value = " ".join(value.splitlines())
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1].rstrip() + "…"
 
 
 def _connect_codex() -> None:
@@ -1618,6 +1881,8 @@ def _wait_for_proxy(
     *,
     timeout: float = CONTROL_STARTUP_TIMEOUT_SECONDS,
 ) -> str | None:
+    if timeout <= 0:
+        return "health check timed out (timeout must be positive)"
     proxy_root_url = local_proxy_root_url(settings)
     deadline = time.monotonic() + timeout
     last_error = "server did not report healthy"

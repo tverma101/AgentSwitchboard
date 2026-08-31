@@ -13,6 +13,7 @@ import pytest
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
 )
+from free_claude_code.core.account_identity import account_fingerprint
 from free_claude_code.providers.openai_codex import login as openai_login
 from free_claude_code.providers.openai_codex.auth import (
     OpenAIAuthManager,
@@ -80,6 +81,9 @@ async def test_auth_manager_refreshes_atomically_without_exposing_tokens(
         client=client,
     )
 
+    assert manager.usage_account_fingerprint() == account_fingerprint(
+        "openai", "account_1"
+    )
     access = await manager.access()
 
     assert access.access_token == refreshed_access

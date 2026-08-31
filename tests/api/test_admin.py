@@ -338,6 +338,20 @@ def test_admin_static_hides_managed_source_label():
     assert "sourceEl.textContent = source" in script
 
 
+def test_admin_static_explains_fcc_usage_attribution():
+    html = Path("src/free_claude_code/api/admin_static/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Final usage recorded by the FCC proxy" in html
+    assert 'id="usageTracking"' in html
+    assert 'trackingInfo.source_label || "FCC proxy"' in script
+    assert "row.tracking_label" in script
+
+
 def test_admin_static_places_reasoning_fields_in_model_config():
     script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
         encoding="utf-8"
@@ -547,6 +561,29 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
     }
 
 
+def test_admin_models_expose_configured_provider_before_first_discovery(
+    monkeypatch,
+):
+    monkeypatch.setenv("BAI_API_KEY", "bai-key")
+    app = create_test_app(Settings())
+
+    response = _local_client(app).get("/admin/api/models")
+
+    assert response.status_code == 200
+    provider = next(
+        item
+        for item in response.json()["provider_status"]
+        if item["provider_id"] == "bai"
+    )
+    assert provider == {
+        "provider_id": "bai",
+        "display_name": "B.AI",
+        "kind": "remote",
+        "status": "configured",
+        "label": "Configured",
+    }
+
+
 def test_admin_models_keep_the_picker_catalog_separate_from_visible_models() -> None:
     settings = Settings()
     settings.model = "open_router/configured-model"
@@ -653,6 +690,16 @@ def test_admin_usage_returns_final_usage_ledger_summary(tmp_path):
     assert body["totals"]["input_tokens"] == 123
     assert body["totals"]["cache_read_input_tokens"] == 91
     assert body["models"][0]["model"] == "opencode_zen/deepseek-v4-flash-free"
+    assert body["models"][0]["source"] == "fcc_proxy"
+    assert body["models"][0]["source_label"] == "FCC proxy"
+    assert body["models"][0]["wire_api_label"] == "Anthropic Messages"
+    assert body["models"][0]["tracking_label"] == (
+        "FCC proxy · Anthropic Messages · Account not identified"
+    )
+    assert body["tracking"]["source_label"] == "FCC proxy"
+    assert body["tracking"]["native_codex_usage"] == (
+        "Tracked separately from the FCC proxy ledger"
+    )
     assert (
         body["model_labels"]["opencode_zen/deepseek-v4-flash-free"]
         == "OpenCode Zen · DeepSeek V4 Flash Free"

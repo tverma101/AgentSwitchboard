@@ -3,6 +3,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -901,7 +902,7 @@ def test_owned_control_center_returns_initial_launch_failure_to_tui() -> None:
         "Exit status: 78."
     )
     supervisor.request_stop.assert_called_once_with()
-    server_thread.join.assert_called_once_with()
+    server_thread.join.assert_called_once_with(5.0)
 
 
 def test_direct_owner_starts_control_center_with_post_migration_settings() -> None:
@@ -990,7 +991,7 @@ def test_owned_control_center_launches_initial_client_after_health() -> None:
         launch_client=launch,
     )
     supervisor.request_stop.assert_called_once_with()
-    server_thread.join.assert_called_once_with()
+    server_thread.join.assert_called_once_with(5.0)
 
 
 def test_direct_owner_rejects_foreign_port_occupant() -> None:
@@ -1040,3 +1041,186 @@ def test_noninteractive_direct_launch_does_not_create_hidden_server_owner() -> N
     load.assert_not_called()
     port_probe.assert_not_called()
     owner.assert_not_called()
+
+
+def test_repo_menu_scopes_discovery_and_persistence_to_authenticated_owner(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    repo = terminal_control.RepoEntry(
+        "selected",
+        str(tmp_path / "selected"),
+        "main",
+        "Acme/selected",
+    )
+    with (
+        patch.object(
+            terminal_control, "cache_path", return_value=tmp_path / "repos.json"
+        ),
+        patch.object(
+            terminal_control, "github_authenticated_user", return_value="Acme"
+        ),
+        patch.object(terminal_control, "repository_from_path", return_value=None),
+        patch.object(terminal_control, "default_roots", return_value=()),
+        patch.object(
+            terminal_control, "discover_repos", return_value=[repo]
+        ) as discover,
+        patch.object(terminal_control, "choose_repo", return_value=repo),
+        patch.object(terminal_control, "save_cached_repos") as save,
+        patch("builtins.input", return_value="s"),
+    ):
+        selected = terminal_control._run_repo_menu(None)
+
+    assert selected == repo
+    discover.assert_called_once_with((), github_user="Acme")
+    assert save.call_count == 2
+    assert all(call.kwargs["github_user"] == "Acme" for call in save.call_args_list)
+
+
+def test_repo_menu_survives_current_checkout_probe_failure(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    repo = terminal_control.RepoEntry(
+        "selected", str(tmp_path / "selected"), "main", "acme/selected"
+    )
+    with (
+        patch.object(
+            terminal_control, "cache_path", return_value=tmp_path / "repos.json"
+        ),
+        patch.object(terminal_control, "github_authenticated_user", return_value=None),
+        patch.object(
+            terminal_control,
+            "repository_from_path",
+            side_effect=RuntimeError("checkout probe failed"),
+        ),
+        patch.object(terminal_control, "default_roots", return_value=()),
+        patch.object(terminal_control, "discover_repos", return_value=[repo]),
+        patch.object(terminal_control, "save_cached_repos"),
+        patch.object(terminal_control, "choose_repo", return_value=repo),
+        patch("builtins.input", return_value="s"),
+    ):
+        assert terminal_control._run_repo_menu(None) == repo
+
+    assert "Current repository unavailable" in capsys.readouterr().out
+
+
+def test_terminal_picker_tolerates_system_exit_from_launcher(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    def fail(_danger: bool, _argv: tuple[str, ...]) -> None:
+        raise SystemExit(78)
+
+    assert (
+        terminal_control._call_launcher(
+            cast(terminal_control.ControlClientLauncher, fail), False, ()
+        )
+        is False
+    )
+    assert "exit status 78" in capsys.readouterr().err
+
+
+def test_provider_menu_rejects_malformed_refresh_without_crashing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    settings = _settings()
+    config = {
+        "provider_status": [
+            {"provider_id": "openai", "display_name": "OpenAI"},
+        ],
+        "fields": [],
+    }
+    with (
+        patch.object(terminal_control, "get_admin_config", side_effect=[config, []]),
+        patch.object(terminal_control, "_run_provider_detail"),
+        patch("builtins.input", return_value="openai"),
+    ):
+        terminal_control._run_provider_menu(settings)
+
+    assert "Provider refresh unavailable" in capsys.readouterr().out
+
+
+def test_model_menu_keeps_control_after_malformed_refresh(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    class ExplodingModels(list[str]):
+        def __iter__(self):
+            raise RuntimeError("malformed model sequence")
+
+    settings = _settings()
+    with (
+        patch.object(
+            terminal_control,
+            "get_models",
+            side_effect=[
+                {"models": ["gateway/one"]},
+                {"models": ExplodingModels()},
+            ],
+        ),
+        patch("builtins.input", side_effect=["r", "b"]),
+    ):
+        assert terminal_control._run_models_menu(settings) is None
+
+    assert "Model refresh failed" in capsys.readouterr().out
+
+
+def test_settings_menu_rejects_malformed_admin_snapshot(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import terminal_control
+
+    with patch.object(terminal_control, "get_admin_config", return_value=[]):
+        assert terminal_control._run_settings_menu(_settings()) is None
+
+    assert "Settings unavailable" in capsys.readouterr().out
+
+
+def test_field_helpers_accept_tuple_payloads_and_ignore_bad_entries() -> None:
+    from free_claude_code.cli import terminal_control
+
+    config = {
+        "fields": (
+            {"key": "MODEL", "value": "gateway/model"},
+            None,
+        )
+    }
+
+    assert terminal_control._field_map(config) == {
+        "MODEL": {"key": "MODEL", "value": "gateway/model"}
+    }
+
+
+def test_provider_status_helpers_accept_tuple_payloads() -> None:
+    from free_claude_code.cli import terminal_control
+
+    config = {
+        "provider_status": (
+            {"provider_id": "openai", "display_name": "OpenAI"},
+            None,
+        )
+    }
+
+    assert terminal_control._provider_statuses(config) == (
+        {"provider_id": "openai", "display_name": "OpenAI"},
+    )
+
+
+def test_terminal_control_availability_fails_closed_for_broken_streams() -> None:
+    from free_claude_code.cli import terminal_control
+
+    class BrokenStream:
+        def isatty(self) -> bool:
+            raise RuntimeError("isatty failed")
+
+    assert not terminal_control.terminal_control_available(
+        cast(terminal_control.TextIO, BrokenStream()),
+        cast(terminal_control.TextIO, BrokenStream()),
+    )

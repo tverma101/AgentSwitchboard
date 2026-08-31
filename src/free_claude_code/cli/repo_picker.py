@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import NoReturn
@@ -42,6 +43,15 @@ _SKIP_DIRS = frozenset(
 )
 
 
+def _canonical_repo_path(value: str | Path) -> str:
+    """Return a stable checkout key without making a broken path fatal."""
+
+    try:
+        return str(Path(value).expanduser().resolve())
+    except OSError, RuntimeError:
+        return str(value)
+
+
 @dataclass(frozen=True, slots=True)
 class RepoEntry:
     """One local Git repository shown by the picker."""
@@ -56,12 +66,15 @@ class RepoEntry:
     def display_path(self) -> str:
         """Return a compact home-relative path when possible."""
 
-        home = str(Path.home())
-        if self.path == home:
+        try:
+            path = Path(self.path).expanduser().resolve()
+            home = Path.home().expanduser().resolve()
+            relative = path.relative_to(home)
+        except OSError, RuntimeError, ValueError:
+            return self.path
+        if not relative.parts:
             return "~"
-        if self.path.startswith(f"{home}{os.sep}"):
-            return f"~{self.path[len(home) :]}"
-        return self.path
+        return f"~{os.sep}{relative}"
 
     @property
     def repository_name(self) -> str:
@@ -338,12 +351,26 @@ def deduplicate_repos(repos: Iterable[RepoEntry]) -> list[RepoEntry]:
 
     unique: dict[str, RepoEntry] = {}
     for repo in repos:
-        try:
-            path = str(Path(repo.path).expanduser().resolve())
-        except OSError, RuntimeError:
-            path = repo.path
-        if path not in unique:
-            unique[path] = repo if repo.path == path else replace(repo, path=path)
+        path = _canonical_repo_path(repo.path)
+        candidate = repo if repo.path == path else replace(repo, path=path)
+        existing = unique.get(path)
+        if existing is None:
+            unique[path] = candidate
+            continue
+        # Multiple scan roots can observe one checkout with partially
+        # populated metadata. Merge those observations instead of allowing a
+        # weaker first record to win.
+        unique[path] = RepoEntry(
+            name=existing.name or candidate.name,
+            path=path,
+            branch=(
+                candidate.branch
+                if candidate.branch and candidate.branch != "?"
+                else existing.branch
+            ),
+            remote=existing.remote or candidate.remote,
+            last_used=max(existing.last_used, candidate.last_used),
+        )
     return sorted(
         unique.values(),
         key=lambda repo: (
@@ -354,19 +381,36 @@ def deduplicate_repos(repos: Iterable[RepoEntry]) -> list[RepoEntry]:
     )
 
 
+def _normalized_scan_roots(roots: Iterable[Path]) -> tuple[Path, ...]:
+    """Resolve roots and remove nested paths before walking the filesystem."""
+
+    normalized: list[Path] = []
+    for root in roots:
+        try:
+            candidate = root.expanduser().resolve(strict=True)
+        except OSError, RuntimeError:
+            continue
+        if not candidate.is_dir():
+            continue
+        if any(
+            candidate == parent or candidate.is_relative_to(parent)
+            for parent in normalized
+        ):
+            continue
+        normalized = [
+            parent for parent in normalized if not parent.is_relative_to(candidate)
+        ]
+        normalized.append(candidate)
+    return tuple(normalized)
+
+
 def discover_repos(
     roots: tuple[Path, ...], *, github_user: str | None = None
 ) -> list[RepoEntry]:
     """Discover local Git repositories, optionally scoped to a GitHub account."""
 
     discovered: dict[str, RepoEntry] = {}
-    for root in roots:
-        try:
-            root = root.expanduser().resolve(strict=True)
-        except OSError, RuntimeError:
-            continue
-        if not root.is_dir():
-            continue
+    for root in _normalized_scan_roots(roots):
         containing_repo = repository_from_path(root, github_user=github_user)
         if containing_repo is not None:
             discovered[containing_repo.path] = containing_repo
@@ -410,6 +454,15 @@ def load_cached_repos(
         return []
     if not isinstance(payload, dict):
         return []
+    cached_user = payload.get("github_user")
+    if (
+        github_user is not None
+        and isinstance(cached_user, str)
+        and cached_user.casefold() != github_user.casefold()
+    ):
+        # A shared cache may have been written by a different local GitHub
+        # account. Force discovery rather than showing another user's clones.
+        return []
 
     entries: list[RepoEntry] = []
     for raw in payload.get("repos", []):
@@ -434,20 +487,32 @@ def load_cached_repos(
     return deduplicate_repos(entries)
 
 
-def save_cached_repos(repos: list[RepoEntry], path: Path | None = None) -> None:
+def save_cached_repos(
+    repos: Iterable[RepoEntry],
+    path: Path | None = None,
+    *,
+    github_user: str | None = None,
+) -> None:
     """Persist the bounded, de-duplicated discovery cache."""
 
     path = cache_path() if path is None else path
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "updated_at": time.time(),
+        "github_user": github_user,
         "repos": [asdict(repo) for repo in deduplicate_repos(repos)],
     }
     temporary = path.with_suffix(f"{path.suffix}.tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
-    os.replace(temporary, path)
+    try:
+        temporary.write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(temporary, path)
+    finally:
+        # A failed write must not leave a stale temporary file that can be
+        # mistaken for the authoritative cache by tooling or cleanup jobs.
+        with suppress(OSError):
+            temporary.unlink()
 
 
 def cache_is_fresh(path: Path | None = None) -> bool:
@@ -455,7 +520,8 @@ def cache_is_fresh(path: Path | None = None) -> bool:
 
     path = cache_path() if path is None else path
     try:
-        return time.time() - path.stat().st_mtime < _CACHE_MAX_AGE_SECONDS
+        age = time.time() - path.stat().st_mtime
+        return 0 <= age < _CACHE_MAX_AGE_SECONDS
     except OSError:
         return False
 
@@ -509,25 +575,39 @@ def choose_repo(
     return next((repo for repo in repos if repo.path == selected.item_id), None)
 
 
-def _mark_used(repos: list[RepoEntry], selected: RepoEntry) -> list[RepoEntry]:
+def mark_repo_used(repos: Iterable[RepoEntry], selected: RepoEntry) -> list[RepoEntry]:
+    """Update one checkout's recency while preserving inventory metadata."""
+
     now = time.time()
+    selected_path = _canonical_repo_path(selected.path)
+    normalized_repos = deduplicate_repos(repos)
     return [
         RepoEntry(
             name=repo.name,
-            path=repo.path,
+            path=_canonical_repo_path(repo.path),
             branch=repo.branch,
             remote=repo.remote,
-            last_used=now if repo.path == selected.path else repo.last_used,
+            last_used=(
+                now
+                if _canonical_repo_path(repo.path) == selected_path
+                else repo.last_used
+            ),
         )
-        for repo in repos
+        for repo in normalized_repos
     ]
 
 
 def launch_repo(repo: RepoEntry) -> NoReturn:
     """Replace the picker with canonical ``fccdanger`` in the selected cwd."""
 
+    previous = Path.cwd()
     os.chdir(repo.path)
-    os.execvp("fccdanger", ["fccdanger"])
+    try:
+        os.execvp("fccdanger", ["fccdanger"])
+    finally:
+        # ``execvp`` normally never returns, but restoring the parent process
+        # cwd keeps tests, embedders, and a mocked launcher safe.
+        os.chdir(previous)
     raise AssertionError("os.execvp returned unexpectedly")
 
 
@@ -556,22 +636,49 @@ def main(argv: list[str] | None = None) -> None:
     explicit_roots = bool(args.root)
     roots = tuple(Path(value).expanduser() for value in args.root) or default_roots()
     cache = cache_path()
-    current = repository_from_path(Path.cwd())
+    try:
+        github_user = github_authenticated_user()
+    except Exception:
+        github_user = None
+    try:
+        current = repository_from_path(Path.cwd(), github_user=github_user)
+    except Exception:
+        current = None
 
     if explicit_roots:
-        repos = discover_repos(roots)
+        repos = (
+            discover_repos(roots, github_user=github_user)
+            if github_user
+            else discover_repos(roots)
+        )
     else:
-        repos = [] if args.refresh else load_cached_repos(cache)
+        repos = (
+            [] if args.refresh else load_cached_repos(cache, github_user=github_user)
+        )
         if args.refresh or not repos or not cache_is_fresh(cache):
-            previous_last_used = {repo.path: repo.last_used for repo in repos}
+            previous_last_used = {
+                _canonical_repo_path(repo.path): repo.last_used for repo in repos
+            }
             repos = [
                 replace(
                     repo,
-                    last_used=previous_last_used.get(repo.path, 0.0),
+                    last_used=previous_last_used.get(
+                        _canonical_repo_path(repo.path), 0.0
+                    ),
                 )
-                for repo in discover_repos(roots)
+                for repo in (
+                    discover_repos(roots, github_user=github_user)
+                    if github_user
+                    else discover_repos(roots)
+                )
             ]
-            save_cached_repos(repos, cache)
+            try:
+                save_cached_repos(repos, cache, github_user=github_user)
+            except OSError as exc:
+                print(
+                    f"Repository cache unavailable: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
         if current is not None and current.path not in {repo.path for repo in repos}:
             repos.append(current)
             repos = deduplicate_repos(repos)
@@ -594,5 +701,13 @@ def main(argv: list[str] | None = None) -> None:
     if selected is None:
         return
     if not explicit_roots:
-        save_cached_repos(_mark_used(repos, selected), cache)
+        try:
+            save_cached_repos(
+                mark_repo_used(repos, selected), cache, github_user=github_user
+            )
+        except OSError as exc:
+            print(
+                f"Repository cache unavailable: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
     launch_repo(selected)

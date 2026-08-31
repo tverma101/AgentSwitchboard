@@ -1,6 +1,7 @@
 """Local admin UI routes and APIs."""
 
 import ipaddress
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -40,6 +41,7 @@ from free_claude_code.learning.reviewer_scars import (
     ScarRegistry,
     ScarState,
 )
+from free_claude_code.usage import tracking_summary
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -454,6 +456,7 @@ async def usage(
             "daily": [],
             "models": [],
             "model_labels": {},
+            "tracking": tracking_summary(),
         }
     summary = services.usage.summary(days)
     summary["model_labels"] = model_display_names(
@@ -550,12 +553,53 @@ def _model_options(
     return {
         "models": sorted(configured | discovered, key=str.casefold),
         "model_labels": model_display_names(configured | discovered),
+        "provider_status": _model_provider_statuses(services),
         "failed_providers": list(failed_provider_ids),
         "model_evidence": _model_evidence(configured, discovered_infos),
         "catalog_models": sorted(catalog, key=str.casefold),
         "catalog_model_labels": model_display_names(catalog),
         "catalog_model_evidence": _model_evidence(configured, catalog_infos),
     }
+
+
+def _model_provider_statuses(services: ApiServices) -> list[dict[str, Any]]:
+    """Expose the safe provider inventory alongside the model catalog.
+
+    A provider can be configured before its first model-list request completes.
+    The model rows intentionally remain cache-backed, but the picker still needs
+    the provider inventory so that a configured provider is selectable and can
+    show an actionable empty state instead of disappearing.
+    """
+
+    try:
+        snapshot = services.admin.admin_status()
+    except Exception:
+        return []
+    if not isinstance(snapshot, Mapping):
+        return []
+    raw_statuses = snapshot.get("provider_status")
+    if not isinstance(raw_statuses, Sequence) or isinstance(raw_statuses, (str, bytes)):
+        return []
+
+    statuses: list[dict[str, Any]] = []
+    seen_provider_ids: set[str] = set()
+    for raw_status in raw_statuses:
+        if not isinstance(raw_status, Mapping):
+            continue
+        provider_id = raw_status.get("provider_id")
+        if not isinstance(provider_id, str):
+            continue
+        provider_id = provider_id.strip()
+        if not provider_id or provider_id.casefold() in seen_provider_ids:
+            continue
+        seen_provider_ids.add(provider_id.casefold())
+        status: dict[str, Any] = {"provider_id": provider_id}
+        for key in ("display_name", "kind", "status", "label"):
+            value = raw_status.get(key)
+            if isinstance(value, str) and value.strip():
+                status[key] = value.strip()
+        statuses.append(status)
+    return statuses
 
 
 _MODEL_EVIDENCE_CAPABILITIES = (

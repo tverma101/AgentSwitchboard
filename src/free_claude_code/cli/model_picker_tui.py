@@ -9,7 +9,7 @@ host, remote-session stack, or file-manager runtime is embedded here.
 """
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import ClassVar
 
@@ -32,18 +32,22 @@ from textual.widgets.option_list import Option
 from free_claude_code.cli.commands import ServerSupervisor
 from free_claude_code.cli.local_admin import LocalAdminError, apply_admin_values
 from free_claude_code.config.model_catalog import ModelCatalogMode
-from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.diagnostics import format_user_error_preview
 from free_claude_code.learning.config import configured_profile
 
 from .control_tui import (
     ControlCenterApp,
     ModelToggleButton,
+    _catalog_model_refs,
     _format_launch_failure,
     _model_catalog_effective_models,
     _model_catalog_mode,
+    _model_empty_message,
     _model_price_label,
     _model_provider_id,
+    _model_provider_options,
+    _model_rows,
 )
 from .repo_picker import RepoEntry
 
@@ -478,22 +482,7 @@ class TuiuiControlCenterApp(ControlCenterApp):
                 yield Horizontal(id="actions")
         yield Footer()
 
-    async def _show_page(
-        self,
-        page: str,
-        *,
-        force: bool = False,
-        focus_target: str | None = None,
-        refresh_models: bool = False,
-        refresh_repos: bool = False,
-    ) -> None:
-        await super()._show_page(
-            page,
-            force=force,
-            focus_target=focus_target,
-            refresh_models=refresh_models,
-            refresh_repos=refresh_repos,
-        )
+    async def _after_page_render(self, page: str, *, focus_target: str | None) -> None:
         workspace = self.query_one("#model-workspace", Horizontal)
         workspace.display = page == "models"
         self.query_one("#window-state", Static).update(
@@ -501,7 +490,11 @@ class TuiuiControlCenterApp(ControlCenterApp):
         )
         if page != "models" or focus_target is not None:
             return
-        rows = list(self.query(ModelListButton))
+        rows = [
+            row
+            for row in _model_rows(self.query_one("#model-list", VerticalScroll))
+            if isinstance(row, ModelListButton)
+        ]
         if not rows:
             return
         target = next(
@@ -517,21 +510,12 @@ class TuiuiControlCenterApp(ControlCenterApp):
         result = await self._load_model_catalog()
         model_list = self.query_one("#model-list", VerticalScroll)
         filtered_refs = tuple(
-            row.model_ref for row in model_list.query(ModelToggleButton)
+            row.model_ref
+            for row in _model_rows(model_list)
+            if isinstance(row, ModelToggleButton)
         )
 
-        visible_models = result.get("models")
-        visible_refs = (
-            {str(raw) for raw in visible_models if raw is not None}
-            if isinstance(visible_models, list)
-            else set()
-        )
-        catalog_models = result.get("catalog_models")
-        model_refs = (
-            {str(raw) for raw in catalog_models if raw is not None}
-            if isinstance(catalog_models, list)
-            else set(visible_refs)
-        )
+        visible_refs, model_refs = _catalog_model_refs(result)
         effective_models = _model_catalog_effective_models(
             self.settings,
             model_refs,
@@ -550,10 +534,12 @@ class TuiuiControlCenterApp(ControlCenterApp):
         self._model_prices = {}
         for model in model_refs:
             friendly = model
-            if isinstance(labels, dict) and isinstance(labels.get(model), str):
+            if isinstance(labels, Mapping) and isinstance(labels.get(model), str):
                 friendly = str(labels[model])
             source = "unknown"
-            if isinstance(evidence, dict) and isinstance(evidence.get(model), dict):
+            if isinstance(evidence, Mapping) and isinstance(
+                evidence.get(model), Mapping
+            ):
                 source = str(evidence[model].get("evidence_source", "unknown"))
             self._model_labels[model] = friendly
             self._model_sources[model] = source
@@ -567,26 +553,31 @@ class TuiuiControlCenterApp(ControlCenterApp):
             )
 
         await model_list.remove_children()
-        for model in filtered_refs:
-            await model_list.mount(
-                ModelListButton(
-                    model,
-                    self._model_labels.get(model, model),
-                    price=self._model_prices.get(model, "PRICE?"),
-                    is_default=model == self._model_pending_default,
-                    enabled=model in self._model_pending_enabled,
-                    selected=model == self._model_inspector_ref,
-                )
+        rows = [
+            ModelListButton(
+                model,
+                self._model_labels.get(model, model),
+                price=self._model_prices.get(model, "PRICE?"),
+                is_default=model == self._model_pending_default,
+                enabled=model in self._model_pending_enabled,
+                selected=model == self._model_inspector_ref,
             )
+            for model in filtered_refs
+        ]
+        if rows:
+            await model_list.mount(*rows)
 
         if not filtered_refs:
-            empty_message = (
-                "No models discovered. Press Refresh to query configured providers."
-                if not model_refs
-                else "No models match these filters. Clear search or broaden the filters."
-            )
             await model_list.mount(
-                Static(empty_message, id="model-empty", classes="model-empty")
+                Static(
+                    _model_empty_message(
+                        _model_provider_options(result, model_refs),
+                        self.model_provider_filter,
+                        model_refs,
+                    ),
+                    id="model-empty",
+                    classes="model-empty",
+                )
             )
 
         self.selected_models.clear()
@@ -622,23 +613,28 @@ class TuiuiControlCenterApp(ControlCenterApp):
             self._model_editor_loaded = True
             return
 
-        removed = self._model_known_refs - model_refs
-        added = model_refs - self._model_known_refs
-        self._model_initial_enabled.difference_update(removed)
-        self._model_pending_enabled.difference_update(removed)
-        self._model_initial_enabled.update(added.intersection(effective_models))
-        self._model_pending_enabled.update(added.intersection(effective_models))
+        changed_enabled = self._model_pending_enabled ^ self._model_initial_enabled
+        default_changed = self._model_pending_default != self._model_initial_default
+        self._model_initial_default = self.settings.model
+        if not default_changed:
+            self._model_pending_default = self.settings.model
+        self._model_initial_enabled = set(effective_models).intersection(model_refs)
+        pending_enabled = set(self._model_initial_enabled)
+        for model in changed_enabled.intersection(model_refs):
+            if model in self._model_pending_enabled:
+                pending_enabled.add(model)
+            else:
+                pending_enabled.discard(model)
+        self._model_pending_enabled = pending_enabled
+        if self._model_pending_default in model_refs:
+            self._model_initial_enabled.add(self._model_pending_default)
+            self._model_pending_enabled.add(self._model_pending_default)
         self._model_known_refs = set(model_refs)
 
-        if self._model_pending_default not in model_refs:
-            fallback = (
-                self.settings.model
-                if self.settings.model in model_refs
-                else next(iter(sorted(model_refs, key=str.casefold)), None)
-            )
+        if self._model_pending_default is None and model_refs:
+            fallback = next(iter(sorted(model_refs, key=str.casefold)))
             self._model_pending_default = fallback
-            if fallback is not None:
-                self._model_pending_enabled.add(fallback)
+            self._model_pending_enabled.add(fallback)
 
     def _model_editor_dirty(self) -> bool:
         return (
@@ -829,11 +825,18 @@ class TuiuiControlCenterApp(ControlCenterApp):
                 severity="error",
             )
             return
+        if not isinstance(result, Mapping):
+            self.notify(
+                "Model save returned malformed data.",
+                title="Model save failed",
+                severity="error",
+            )
+            return
         if result.get("applied") is not True:
             self.notify("Model changes were rejected.", severity="error")
             return
 
-        get_settings.cache_clear()
+        self._refresh_settings_snapshot()
         if "MODEL" in values:
             self.settings.model = values["MODEL"]
         if "MODEL_CATALOG_MODE" in values:
@@ -862,13 +865,16 @@ def run_control_tui(
     server_profile = configured_profile()
     next_profile = server_profile
     while True:
-        result = TuiuiControlCenterApp(
+        app = TuiuiControlCenterApp(
             settings,
             supervisor=supervisor,
             selected_repo=selected_repo,
             next_profile=next_profile,
             startup_error=startup_error,
-        ).run()
+        )
+        result = app.run()
+        if isinstance(app.settings, Settings):
+            settings = app.settings
         startup_error = None
         if result is None or result.action == "quit":
             return

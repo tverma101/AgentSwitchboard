@@ -39,7 +39,9 @@ re-enabled. The Models page provides provider, search, and `Free first`/
 `Free only`/`All prices` filters; filters never enable a model implicitly.
 The discovery response is reused while filtering or searching, so typing does
 not issue a provider request for every key. Use `Refresh` to explicitly fetch a
-new discovery snapshot.
+new discovery snapshot. The provider filter also includes configured/usable
+providers that do not have a cached model row yet; selecting one shows an
+explicit message telling the user to refresh that provider.
 
 The Repositories page pairs each remote identity with its local checkout folder;
 branch and home-relative path details are available in the same table. The first

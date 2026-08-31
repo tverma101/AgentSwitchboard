@@ -20,6 +20,7 @@ from free_claude_code.application.connected_accounts import (
     ConnectedAccountStatus,
 )
 from free_claude_code.config.paths import openai_auth_lock_path, openai_auth_path
+from free_claude_code.core.account_identity import account_fingerprint
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 from .login import (
@@ -181,6 +182,14 @@ class OpenAIAuthManager:
         """Return the provider availability contributed by this manager."""
 
         return (self.provider_id,) if self.is_connected() else ()
+
+    def usage_account_fingerprint(self) -> str | None:
+        """Return a stable, credential-free label for usage attribution."""
+
+        credentials = self._credentials
+        if credentials is None:
+            return None
+        return account_fingerprint(self.provider_id, credentials.account_id)
 
     def status(self) -> ConnectedAccountStatus:
         """Return a credential-free snapshot."""

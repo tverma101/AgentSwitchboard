@@ -86,7 +86,9 @@ allowlist, and `Enable selected`/`Disable selected` change only those rows.
 inventory, so disabled discoveries remain available to search and re-enable.
 Search and price/provider filters operate on that in-memory inventory without
 re-querying providers; use the page's `Refresh` action when a new discovery
-snapshot is wanted.
+snapshot is wanted. The same response carries a sanitized provider-status
+inventory, so a registered provider remains visible in the filter before its
+first discovery completes and its empty state points to `Refresh`.
 The Models page also provides `Free first`, `Free only`, and `All prices`
 views. Free/paid state comes from explicit provider or catalog pricing; an
 OpenRouter `:free` variant is the narrow fallback when no price map is
@@ -392,7 +394,7 @@ results. See [terminal diagnostics](DIAGNOSTICS.md).
 | --- | --- |
 | `~/.fcc/.env` | Managed provider and server configuration |
 | `~/.fcc/logs/server.log` | FCC server log |
-| `~/.fcc/usage.db` | Metadata-only usage ledger |
+| `~/.fcc/usage.db` | Metadata-only FCC proxy usage ledger with provider/model, wire-API, source, and privacy-preserving account labels |
 | `~/.fcc/codex-model-catalog.json` | Generated client-visible model catalog |
 | `~/.fcc/learning/` | Local memory, skill, and bounded learning queue state |
 | `~/.claude/CLAUDE.md` | Optional managed context-discipline block |
