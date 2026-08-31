@@ -44,6 +44,7 @@ class TestSettings:
         monkeypatch.delenv("VERTEX_LOCATION", raising=False)
         monkeypatch.delenv("HTTP_READ_TIMEOUT", raising=False)
         monkeypatch.delenv("HTTP_CONNECT_TIMEOUT", raising=False)
+        monkeypatch.delenv("FCC_COMPUTER_USE_APPROVAL", raising=False)
         monkeypatch.setitem(Settings.model_config, "env_file", ())
         settings = Settings()
         assert settings.model == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"

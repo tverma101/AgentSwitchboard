@@ -439,7 +439,7 @@ def test_policy_status_print_is_metadata_only(
 
 
 def test_selected_profile_and_repo_are_forwarded_without_mutating_server_state(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from free_claude_code.cli import terminal_control
     from free_claude_code.learning.config import PROFILE_ENV
@@ -451,13 +451,12 @@ def test_selected_profile_and_repo_are_forwarded_without_mutating_server_state(
         "acme/selected",
     )
     launch = MagicMock()
-    with patch.dict("os.environ", {}, clear=False):
-        os.environ.pop(PROFILE_ENV, None)
-        terminal_control._launch_selected(
-            launch,
-            profile="coding",
-            repo=repo,
-        )
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
+    terminal_control._launch_selected(
+        launch,
+        profile="coding",
+        repo=repo,
+    )
 
     launch.assert_called_once_with(
         ("--profile", "coding"),
