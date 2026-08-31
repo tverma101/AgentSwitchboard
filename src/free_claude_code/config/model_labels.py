@@ -37,23 +37,28 @@ def model_display_name(model_ref: str) -> str:
     return friendly
 
 
+def disambiguate_model_labels(labels: dict[str, str]) -> dict[str, str]:
+    """Make display labels collision-free using literal routable identities."""
+    resolved = dict(labels)
+    collisions: dict[str, list[str]] = {}
+    for model_ref, label in labels.items():
+        collisions.setdefault(label.casefold(), []).append(model_ref)
+
+    for model_ref, label in labels.items():
+        if len(collisions[label.casefold()]) <= 1:
+            continue
+        resolved[model_ref] = f"{label} [{model_ref}]"
+    return resolved
+
+
 def model_display_names(
     model_refs: list[str] | tuple[str, ...] | set[str],
 ) -> dict[str, str]:
     """Return readable, collision-free labels keyed by exact model refs."""
     refs = tuple(dict.fromkeys(model_refs))
-    labels = {model_ref: model_display_name(model_ref) for model_ref in refs}
-    collisions: dict[str, list[str]] = {}
-    for model_ref, label in labels.items():
-        collisions.setdefault(label.casefold(), []).append(model_ref)
-
-    for model_ref, label in tuple(labels.items()):
-        if len(collisions[label.casefold()]) <= 1:
-            continue
-        # Collision fallback is identity-bearing, so never normalize or strip
-        # wrappers here. Distinct routable refs must produce distinct labels.
-        labels[model_ref] = f"{label} [{model_ref}]"
-    return labels
+    return disambiguate_model_labels(
+        {model_ref: model_display_name(model_ref) for model_ref in refs}
+    )
 
 
 def _pretty_model_id(model_id: str) -> str:
