@@ -11,6 +11,7 @@ from free_claude_code.application.model_metadata import (
 )
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.model_aliases import parse_model_aliases
+from free_claude_code.config.model_labels import model_display_name
 from free_claude_code.config.model_refs import (
     configured_chat_model_refs,
     parse_model_name,
@@ -283,13 +284,14 @@ def _append_provider_model_variants(
     reasoning: ReasoningCapabilityEvidence | None = None,
     catalog_metadata: ModelCatalogMetadata | None = None,
 ) -> None:
+    display_name = model_display_name(provider_model_ref)
     if supports_thinking is not False:
         _append_unique_model(
             models,
             seen,
             _discovered_model_response(
                 gateway_model_id(provider_model_ref),
-                display_name=provider_model_ref,
+                display_name=display_name,
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
                 capability_evidence=capability_evidence,
@@ -302,7 +304,7 @@ def _append_provider_model_variants(
         seen,
         _discovered_model_response(
             no_thinking_gateway_model_id(provider_model_ref),
-            display_name=f"{provider_model_ref} (no thinking)",
+            display_name=f"{display_name} (no thinking)",
             supports_vision=supports_vision,
             accepted_image_types=accepted_image_types,
             capability_evidence=capability_evidence,
