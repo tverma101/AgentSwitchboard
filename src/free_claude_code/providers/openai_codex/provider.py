@@ -69,10 +69,6 @@ class OpenAICodexProvider(BaseProvider):
         super().__init__(config)
         self._auth = auth
         self._admission = admission
-        # This is an adapter capability, not a model-name heuristic. It is
-        # injectable so a compatible backend can opt into the field after it is
-        # verified to accept the GPT-5.6 request shape. The private Codex
-        # endpoint currently defaults to the conservative disabled path.
         self._supports_explicit_prompt_cache_breakpoints = (
             supports_explicit_prompt_cache_breakpoints
         )
@@ -276,13 +272,35 @@ class OpenAICodexProvider(BaseProvider):
                     )
                     raise error
                 stream_opened = True
+                recovery.restart_holdback_deadline()
 
-                async for event_type, payload in _iter_sse(response):
-                    if not attempt.accepted:
-                        await attempt.succeeded()
-                    for event in stream.feed(event_type, payload):
-                        for held in recovery.push(event):
-                            yield held
+                events = _iter_sse(response).__aiter__()
+                pending_event: asyncio.Task[tuple[str, dict[str, Any]]] | None = None
+                try:
+                    while True:
+                        if pending_event is None:
+                            pending_event = asyncio.create_task(anext(events))
+                        if not await recovery.event_arrived_before_holdback_deadline(
+                            pending_event
+                        ):
+                            for held in recovery.flush():
+                                yield held
+                        try:
+                            event_type, payload = await pending_event
+                        except StopAsyncIteration:
+                            pending_event = None
+                            break
+                        pending_event = None
+                        if not attempt.accepted:
+                            await attempt.succeeded()
+                        for event in stream.feed(event_type, payload):
+                            for held in recovery.push(event):
+                                yield held
+                finally:
+                    if pending_event is not None and not pending_event.done():
+                        pending_event.cancel()
+                        await asyncio.gather(pending_event, return_exceptions=True)
+
                 if not stream.completed:
                     raise _TruncatedResponsesStream(
                         "OpenAI Responses stream ended without a terminal event."
@@ -297,7 +315,7 @@ class OpenAICodexProvider(BaseProvider):
                     request_id=request_id,
                 )
                 return
-            except asyncio.CancelledError, GeneratorExit:
+            except (asyncio.CancelledError, GeneratorExit):
                 raise
             except Exception as raw_error:
                 if (
@@ -307,11 +325,6 @@ class OpenAICodexProvider(BaseProvider):
                     and not prompt_cache_breakpoint_fallback_used
                     and _is_prompt_cache_breakpoint_rejection(raw_error)
                 ):
-                    # Some private Codex-compatible endpoints advertise a
-                    # GPT-5.6 model but still reject the public explicit
-                    # breakpoint field. Correct the request shape once, then
-                    # remember the process-local capability downgrade so all
-                    # subsequent requests avoid a predictable 400.
                     prompt_cache_breakpoint_fallback_used = True
                     self._supports_explicit_prompt_cache_breakpoints = False
                     body = _body_without_prompt_cache_breakpoint(body)
