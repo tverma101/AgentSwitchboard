@@ -68,10 +68,10 @@ def test_enabling_cached_picker_model_adds_it_to_claude_registry_with_name() -> 
     hidden_ids = {model.id for model in hidden.data}
     assert gateway_model_id(MODEL_B) not in hidden_ids
 
-    enabled = build_models_list_response(
-        _settings(f"{MODEL_A}, {MODEL_B}"), runtime
+    enabled = build_models_list_response(_settings(f"{MODEL_A}, {MODEL_B}"), runtime)
+    beta = next(
+        model for model in enabled.data if model.id == gateway_model_id(MODEL_B)
     )
-    beta = next(model for model in enabled.data if model.id == gateway_model_id(MODEL_B))
 
     assert beta.display_name == model_display_name(MODEL_B)
     assert beta.display_name != MODEL_B
