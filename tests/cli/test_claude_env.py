@@ -48,7 +48,7 @@ def test_build_claude_proxy_env_always_sets_default_256k() -> None:
     )
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
     assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
-    assert env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "75"
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in env
     assert "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT" not in env
     assert env["MAX_MCP_OUTPUT_TOKENS"] == "12000"
     assert env["ENABLE_TOOL_SEARCH"] == "true"
