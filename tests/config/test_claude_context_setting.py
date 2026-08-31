@@ -6,19 +6,19 @@ from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.settings import Settings
 
 
-def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+def _isolated_settings(monkeypatch):
     monkeypatch.delenv("FCC_CLAUDE_CONTEXT_TOKENS", raising=False)
     monkeypatch.setitem(Settings.model_config, "env_file", ())
     return Settings()
 
 
-def test_claude_context_window_defaults_to_256k(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_claude_context_window_defaults_to_256k(monkeypatch) -> None:
     settings = _isolated_settings(monkeypatch)
 
     assert settings.claude_context_tokens == 256_000
 
 
-def test_claude_context_window_accepts_272k(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_claude_context_window_accepts_272k(monkeypatch) -> None:
     monkeypatch.setenv("FCC_CLAUDE_CONTEXT_TOKENS", "272000")
     monkeypatch.setitem(Settings.model_config, "env_file", ())
 
@@ -27,9 +27,7 @@ def test_claude_context_window_accepts_272k(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.claude_context_tokens == 272_000
 
 
-def test_claude_context_window_rejects_out_of_range(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_claude_context_window_rejects_out_of_range(monkeypatch) -> None:
     monkeypatch.setenv("FCC_CLAUDE_CONTEXT_TOKENS", "1000001")
     monkeypatch.setitem(Settings.model_config, "env_file", ())
 
