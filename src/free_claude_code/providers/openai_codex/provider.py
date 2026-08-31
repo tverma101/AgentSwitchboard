@@ -340,7 +340,11 @@ class OpenAICodexProvider(BaseProvider):
                     )
                     continue
                 error = _effective_error(raw_error)
-                if attempt is not None and not attempt.accepted:
+                if (
+                    attempt is not None
+                    and not attempt.accepted
+                    and not recovery.committed
+                ):
                     await attempt.retry(error)
                 retryable = (
                     attempt.failure_retryable
