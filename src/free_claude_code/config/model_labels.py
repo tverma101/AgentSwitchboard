@@ -50,8 +50,9 @@ def model_display_names(
     for model_ref, label in tuple(labels.items()):
         if len(collisions[label.casefold()]) <= 1:
             continue
-        exact_ref = model_ref.removeprefix("anthropic/")
-        labels[model_ref] = f"{label} [{exact_ref}]"
+        # Collision fallback is identity-bearing, so never normalize or strip
+        # wrappers here. Distinct routable refs must produce distinct labels.
+        labels[model_ref] = f"{label} [{model_ref}]"
     return labels
 
 
