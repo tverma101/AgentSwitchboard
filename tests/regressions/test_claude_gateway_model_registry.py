@@ -1,12 +1,14 @@
 """Regressions for FCC models appearing in Claude Code's gateway picker."""
 
-from types import SimpleNamespace
+from typing import cast
 
 from free_claude_code.api.model_catalog import build_models_list_response
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.cli.claude_env import build_claude_proxy_env
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.model_labels import model_display_name
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import gateway_model_id
 
 MODEL_A = "open_router/provider/alpha"
@@ -30,8 +32,11 @@ class _CachedRuntime:
         return self._infos
 
 
-def _settings(allowlist: str) -> SimpleNamespace:
-    return SimpleNamespace(
+def _settings(allowlist: str) -> Settings:
+    return Settings.model_construct(
+        host="0.0.0.0",
+        port=8082,
+        anthropic_auth_token="freecc",
         model=MODEL_A,
         model_fable=None,
         model_opus=None,
@@ -57,14 +62,14 @@ def test_claude_proxy_env_enters_gateway_mode_for_model_discovery() -> None:
 
 
 def test_enabling_cached_picker_model_adds_it_to_claude_registry_with_name() -> None:
-    runtime = _CachedRuntime(MODEL_A, MODEL_B)
+    runtime = cast(RequestRuntimePort, _CachedRuntime(MODEL_A, MODEL_B))
 
-    hidden = build_models_list_response(_settings(MODEL_A), runtime)  # type: ignore[arg-type]
+    hidden = build_models_list_response(_settings(MODEL_A), runtime)
     hidden_ids = {model.id for model in hidden.data}
     assert gateway_model_id(MODEL_B) not in hidden_ids
 
     enabled = build_models_list_response(
-        _settings(f"{MODEL_A}, {MODEL_B}"), runtime  # type: ignore[arg-type]
+        _settings(f"{MODEL_A}, {MODEL_B}"), runtime
     )
     beta = next(model for model in enabled.data if model.id == gateway_model_id(MODEL_B))
 
