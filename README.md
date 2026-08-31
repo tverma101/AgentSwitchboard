@@ -37,7 +37,7 @@ terminal-browser presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.58.0`; examples below describe this checkout, not every feature proposed in
+`4.59.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -198,6 +198,13 @@ discovery. Optional stable client-facing aliases use
 `MODEL_ALIASES=fast=opencode_go/minimax-m2.7`; the alias is accepted by the
 gateway while receipts and provider dispatch retain the exact target ref. See
 [Configuration](docs/CONFIGURATION.md) for the complete policy.
+
+Discovered models are enriched from one cached `models.dev` snapshot per TTL
+window. The metadata includes modalities and context/output limits and is
+stored at `~/.fcc/model-metadata-catalog.json`; it never enables providers or
+changes model visibility. Disable it with
+`MODEL_METADATA_CATALOG_ENABLED=false` or tune
+`MODEL_METADATA_CATALOG_TTL_HOURS` in `~/.fcc/.env`.
 
 ### 4. Run Your Coding Agent
 

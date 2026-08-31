@@ -91,6 +91,7 @@ class ProviderModelCache:
                     reasoning=info.reasoning,
                     capability_evidence=info.capability_evidence,
                     capability_verification=info.capability_verification,
+                    catalog_metadata=info.catalog_metadata,
                 )
                 for info in sorted(
                     provider_infos.values(), key=lambda item: item.model_id

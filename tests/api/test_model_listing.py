@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from free_claude_code.application.model_metadata import (
     CapabilityEvidence,
     CapabilityEvidenceStatus,
+    ModelCatalogMetadata,
     ProviderModelInfo,
     ReasoningCapabilityEvidence,
     ReasoningCapabilityStatus,
@@ -137,6 +138,16 @@ def test_models_list_exposes_cached_visual_metadata_for_configured_refs():
                 "vision-model",
                 supports_vision=True,
                 accepted_image_types=("image/jpeg", "image/png"),
+                catalog_metadata=ModelCatalogMetadata(
+                    display_name="Vision Model",
+                    description="A cataloged vision model",
+                    input_modalities=("text", "image"),
+                    output_modalities=("text",),
+                    context_window=128000,
+                    max_output_tokens=8192,
+                    source="models.dev",
+                    source_version="catalog-v2",
+                ),
                 capability_evidence=CapabilityEvidence(
                     statuses=(("vision_input", CapabilityEvidenceStatus.SUPPORTED),),
                     evidence_source="provider_metadata",
@@ -167,6 +178,28 @@ def test_models_list_exposes_cached_visual_metadata_for_configured_refs():
         )
         assert models[model_id]["capability_evidence_version"] == "catalog-v1"
         assert models[model_id]["capability_evidence_protocol"] == "responses"
+        assert models[model_id]["catalog_metadata"] == {
+            "display_name": "Vision Model",
+            "description": "A cataloged vision model",
+            "family": None,
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
+            "context_window": 128000,
+            "max_input_tokens": None,
+            "max_output_tokens": 8192,
+            "release_date": None,
+            "last_updated": None,
+            "status": None,
+            "open_weights": None,
+            "supports_tools": None,
+            "supports_structured_output": None,
+            "supports_temperature": None,
+            "supports_reasoning": None,
+            "catalog_provider": None,
+            "source": "models.dev",
+            "source_version": "catalog-v2",
+            "observed_at": None,
+        }
 
 
 def test_models_list_exposes_reasoning_capability_evidence() -> None:

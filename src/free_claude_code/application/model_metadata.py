@@ -168,6 +168,58 @@ class ReasoningCapabilityEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelCatalogMetadata:
+    """Detailed, non-secret metadata imported from a model catalog."""
+
+    display_name: str | None = None
+    description: str | None = None
+    family: str | None = None
+    input_modalities: tuple[str, ...] = ()
+    output_modalities: tuple[str, ...] = ()
+    context_window: int | None = None
+    max_input_tokens: int | None = None
+    max_output_tokens: int | None = None
+    release_date: str | None = None
+    last_updated: str | None = None
+    status: str | None = None
+    open_weights: bool | None = None
+    supports_tools: bool | None = None
+    supports_structured_output: bool | None = None
+    supports_temperature: bool | None = None
+    supports_reasoning: bool | None = None
+    catalog_provider: str | None = None
+    source: str = "unknown"
+    source_version: str | None = None
+    observed_at: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-safe diagnostic/API representation."""
+
+        return {
+            "display_name": self.display_name,
+            "description": self.description,
+            "family": self.family,
+            "input_modalities": list(self.input_modalities),
+            "output_modalities": list(self.output_modalities),
+            "context_window": self.context_window,
+            "max_input_tokens": self.max_input_tokens,
+            "max_output_tokens": self.max_output_tokens,
+            "release_date": self.release_date,
+            "last_updated": self.last_updated,
+            "status": self.status,
+            "open_weights": self.open_weights,
+            "supports_tools": self.supports_tools,
+            "supports_structured_output": self.supports_structured_output,
+            "supports_temperature": self.supports_temperature,
+            "supports_reasoning": self.supports_reasoning,
+            "catalog_provider": self.catalog_provider,
+            "source": self.source,
+            "source_version": self.source_version,
+            "observed_at": self.observed_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderModelInfo:
     """Provider model metadata used to shape the application model catalog."""
 
@@ -182,6 +234,26 @@ class ProviderModelInfo:
     capability_verification: CapabilityVerification = field(
         default_factory=CapabilityVerification
     )
+    catalog_metadata: ModelCatalogMetadata | None = None
+
+    def effective_supports_vision(self) -> bool | None:
+        """Resolve vision support from explicit metadata and capability evidence."""
+
+        if self.supports_vision is not None:
+            return self.supports_vision
+        status = self.capability_evidence.status_for("vision_input")
+        if status is CapabilityEvidenceStatus.UNSUPPORTED:
+            return False
+        if status in {
+            CapabilityEvidenceStatus.SUPPORTED,
+            CapabilityEvidenceStatus.ACCEPTED_BUT_UNVERIFIED,
+        }:
+            return True
+        if self.catalog_metadata is not None:
+            modalities = self.catalog_metadata.input_modalities
+            if modalities:
+                return "image" in {modality.casefold() for modality in modalities}
+        return None
 
     def with_observed_at(self, observed_at: str) -> ProviderModelInfo:
         """Stamp the catalog observation time on general capability evidence."""

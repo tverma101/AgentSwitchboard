@@ -227,6 +227,31 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "MODEL_METADATA_CATALOG_ENABLED",
+        "Public Model Metadata",
+        "models",
+        "boolean",
+        settings_attr="model_metadata_catalog_enabled",
+        default="true",
+        advanced=True,
+        restart_required=True,
+        description=(
+            "Enrich discovered models from models.dev without enabling providers "
+            "or changing model visibility."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_METADATA_CATALOG_TTL_HOURS",
+        "Metadata Refresh Interval (hours)",
+        "models",
+        "number",
+        settings_attr="model_metadata_catalog_ttl_hours",
+        default="24",
+        advanced=True,
+        restart_required=True,
+        description="Refresh the persisted public model metadata snapshot at most once per interval.",
+    ),
+    ConfigFieldSpec(
         "FCC_PROVIDER_POLICY_MODE",
         "Provider Policy Mode",
         "runtime",

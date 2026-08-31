@@ -78,12 +78,21 @@ The provider table and credential names are maintained in
 copy a model name from an old screenshot or design document without checking
 that source.
 
-`/v1/models` also exposes metadata-only `capability_evidence` for discovered
-models. Each claimed capability is `supported`, `unsupported`, or
-`accepted-but-unverified`, with the evidence source, observation timestamp,
-catalog version, and protocol when available. Missing metadata stays unknown;
-conflicting claims reject the provider model-list response instead of enabling
-a broader route.
+`/v1/models` also exposes metadata-only `capability_evidence` and
+`catalog_metadata` for discovered models. FCC refreshes the public
+`models.dev/api.json` snapshot once per TTL window, stores it at
+`~/.fcc/model-metadata-catalog.json`, and enriches all matching discovered
+models in memory. The snapshot includes input/output modalities, context and
+output limits, display metadata, release/update dates, tool/structured-output
+claims, and provenance. It is a metadata source only: it does not authorize a
+provider, reveal credentials, or make a hidden model visible to clients.
+
+Set `MODEL_METADATA_CATALOG_ENABLED=false` to disable fetching, or tune
+`MODEL_METADATA_CATALOG_TTL_HOURS` between `0.25` and `720`. A catalog outage
+leaves provider discovery usable and preserves provider-native metadata.
+Provider-native claims take precedence over the public snapshot. Explicitly
+unsupported vision metadata remains a preflight rejection; missing or
+unconfirmed vision metadata is not treated as a negative claim.
 
 The local Admin Model Config view shows the same evidence for the selected
 model, including capability state, confidence, and provenance. A configured

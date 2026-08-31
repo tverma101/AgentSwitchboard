@@ -198,6 +198,7 @@ async def test_messages_handler_rejects_image_for_known_nonvision_model() -> Non
     )
     request = MessagesRequest(
         model="nvidia_nim/test-model",
+        stream=True,
         messages=[
             Message(
                 role="user",
@@ -222,7 +223,9 @@ async def test_messages_handler_rejects_image_for_known_nonvision_model() -> Non
 
 
 @pytest.mark.asyncio
-async def test_messages_handler_rejects_image_when_model_metadata_is_missing() -> None:
+async def test_messages_handler_delegates_image_when_model_metadata_is_missing() -> (
+    None
+):
     provider = FakeProvider()
     provider_resolver = MagicMock(return_value=provider)
     handler = MessagesHandler(
@@ -231,6 +234,7 @@ async def test_messages_handler_rejects_image_when_model_metadata_is_missing() -
     )
     request = MessagesRequest(
         model="nvidia_nim/test-model",
+        stream=True,
         messages=[
             Message(
                 role="user",
@@ -247,10 +251,13 @@ async def test_messages_handler_rejects_image_when_model_metadata_is_missing() -
         ],
     )
 
-    with pytest.raises(InvalidRequestError, match="metadata unavailable"):
-        await handler.create(request)
+    response = await handler.create(request)
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
 
-    provider_resolver.assert_not_called()
+    provider_resolver.assert_called_once_with("nvidia_nim")
+    assert len(provider.preflight_calls) == 1
+    assert len(provider.requests) == 1
 
 
 @pytest.mark.asyncio

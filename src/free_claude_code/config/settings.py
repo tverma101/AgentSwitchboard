@@ -173,6 +173,14 @@ class Settings(BaseSettings):
         default="", validation_alias="MODEL_CATALOG_ALLOWLIST"
     )
     model_aliases: str = Field(default="", validation_alias="MODEL_ALIASES")
+    # The public catalog supplies metadata only; it never authorizes a provider
+    # or makes a hidden model visible to clients.
+    model_metadata_catalog_enabled: bool = Field(
+        default=True, validation_alias="MODEL_METADATA_CATALOG_ENABLED"
+    )
+    model_metadata_catalog_ttl_hours: float = Field(
+        default=24.0, validation_alias="MODEL_METADATA_CATALOG_TTL_HOURS"
+    )
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -463,6 +471,17 @@ class Settings(BaseSettings):
         """Treat an empty Admin select as the legacy compatibility mode."""
 
         return None if value == "" else value
+
+    @field_validator("model_metadata_catalog_ttl_hours")
+    @classmethod
+    def validate_model_metadata_catalog_ttl_hours(cls, value: float) -> float:
+        """Keep refreshes bounded while allowing deliberate local refreshes."""
+
+        if not 0.25 <= value <= 720.0:
+            raise ValueError(
+                "MODEL_METADATA_CATALOG_TTL_HOURS must be between 0.25 and 720"
+            )
+        return value
 
     @field_validator("model_aliases")
     @classmethod

@@ -10,6 +10,7 @@ MESSAGING_STATE_DIRNAME = "agent_workspace"
 FCC_LOGS_DIRNAME = "logs"
 SERVER_LOG_FILENAME = "server.log"
 CODEX_MODEL_CATALOG_FILENAME = "codex-model-catalog.json"
+MODEL_METADATA_CATALOG_FILENAME = "model-metadata-catalog.json"
 USAGE_DB_FILENAME = "usage.db"
 AUTH_DIRNAME = "auth"
 OPENAI_AUTH_FILENAME = "openai.json"
@@ -54,6 +55,12 @@ def codex_model_catalog_path() -> Path:
     """Return the generated Codex model catalog path."""
 
     return config_dir_path() / CODEX_MODEL_CATALOG_FILENAME
+
+
+def model_metadata_catalog_path() -> Path:
+    """Return the cached public model metadata catalog path."""
+
+    return config_dir_path() / MODEL_METADATA_CATALOG_FILENAME
 
 
 def usage_db_path() -> Path:

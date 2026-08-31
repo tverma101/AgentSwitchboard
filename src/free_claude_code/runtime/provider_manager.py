@@ -27,6 +27,9 @@ from free_claude_code.providers.runtime.discovery import (
     model_cache_provider_ids_for_settings,
 )
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
+from free_claude_code.providers.runtime.model_metadata_catalog import (
+    ModelMetadataCatalog,
+)
 
 ProviderRuntimeFactory = Callable[[Settings], ProviderRuntime]
 ConnectedProviderIds = Callable[[], tuple[str, ...]]
@@ -109,10 +112,14 @@ class ProviderRuntimeManager:
         runtime_factory: ProviderRuntimeFactory = ProviderRuntime,
         connected_provider_ids: ConnectedProviderIds = tuple,
         model_catalog_publisher: ModelCatalogPublisher | None = None,
+        model_metadata_catalog: ModelMetadataCatalog | None = None,
     ) -> None:
         self._runtime_factory = runtime_factory
         self._connected_provider_ids = connected_provider_ids
         self._model_catalog_publisher = model_catalog_publisher
+        self._model_metadata_catalog = model_metadata_catalog or ModelMetadataCatalog(
+            fetch_enabled=False, persistence_enabled=False
+        )
         self._replace_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._model_cache = ProviderModelCache(
@@ -197,6 +204,21 @@ class ProviderRuntimeManager:
         self._model_cache.cache_model_infos(provider_id, model_infos)
         self._publish_model_catalog()
 
+    async def cache_model_infos_with_metadata(
+        self,
+        provider_id: str,
+        model_infos: Iterable[ProviderModelInfo],
+    ) -> frozenset[ProviderModelInfo]:
+        """Cache manually refreshed provider models with catalog enrichment."""
+
+        enriched = await self._model_metadata_catalog.enrich_model_infos(
+            {provider_id: tuple(model_infos)}
+        )
+        enriched_infos = enriched.get(provider_id, frozenset())
+        self._model_cache.cache_model_infos(provider_id, enriched_infos)
+        self._publish_model_catalog()
+        return enriched_infos
+
     async def warm_referenced_model_cache(self) -> ProviderModelRefreshResult:
         """Warm routed provider catalogs before clients perform model discovery."""
         lease = await self.acquire()
@@ -206,6 +228,7 @@ class ProviderRuntimeManager:
                 lease.resolve_provider,
                 self._model_cache,
                 self._connected_provider_ids(),
+                self._model_metadata_catalog,
             )
             result = await discovery.warm_referenced_model_cache()
             self._ensure_model_catalog()
@@ -250,6 +273,7 @@ class ProviderRuntimeManager:
                 self._current.runtime.resolve_provider,
                 self._model_cache,
                 self._connected_provider_ids(),
+                self._model_metadata_catalog,
             )
             result = await discovery.refresh_provider(provider_id)
             self._publish_model_catalog()
@@ -379,6 +403,7 @@ class ProviderRuntimeManager:
                 generation.runtime.resolve_provider,
                 self._model_cache,
                 self._connected_provider_ids(),
+                self._model_metadata_catalog,
             )
             result = await discovery.refresh_model_list_cache(only_missing=only_missing)
             self._publish_model_catalog()

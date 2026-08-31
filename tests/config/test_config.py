@@ -61,6 +61,8 @@ class TestSettings:
         assert settings.debug_subagent_stack is False
         assert settings.log_level == "INFO"
         assert settings.vertex_location == "global"
+        assert settings.model_metadata_catalog_enabled is True
+        assert settings.model_metadata_catalog_ttl_hours == 24.0
 
     def test_default_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
         """Unset CLAUDE_WORKSPACE stores agent data under the fixed path helper."""

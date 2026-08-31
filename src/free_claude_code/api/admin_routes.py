@@ -594,6 +594,7 @@ def _model_evidence_for_info(
             "observed_at": None,
             "evidence_version": None,
             "evidence_protocol": None,
+            "catalog_metadata": None,
             "capabilities": {
                 capability.value: {
                     "state": CapabilityEvidenceStatus.UNKNOWN.value,
@@ -611,6 +612,11 @@ def _model_evidence_for_info(
         "observed_at": evidence.observed_at,
         "evidence_version": evidence.evidence_version,
         "evidence_protocol": evidence.evidence_protocol,
+        "catalog_metadata": (
+            info.catalog_metadata.as_dict()
+            if info.catalog_metadata is not None
+            else None
+        ),
         "capabilities": {
             capability.value: _capability_evidence_for_info(capability, info)
             for capability in _MODEL_EVIDENCE_CAPABILITIES
