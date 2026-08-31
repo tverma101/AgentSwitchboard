@@ -507,7 +507,7 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
     assert env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
-    assert env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "75"
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in env
     assert env["DISABLE_AUTOUPDATER"] == "1"
     assert env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert env["DISABLE_ERROR_REPORTING"] == "1"
@@ -697,7 +697,7 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert child_env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
     assert child_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
-    assert child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "75"
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in child_env
     assert child_env["DISABLE_AUTOUPDATER"] == "1"
     assert child_env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert child_env["DISABLE_ERROR_REPORTING"] == "1"
@@ -889,7 +889,7 @@ def test_launch_claude_applies_model_context_window_override(
     child_env = popen.call_args.kwargs["env"]
     assert child_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
     assert child_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
-    assert child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "75"
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in child_env
 
 
 def test_launch_codex_passes_responses_config_and_child_env(
