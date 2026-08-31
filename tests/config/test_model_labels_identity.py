@@ -17,11 +17,5 @@ def test_nested_gpt_routes_get_collision_free_labels() -> None:
 
     assert len(labels) == 6
     assert len({label.casefold() for label in labels.values()}) == 6
-    assert (
-        "[open_router/openai/gpt-model]"
-        in labels["open_router/openai/gpt-model"]
-    )
-    assert (
-        "[open_router/azure/gpt-model]"
-        in labels["open_router/azure/gpt-model"]
-    )
+    assert "[open_router/openai/gpt-model]" in labels["open_router/openai/gpt-model"]
+    assert "[open_router/azure/gpt-model]" in labels["open_router/azure/gpt-model"]
