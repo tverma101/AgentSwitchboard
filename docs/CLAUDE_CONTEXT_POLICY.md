@@ -6,27 +6,39 @@ much larger native window.
 
 ## Default
 
-`fcc-claude` uses **256,000 tokens** for both:
+`fcc-claude` uses **256,000 tokens** by default for both:
 
 - `CLAUDE_CODE_MAX_CONTEXT_TOKENS`
 - `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
 
-This keeps session behavior consistent across gateway models and prevents 1M-advertised models from silently pushing Claude Code into very long, degraded sessions.
+This keeps session behavior consistent across gateway models and prevents
+large advertised windows from silently pushing Claude Code into longer,
+degraded sessions. FCC does not inject a private percentage-based compaction
+override; Claude Code owns its native compaction reserve inside the selected
+window. An explicit user-supplied `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is still
+preserved.
 
-FCC does not inject a default `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`. Claude Code
-owns its native token reserve and auto-compaction trigger inside the explicit
-256,000-token window. An explicit percentage override already present in the
-launch environment is preserved. FCC removes inherited `DISABLE_COMPACT` and
-`DISABLE_AUTO_COMPACT` so a stale shell setting cannot disable this safety
-boundary.
+FCC removes inherited `DISABLE_COMPACT` and `DISABLE_AUTO_COMPACT` so a stale
+shell setting cannot disable this safety boundary.
 
 ## Override
 
-Set `FCC_CLAUDE_CONTEXT_TOKENS` to an integer from 32,000 through 1,000,000.
+`FCC_CLAUDE_CONTEXT_TOKENS` is the single FCC setting for the Claude Code
+session window. It is available in the terminal control center under
+**Settings** as **Claude Context Window (tokens)**.
 
-Invalid or out-of-range values fail safe to 256,000.
+The default remains **256,000**. Raise it only when the selected model supports
+the larger window; for example, enter `272000` for a model whose supported
+context window is 272K. The accepted range is 32,000 through 1,000,000 tokens.
+Values outside that range are rejected by Settings validation.
 
-Known model-native ceilings smaller than the configured FCC cap must win. Advertised windows larger than the configured cap do not automatically raise it.
+A changed value applies to new FCC-launched Claude sessions. It does not resize
+an already-running Claude process. The selected value is passed to both
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`; FCC does
+not separately guess a model-specific compaction percentage.
+
+Known model-native ceilings smaller than the configured FCC cap must win.
+Advertised windows larger than the configured cap do not automatically raise it.
 
 ## Unknown gateway models
 
@@ -39,7 +51,9 @@ safety compaction active.
 
 ## Design rule
 
-The provider's advertised context window is capability metadata, not a session-budget instruction. FCC owns the client-facing session budget.
+The provider's advertised context window is capability metadata, not a
+session-budget instruction. FCC owns the client-facing session budget, with a
+safe 256K default and an explicit user override when a model supports more.
 
 ## Global context-discipline leash
 
