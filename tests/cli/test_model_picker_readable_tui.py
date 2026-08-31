@@ -1,11 +1,22 @@
 """Regression tests for model-picker identity readability."""
 
+from unittest.mock import patch
+
+import pytest
+from textual.widgets import Footer, Header, Static
+
 from free_claude_code.cli.model_picker_readable_tui import (
+    ReadableModelControlCenterApp,
     _compact_exact_ref,
     _readable_inspector_title,
     _readable_row_label,
 )
 from free_claude_code.cli.model_picker_tui import ModelListButton
+from free_claude_code.config.model_catalog import ModelCatalogMode
+from free_claude_code.config.reasoning import ReasoningPreference
+from free_claude_code.config.settings import Settings
+
+MODEL_REF = "open_router/openai/gpt-5.6-codex"
 
 
 def test_row_keeps_exact_identity_when_friendly_names_collapse() -> None:
@@ -45,7 +56,48 @@ def test_compact_identity_preserves_variant_bearing_tail() -> None:
 
 
 def test_inspector_puts_exact_model_ref_on_its_own_line() -> None:
-    ref = "open_router/openai/gpt-5.6-codex"
-    title = _readable_inspector_title("GPT Model", ref)
+    title = _readable_inspector_title("GPT Model", MODEL_REF)
 
-    assert title.splitlines() == ["GPT Model", ref]
+    assert title.splitlines() == ["GPT Model", MODEL_REF]
+
+
+@pytest.mark.asyncio
+async def test_models_page_hides_chrome_and_keeps_exact_identity_visible() -> None:
+    settings = Settings.model_construct(
+        host="0.0.0.0",
+        port=8082,
+        anthropic_auth_token="freecc",
+        model=MODEL_REF,
+        reasoning_policy=ReasoningPreference.CLIENT,
+        model_catalog_mode=ModelCatalogMode.CURATED,
+        model_catalog_allowlist=MODEL_REF,
+    )
+    catalog = {
+        "models": [MODEL_REF],
+        "catalog_models": [MODEL_REF],
+        "model_labels": {MODEL_REF: "GPT Model"},
+        "catalog_model_labels": {MODEL_REF: "GPT Model"},
+        "model_evidence": {},
+        "catalog_model_evidence": {},
+    }
+    app = ReadableModelControlCenterApp(settings, supervisor=None)
+
+    with patch(
+        "free_claude_code.cli.control_tui.get_models",
+        return_value=catalog,
+    ):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app._show_page("models")
+            await pilot.pause()
+
+            row = next(iter(app.query(ModelListButton)))
+            inspector = app.query_one("#model-inspector-title", Static)
+
+            assert MODEL_REF in str(row.label)
+            assert MODEL_REF in str(inspector.content)
+            assert not app.query_one("#sidebar").display
+            assert not app.query_one("#summary").display
+            assert not app.query_one("#window-titlebar").display
+            assert not app.query_one(Header).display
+            assert not app.query_one(Footer).display
+            assert app.query_one("#actions").display
