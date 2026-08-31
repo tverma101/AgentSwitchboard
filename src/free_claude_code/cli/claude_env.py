@@ -32,13 +32,6 @@ CLAUDE_MCP_OUTPUT_TOKENS_ENV = "MAX_MCP_OUTPUT_TOKENS"
 CLAUDE_TOOL_SEARCH_DEFAULT = "true"
 CLAUDE_TOOL_SEARCH_ENV = "ENABLE_TOOL_SEARCH"
 
-# Claude Code's default compact threshold is intentionally high, but a gateway
-# model with a client-facing bounded window needs room for the compaction turn
-# and its follow-up request. Keep this below the default without overriding an
-# explicit user setting.
-CLAUDE_AUTOCOMPACT_PCT_DEFAULT = "75"
-CLAUDE_AUTOCOMPACT_PCT_ENV = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
-
 # Keys Claude Code applies from its settings.json ``env`` block over the
 # process environment. FCC's launcher owns these for a proxy session; when a
 # user settings file sets any of them, Claude Code would silently override the
@@ -336,8 +329,10 @@ def build_claude_proxy_env(
         default_process_wrapper_path(base_env)
     )
 
-    if not env.get(CLAUDE_AUTOCOMPACT_PCT_ENV, "").strip():
-        env[CLAUDE_AUTOCOMPACT_PCT_ENV] = CLAUDE_AUTOCOMPACT_PCT_DEFAULT
+    # Do not inject Claude Code's private percentage override. Current Claude
+    # versions compose it with the explicit gateway window in surprising ways,
+    # and repeated compaction after rules/context reload is an upstream failure
+    # mode. If a user explicitly supplies the variable, base_env preserves it.
     if not env.get(CLAUDE_MCP_OUTPUT_TOKENS_ENV, "").strip():
         env[CLAUDE_MCP_OUTPUT_TOKENS_ENV] = str(CLAUDE_MCP_OUTPUT_TOKENS_DEFAULT)
     if not env.get(CLAUDE_TOOL_SEARCH_ENV, "").strip():
