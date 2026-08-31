@@ -3,10 +3,8 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Static
 
-from free_claude_code.cli.model_picker_readable_tui import (
-    ReadableModelControlCenterApp,
-)
-from free_claude_code.cli.model_picker_tui import ModelListButton
+from free_claude_code.cli import model_picker_readable_tui as readable
+from free_claude_code.cli import model_picker_tui as picker
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
@@ -42,11 +40,8 @@ def _catalog() -> dict[str, object]:
 
 @pytest.mark.asyncio
 async def test_models_page_keeps_exact_model_identity_visible() -> None:
-    app = ReadableModelControlCenterApp(_settings(), supervisor=None)
-    with patch(
-        "free_claude_code.cli.control_tui.get_models",
-        return_value=_catalog(),
-    ):
+    app = readable.ReadableModelControlCenterApp(_settings(), supervisor=None)
+    with patch("free_claude_code.cli.control_tui.get_models", return_value=_catalog()):
         async with app.run_test(size=(120, 40)) as pilot:
             await app._show_page("models")
             await pilot.pause()
@@ -54,7 +49,7 @@ async def test_models_page_keeps_exact_model_identity_visible() -> None:
             assert not app.query_one("#sidebar").display
             assert not app.query_one("#summary").display
 
-            rows = list(app.query(ModelListButton))
+            rows = list(app.query(picker.ModelListButton))
             assert len(rows) == 2
             for row in rows:
                 assert row.model_ref in str(row.label)

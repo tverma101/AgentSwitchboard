@@ -9,16 +9,18 @@ from free_claude_code.cli.commands import ServerSupervisor
 from free_claude_code.config.settings import Settings
 from free_claude_code.learning.config import configured_profile
 
+from . import model_picker_tui as picker
 from .control_tui import _format_launch_failure
-from .model_picker_tui import ModelListButton, TuiuiControlCenterApp
 from .repo_picker import RepoEntry
 
+LaunchClient = Callable[[bool, Sequence[str], Path | None], None]
 
-class ReadableModelControlCenterApp(TuiuiControlCenterApp):
+
+class ReadableModelControlCenterApp(picker.TuiuiControlCenterApp):
     """Keep model identity and actions visually dominant in the Models page."""
 
     CSS = (
-        TuiuiControlCenterApp.CSS
+        picker.TuiuiControlCenterApp.CSS
         + """
 
     #model-list .model-list-row {
@@ -51,12 +53,7 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
     """
     )
 
-    async def _after_page_render(
-        self,
-        page: str,
-        *,
-        focus_target: str | None,
-    ) -> None:
+    async def _after_page_render(self, page: str, *, focus_target: str | None) -> None:
         await super()._after_page_render(page, focus_target=focus_target)
         models_page = page == "models"
         # The model browser is a workspace, not a dashboard card. Give it the
@@ -65,12 +62,7 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
         self.query_one("#sidebar").display = not models_page
         self.query_one("#summary").display = not models_page
 
-    async def _render_models(
-        self,
-        table: DataTable,
-        *,
-        refresh: bool = False,
-    ) -> None:
+    async def _render_models(self, table: DataTable, *, refresh: bool = False) -> None:
         await super()._render_models(table, refresh=refresh)
         self._apply_readable_model_identity()
 
@@ -80,7 +72,7 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
 
     def _apply_readable_model_identity(self) -> None:
         """Render friendly text and exact route identity separately."""
-        for row in self.query(ModelListButton):
+        for row in self.query(picker.ModelListButton):
             model_ref = row.model_ref
             friendly = self._model_labels.get(model_ref, model_ref)
             default_mark = "★" if model_ref == self._model_pending_default else " "
@@ -103,7 +95,7 @@ def run_control_tui(
     settings: Settings,
     *,
     supervisor: ServerSupervisor | None,
-    launch_client: Callable[[bool, Sequence[str], Path | None], None],
+    launch_client: LaunchClient,
     startup_error: str | None = None,
 ) -> None:
     """Run the readability-first model control center."""
