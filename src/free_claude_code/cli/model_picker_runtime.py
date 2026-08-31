@@ -4,6 +4,8 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from textual.widgets import Static
+
 from free_claude_code.cli.commands import ServerSupervisor
 from free_claude_code.config.settings import Settings
 from free_claude_code.learning.config import configured_profile
@@ -52,6 +54,16 @@ class ReliableModelControlCenterApp(TuiuiControlCenterApp):
         super()._refresh_settings_snapshot()
         self._model_catalog_result = None
         self._model_picker_snapshot_at = 0.0
+
+    def _update_model_editor_summary(self) -> None:
+        """Keep unavailable saved defaults visible instead of implying a healthy row."""
+
+        super()._update_model_editor_summary()
+        default = self._model_pending_default
+        if default is None or default in self._model_known_refs:
+            return
+        self._model_summary_text = f"{self._model_summary_text}   •   default unavailable"
+        self.query_one("#summary", Static).update(self._model_summary_text)
 
 
 def run_control_tui(
