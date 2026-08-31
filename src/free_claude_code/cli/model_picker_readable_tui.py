@@ -10,7 +10,11 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.learning.config import configured_profile
 
 from .control_tui import _format_launch_failure
-from .model_picker_tui import ModelListButton, TuiuiControlCenterApp, _model_provider_id
+from .model_picker_tui import (
+    ModelListButton,
+    TuiuiControlCenterApp,
+    _model_provider_id,
+)
 from .repo_picker import RepoEntry
 
 
@@ -32,10 +36,7 @@ def _readable_row_label(row: ModelListButton) -> str:
     access_mark = "✓" if row._enabled else "○"
     friendly = " ".join(row.friendly.split()) or row.model_ref
     identity = _compact_exact_ref(row.model_ref)
-    return (
-        f"{default_mark} {access_mark}  {friendly}\n"
-        f"     {identity}    {row.price}"
-    )
+    return f"{default_mark} {access_mark}  {friendly}\n     {identity}    {row.price}"
 
 
 def _readable_inspector_title(friendly: str, model_ref: str) -> str:
