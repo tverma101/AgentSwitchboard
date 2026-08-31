@@ -10,11 +10,8 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.learning.config import configured_profile
 
 from .control_tui import _format_launch_failure
-from .model_picker_tui import (
-    ModelListButton,
-    TuiuiControlCenterApp,
-    _model_provider_id,
-)
+from .model_picker_tui import ModelListButton, _model_provider_id
+from .provider_management_tui import ProviderManagementControlCenterApp
 from .repo_picker import RepoEntry
 
 
@@ -45,11 +42,11 @@ def _readable_inspector_title(friendly: str, model_ref: str) -> str:
     return f"{friendly}\n{model_ref}"
 
 
-class ReadableModelControlCenterApp(TuiuiControlCenterApp):
+class ReadableModelControlCenterApp(ProviderManagementControlCenterApp):
     """Give model identity the screen space it needs to remain obvious."""
 
     CSS = (
-        TuiuiControlCenterApp.CSS
+        ProviderManagementControlCenterApp.CSS
         + """
 
     #model-browser {
