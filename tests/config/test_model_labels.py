@@ -8,9 +8,7 @@ def test_model_display_name_keeps_nested_vendor_route_human_readable() -> None:
 
 
 def test_model_display_name_strips_only_claude_code_display_wrapper() -> None:
-    actual = model_labels.model_display_name(
-        "anthropic/opencode_go/deepseek-v4-flash"
-    )
+    actual = model_labels.model_display_name("anthropic/opencode_go/deepseek-v4-flash")
     expected = "OpenCode Go · DeepSeek V4 Flash"
     assert actual == expected
 
