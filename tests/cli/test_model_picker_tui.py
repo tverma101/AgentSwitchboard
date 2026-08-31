@@ -15,6 +15,7 @@ from free_claude_code.cli.model_picker_tui import (
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.branding import PRODUCT_NAME
 
 MODEL_A = "open_router/provider/alpha"
 MODEL_B = "open_router/provider/beta"
@@ -72,6 +73,7 @@ async def test_model_picker_uses_compact_browser_and_inspector() -> None:
             await pilot.pause()
 
             assert app.query_one("#model-workspace", Horizontal).display
+            assert str(app.query_one("#sidebar-title", Static).content) == PRODUCT_NAME
             assert len(app.query(ModelListButton)) == 2
             assert _row(app, MODEL_A).has_class("model-row-default")
             assert _row(app, MODEL_A).has_class("model-row-enabled")

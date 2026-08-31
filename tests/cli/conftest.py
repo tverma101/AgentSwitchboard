@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from free_claude_code.cli import control_tui
+from free_claude_code.core.branding import PRODUCT_NAME
 
 pytest = __import__("pytest")
 
@@ -16,20 +19,20 @@ def deterministic_control_tui_repo_context(request, monkeypatch) -> None:
     """Keep mocked repository-inventory tests independent of the runner checkout.
 
     ``ControlCenterApp`` intentionally defaults to the repository containing the
-    process CWD. These two tests replace the inventory with one fixed Harness
-    checkout, so letting GitHub Actions' own checkout become the selected repo
-    makes the mock internally inconsistent. Pin only those cases to the same
-    repository identity their mocked inventory supplies.
+    process CWD. These two tests replace the inventory with one fixed
+    AgentSwitchboard checkout, so letting GitHub Actions' own checkout become the
+    selected repo makes the mock internally inconsistent. Pin only those cases to
+    the same repository identity their mocked inventory supplies.
     """
 
     if request.node.name not in _CWD_SENSITIVE_REPO_TESTS:
         return
 
     expected = control_tui.RepoEntry(
-        "Harness",
-        "/Users/tejas/Documents/ChatGPT/Harness",
+        PRODUCT_NAME,
+        str(Path(__file__).resolve().parents[2]),
         "main",
-        "tverma101/AgentSwitchBoard",
+        "tverma101/AgentSwitchboard",
     )
 
     def repository_from_path(

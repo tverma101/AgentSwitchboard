@@ -38,6 +38,7 @@ from free_claude_code.config.provider_catalog import (
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.branding import PRODUCT_NAME
 from free_claude_code.core.diagnostics import format_user_error_preview
 from free_claude_code.learning.bundle import (
     BundleError,
@@ -285,8 +286,9 @@ def _print_home(
     except Exception:
         codex_account = "needs attention"
     print()
-    print("FCC Harness")
-    print("-----------")
+    heading = f"{PRODUCT_NAME} (FCC)"
+    print(heading)
+    print("-" * len(heading))
     print(f"Server    {status} ({owner})")
     print(f"Repo      {displayed_repo}")
     print(f"Model     {displayed_model}")

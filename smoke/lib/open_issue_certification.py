@@ -1,4 +1,4 @@
-"""Shared certification plan for the remaining Harness integration issues.
+"""Shared certification plan for the remaining AgentSwitchboard integration issues.
 
 The registry deliberately points at existing contract/smoke/benchmark machinery.
 It prevents every issue from growing its own runner and keeps live/provider/device
@@ -41,7 +41,7 @@ CERTIFICATION_STEPS: tuple[CertificationStep, ...] = (
         ),
         description=(
             "Exercise Responses stream/tool/reasoning failure semantics plus the "
-            "shared native-vs-Harness attribution comparator."
+            "shared native-vs-AgentSwitchboard attribution comparator."
         ),
     ),
     CertificationStep(

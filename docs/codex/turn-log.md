@@ -2,7 +2,7 @@
 
 ## 2026-08-29 — live remote-runner command removal
 
-- `scope`: public AgentSwitchBoard default branch, limited to the retired remote Codespaces/CI provisioning command and its public references.
+- `scope`: public AgentSwitchboard default branch, limited to the retired remote Codespaces/CI provisioning command and its public references.
 - `project`: `tverma101/AgentSwitchboard`; live baseline `7b3bcc866a380091f3168d9a06511fa8e9e8f352`.
 - `status`: committed as `1d1f3c364bcff45658d0f134339ecf81411c573e` and pushed to the isolated remote branch `codex/remove-retired-runner-command`; the protected default branch is not yet updated.
 - `changed`: removed the remote-runner CLI module and tests, removed its top-level dispatcher/help entry, deleted the obsolete runner-policy page, removed the stale CI-policy wording, and updated documentation contracts.
@@ -14,7 +14,7 @@
 ## 2026-08-30 — TUI and repository-picker hardening
 
 - `scope`: Textual and terminal control surfaces, shared selection picker, and local repository discovery/cache; no server protocol or provider behavior changes.
-- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Documents/ChatGPT/Harness`; base `main` was synchronized to the verified remote before editing.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Projects/AgentSwitchboard`; base `main` was synchronized to the verified remote before editing.
 - `status`: committed as `2daf572`, pushed to `harness/codex/tui-hardening`, and opened as [PR #200](https://github.com/tverma101/AgentSwitchboard/pull/200) against `main`; it is not merged.
 - `changed`: serialized page/filter/poll state, recoverable action errors, defensive payload normalization, bounded shutdown/input/rendering, authenticated-owner repository discovery, canonical deduplication, durable selection recency, cache failure reporting, model editor reconciliation, and settings snapshot rebinding; added `docs/troubleshooting/tui-hardening.md`.
 - `validation`: focused TUI/repository suite passed 135 tests; `./scripts/ci.sh` passed with 3791 tests passed, 4 skipped, and 173 deselected; suppression scan, Ruff format/lint, `ty`, and `git diff --check` passed.
@@ -25,7 +25,7 @@
 ## 2026-08-30 — registered provider visibility in Models
 
 - `scope`: Models-tab provider filters and the loopback Admin model payload; no provider credentials, discovery cache contents, or upstream transport behavior changed.
-- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Documents/ChatGPT/Harness`; follow-up branch `codex/tui-hardening` and PR #200.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Projects/AgentSwitchboard`; follow-up branch `codex/tui-hardening` and PR #200.
 - `status`: committed as `50d3c0c` and ready to push as a follow-up to PR #200; no merge or protected-branch mutation performed.
 - `changed`: added a sanitized provider-status inventory to `/admin/api/models`, merged configured/usable providers with discovered model providers in both Models renderers, made empty states provider-specific and refreshable, and added API/TUI regressions plus release/documentation updates.
 - `validation`: focused provider/model tests passed; `./scripts/ci.sh` passed with 3793 passed, 4 skipped, and 173 deselected; suppression scan, Ruff, `ty`, and `git diff --check` passed.
@@ -36,7 +36,7 @@
 ## 2026-08-30 — FCC usage attribution labels
 
 - `scope`: FCC metadata-only usage ledger, account attribution, Admin usage view, and terminal usage surfaces; native Codex account snapshots remain separate.
-- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Documents/ChatGPT/Harness`; follow-up branch `codex/tui-hardening` and PR #200.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Projects/AgentSwitchboard`; follow-up branch `codex/tui-hardening` and PR #200.
 - `status`: implemented and locally validated; no merge or protected-branch mutation performed.
 - `changed`: persisted `fcc_proxy` source and privacy-preserving per-account fingerprints, separated model totals by source/account/wire API, added legacy schema migration, and clarified Admin/TUI labels and usage documentation.
 - `validation`: 30 focused regressions passed; `./scripts/ci.sh` passed with 3798 passed, 4 skipped, and 173 deselected; suppression scan, Ruff format/lint, `ty`, and `git diff --check` passed.

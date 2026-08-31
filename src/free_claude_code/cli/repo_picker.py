@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlsplit
 
+from free_claude_code.core.branding import PRODUCT_NAME
+
 from .selection import SelectionItem, choose_item
 from .selection import fuzzy_match as match_items
 
@@ -565,7 +567,7 @@ def choose_repo(
             )
             for repo in repos
         ],
-        title="Harness repositories",
+        title=f"{PRODUCT_NAME} repositories",
         initial_query=initial_query,
         default_item_id=selected_path,
         footer="type filter · ↑↓ move · enter launch · esc cancel · * default",

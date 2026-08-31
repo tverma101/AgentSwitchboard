@@ -8,6 +8,7 @@ from pathlib import Path
 from free_claude_code.cli.server_startup import (
     server_port_is_occupied as _server_port_is_occupied,
 )
+from free_claude_code.core.branding import PRODUCT_NAME
 from free_claude_code.core.process_identity import set_process_identity
 from free_claude_code.core.version import package_version
 from free_claude_code.learning.config import (
@@ -112,9 +113,9 @@ def _parse_server_options(args: Sequence[str]) -> bool | None:
         raise SystemExit(2)
     if "--help" in args or "-h" in args:
         print(
-            "Start the local CodeSwitchyard proxy.\n\n"
+            f"Start the local {PRODUCT_NAME} proxy.\n\n"
             f"Usage: {_SERVER_USAGE}\n\n"
-            "Interactive terminals open the CodeSwitchyard Textual control center.\n"
+            f"Interactive terminals open the {PRODUCT_NAME} Textual control center.\n"
             "--headless keeps the blocking server-only behavior.\n"
             "--terminal and --no-browser remain explicit no-op compatibility flags.\n"
             "Authentication browsers open only after an explicit login action."

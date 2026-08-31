@@ -7,6 +7,7 @@ from pathlib import Path
 
 from free_claude_code.cli.commands import ServerSupervisor
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.branding import PRODUCT_NAME
 
 from .control_tui import _format_launch_failure
 from .model_picker_tui import run_control_tui
@@ -26,9 +27,9 @@ def run_owned_control_center(
 
     supervisor = ServerSupervisor(console_logging=False)
     if not supervisor.schedule_run():
-        raise RuntimeError("CodeSwitchyard server worker could not be scheduled")
+        raise RuntimeError(f"{PRODUCT_NAME} server worker could not be scheduled")
     server_thread = threading.Thread(
-        target=supervisor.run, name="codeswitchyard-tui-server"
+        target=supervisor.run, name=f"{PRODUCT_NAME.casefold()}-tui-server"
     )
     server_thread.start()
     startup_error: str | None = None
@@ -36,7 +37,7 @@ def run_owned_control_center(
         error = _wait_for_proxy(settings, server_thread)
         if error is not None:
             print(
-                f"CodeSwitchyard server failed to become ready: {error}",
+                f"{PRODUCT_NAME} server failed to become ready: {error}",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -58,7 +59,7 @@ def run_owned_control_center(
         server_thread.join(TUI_SHUTDOWN_TIMEOUT_SECONDS)
         if server_thread.is_alive() is True:
             print(
-                "CodeSwitchyard server worker did not stop within "
+                f"{PRODUCT_NAME} server worker did not stop within "
                 f"{TUI_SHUTDOWN_TIMEOUT_SECONDS:g}s.",
                 file=sys.stderr,
             )

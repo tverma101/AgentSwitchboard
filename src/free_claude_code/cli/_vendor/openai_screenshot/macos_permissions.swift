@@ -1,5 +1,5 @@
 // Adapted from OpenAI's Codex screenshot skill (Apache-2.0).
-// Harness keeps only the Screen Recording preflight/request boundary.
+// AgentSwitchboard keeps only the Screen Recording preflight/request boundary.
 
 import CoreGraphics
 import Foundation

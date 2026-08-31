@@ -433,7 +433,7 @@ class TuiuiControlCenterApp(ControlCenterApp):
         yield Header(show_clock=True)
         with Horizontal(id="shell"):
             with Vertical(id="sidebar"):
-                yield Static("CodeSwitchyard", id="sidebar-title")
+                yield Static(self.TITLE, id="sidebar-title")
                 yield OptionList(
                     *(Option(label, id=page) for page, label in self.NAV),
                     id="nav",
@@ -700,7 +700,7 @@ class TuiuiControlCenterApp(ControlCenterApp):
         )
         if is_default and enabled:
             hint.update(
-                "Disable is allowed: CodeSwitchyard will hand default status to "
+                f"Disable is allowed: {self.TITLE} will hand default status to "
                 "another model automatically."
             )
         elif enabled:

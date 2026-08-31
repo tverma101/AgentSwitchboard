@@ -57,7 +57,7 @@ class NativeComputerUseContract:
 def read_native_computer_use_skill(
     paths: CodexComputerUsePaths,
 ) -> NativeComputerUseSkill:
-    """Read the official bundled skill without copying it into Harness."""
+    """Read the official bundled skill without copying it into AgentSwitchboard."""
 
     plugin_root = managed_plugin_root(paths)
     if plugin_root is None:

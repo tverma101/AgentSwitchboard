@@ -1,4 +1,4 @@
-"""Behavior tests for the Harlequin-derived CodeSwitchyard control center.
+"""Behavior tests for the Harlequin-derived AgentSwitchboard control center.
 
 The ``App.run_test()`` / Pilot pattern is adapted from Harlequin's functional
 TUI tests at commit fcfaa6c524a6cd47e17701d931eac0243c8c85b6.
@@ -17,6 +17,7 @@ from free_claude_code.cli.repo_picker import RepoEntry
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.branding import PRODUCT_NAME
 
 
 def _settings() -> Settings:
@@ -59,6 +60,8 @@ async def test_control_tui_mounts_persistent_navigation_shell() -> None:
             await pilot.pause()
             nav = app.query_one("#nav", OptionList)
             assert nav.option_count >= 10
+            assert app.TITLE == PRODUCT_NAME
+            assert str(app.query_one("#sidebar-title", Static).content) == PRODUCT_NAME
             assert app.query_one("#main-panel")
             assert app.query_one("#actions")
             assert app.query_one("#launch-claude")
@@ -283,10 +286,10 @@ async def test_repo_refresh_replaces_actions_without_duplicate_widget_ids() -> N
 async def test_repositories_page_uses_live_local_inventory() -> None:
     app = ControlCenterApp(_settings(), supervisor=None)
     repo = RepoEntry(
-        "Harness",
-        "/Users/tejas/Documents/ChatGPT/Harness",
+        PRODUCT_NAME,
+        str(Path(__file__).resolve().parents[2]),
         "main",
-        "tverma101/AgentSwitchBoard",
+        "tverma101/AgentSwitchboard",
     )
     with (
         patch(
@@ -316,8 +319,8 @@ async def test_repositories_page_uses_live_local_inventory() -> None:
             table = app.query_one("#table", DataTable)
             assert table.row_count == 1
             assert table.get_row(repo.path) == [
-                "tverma101/AgentSwitchBoard",
-                "● Harness",
+                "tverma101/AgentSwitchboard",
+                f"● {PRODUCT_NAME}",
                 "main",
                 repo.display_path,
             ]
@@ -330,10 +333,10 @@ async def test_repositories_page_uses_live_local_inventory() -> None:
 @pytest.mark.asyncio
 async def test_repositories_page_uses_fresh_cache_without_scanning() -> None:
     repo = RepoEntry(
-        "Harness",
-        "/Users/tejas/Documents/ChatGPT/Harness",
+        PRODUCT_NAME,
+        str(Path(__file__).resolve().parents[2]),
         "main",
-        "tverma101/AgentSwitchBoard",
+        "tverma101/AgentSwitchboard",
     )
     app = ControlCenterApp(_settings(), supervisor=None)
     with (

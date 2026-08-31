@@ -10,6 +10,7 @@ import pytest
 
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.branding import PRODUCT_NAME
 
 
 def _settings(*, port: int = 8082) -> Settings:
@@ -136,6 +137,7 @@ def test_home_redraw_uses_passed_settings_without_admin_io(
         terminal_control._print_home(settings, supervisor=None)
 
     output = capsys.readouterr().out
+    assert f"{PRODUCT_NAME} (FCC)" in output
     assert f"Model     {settings.model}" in output
 
 
@@ -439,7 +441,7 @@ def test_policy_status_print_is_metadata_only(
 
 
 def test_selected_profile_and_repo_are_forwarded_without_mutating_server_state(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from free_claude_code.cli import terminal_control
     from free_claude_code.learning.config import PROFILE_ENV
@@ -451,14 +453,13 @@ def test_selected_profile_and_repo_are_forwarded_without_mutating_server_state(
         "acme/selected",
     )
     launch = MagicMock()
-    with patch.dict("os.environ", {}, clear=False):
-        os.environ.pop(PROFILE_ENV, None)
-        terminal_control._launch_selected(
-            launch,
-            danger=True,
-            profile="coding",
-            repo=repo,
-        )
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
+    terminal_control._launch_selected(
+        launch,
+        danger=True,
+        profile="coding",
+        repo=repo,
+    )
 
     launch.assert_called_once_with(
         True,

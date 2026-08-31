@@ -22,6 +22,7 @@ from free_claude_code.cli.repo_picker import (
     load_cached_repos,
     save_cached_repos,
 )
+from free_claude_code.core.branding import PRODUCT_NAME
 
 
 def _init_repo(path: Path, *remotes: tuple[str, str]) -> None:
@@ -249,20 +250,46 @@ def test_fuzzy_match_prefers_tighter_match_and_recent_when_empty(
     tmp_path: Path,
 ) -> None:
     repos = [
-        RepoEntry("Harness", str(tmp_path / "Harness"), "main", "acme/Harness", 1.0),
         RepoEntry(
-            "HugeHarnessThing", str(tmp_path / "other"), "main", "acme/other", 2.0
+            PRODUCT_NAME,
+            str(tmp_path / PRODUCT_NAME),
+            "main",
+            f"acme/{PRODUCT_NAME}",
+            1.0,
+        ),
+        RepoEntry(
+            "LongerAgentSwitchboardClone",
+            str(tmp_path / "other"),
+            "main",
+            "acme/other",
+            2.0,
         ),
     ]
 
-    assert fuzzy_match(repos, "harn")[0].name == "Harness"
-    assert fuzzy_match(repos, "")[0].name == "HugeHarnessThing"
+    assert fuzzy_match(repos, "switch")[0].name == PRODUCT_NAME
+    assert fuzzy_match(repos, "")[0].name == "LongerAgentSwitchboardClone"
+
+
+def test_picker_title_uses_canonical_product_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = RepoEntry(PRODUCT_NAME, str(tmp_path), "main", "acme/repo")
+    captured: dict[str, object] = {}
+
+    def choose(_items: object, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(item_id=repo.path)
+
+    monkeypatch.setattr(repo_picker, "choose_item", choose)
+
+    assert choose_repo([repo]) == repo
+    assert captured["title"] == f"{PRODUCT_NAME} repositories"
 
 
 def test_non_tty_filter_with_no_match_returns_none(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    repos = [RepoEntry("Harness", str(tmp_path), "main", "acme/Harness")]
+    repos = [RepoEntry(PRODUCT_NAME, str(tmp_path), "main", f"acme/{PRODUCT_NAME}")]
     non_tty = SimpleNamespace(isatty=lambda: False)
     monkeypatch.setattr(repo_picker.sys, "stdin", non_tty)
     monkeypatch.setattr(repo_picker.sys, "stdout", non_tty)

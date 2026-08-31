@@ -179,7 +179,7 @@ def validate_live_auto_compact_receipt(
         and "harness_commit_sha_at_capture" not in unverified_boundaries
     ):
         raise AutoCompactReceiptError(
-            "missing explicit unverified boundary for the absent Harness commit SHA"
+            "missing explicit unverified boundary for the absent AgentSwitchboard commit SHA"
         )
 
     return {

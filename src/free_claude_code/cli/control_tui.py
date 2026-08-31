@@ -1,8 +1,8 @@
-"""Textual control center backed by CodeSwitchyard's existing admin/actions.
+"""Textual control center backed by AgentSwitchboard's existing admin/actions.
 
 UI shell/layout/focus/modal patterns are adapted from Harlequin at
 fcfaa6c524a6cd47e17701d931eac0243c8c85b6 (MIT, Ted Conbeer).
-See THIRD_PARTY_NOTICES.md. The CodeSwitchyard-specific code in this module is
+See THIRD_PARTY_NOTICES.md. The AgentSwitchboard-specific code in this module is
 limited to feeding existing local actions/state into that shell.
 """
 
@@ -66,6 +66,7 @@ from free_claude_code.config.model_catalog import (
 from free_claude_code.config.paths import server_log_path
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG, ProviderAuthKind
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.branding import PRODUCT_NAME
 from free_claude_code.core.diagnostics import format_user_error_preview
 from free_claude_code.learning.config import (
     LearningProfileError,
@@ -132,7 +133,7 @@ def _clip_tui_line(value: str, *, limit: int = 2_000) -> str:
 
 
 class ConfirmModal(ModalScreen[bool]):
-    """Harlequin confirm-modal interaction, adapted for CodeSwitchyard."""
+    """Harlequin confirm-modal interaction, adapted for AgentSwitchboard."""
 
     def __init__(self, prompt: str) -> None:
         super().__init__()
@@ -518,7 +519,7 @@ def _model_catalog_effective_models(
 class ControlCenterApp(HarlequinAppBase):
     """Persistent GUI-like terminal shell over the existing control actions."""
 
-    TITLE = "CodeSwitchyard"
+    TITLE = PRODUCT_NAME
     SUB_TITLE = "Control Center"
     MODEL_FILTER_DEBOUNCE_SECONDS = 0.08
 
@@ -826,7 +827,7 @@ class ControlCenterApp(HarlequinAppBase):
         yield Header(show_clock=True)
         with Horizontal(id="shell"):
             with Vertical(id="sidebar"):
-                yield Static("CodeSwitchyard", id="sidebar-title")
+                yield Static(self.TITLE, id="sidebar-title")
                 yield OptionList(
                     *(Option(label, id=page) for page, label in self.NAV),
                     id="nav",
