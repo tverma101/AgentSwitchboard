@@ -1,18 +1,19 @@
-from free_claude_code.config.model_labels import model_display_name, model_display_names
+from free_claude_code.config.model_labels import (
+    model_display_name,
+    model_display_names,
+)
 
 
 def test_model_display_name_preserves_nested_vendor_slug() -> None:
-    assert (
-        model_display_name("nvidia_nim/z-ai/glm-5.2")
-        == "NVIDIA NIM · GLM 5.2 [z-ai/glm-5.2]"
-    )
+    actual = model_display_name("nvidia_nim/z-ai/glm-5.2")
+    expected = "NVIDIA NIM · GLM 5.2 [z-ai/glm-5.2]"
+    assert actual == expected
 
 
 def test_model_display_name_strips_only_claude_code_display_wrapper() -> None:
-    assert (
-        model_display_name("anthropic/opencode_go/deepseek-v4-flash")
-        == "OpenCode Go · DeepSeek V4 Flash"
-    )
+    actual = model_display_name("anthropic/opencode_go/deepseek-v4-flash")
+    expected = "OpenCode Go · DeepSeek V4 Flash"
+    assert actual == expected
 
 
 def test_nested_models_with_same_leaf_never_collapse_to_same_name() -> None:
@@ -37,8 +38,7 @@ def test_batch_labels_disambiguate_wrapper_collisions() -> None:
     }
 
     labels = model_display_names(refs)
+    direct = labels["open_router/openai/gpt-model"]
+    wrapped = labels["anthropic/open_router/openai/gpt-model"]
 
-    assert len(set(labels.values())) == 2
-    assert labels["open_router/openai/gpt-model"] != labels[
-        "anthropic/open_router/openai/gpt-model"
-    ]
+    assert direct != wrapped

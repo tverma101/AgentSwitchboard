@@ -51,16 +51,26 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
     """
     )
 
-    async def _after_page_render(self, page: str, *, focus_target: str | None) -> None:
+    async def _after_page_render(
+        self,
+        page: str,
+        *,
+        focus_target: str | None,
+    ) -> None:
         await super()._after_page_render(page, focus_target=focus_target)
         models_page = page == "models"
         # The model browser is a workspace, not a dashboard card. Give it the
-        # whole terminal instead of leaving a 22-column navigation rail and a
-        # summary banner around the information the user is trying to read.
+        # whole terminal instead of leaving navigation and summary chrome around
+        # the information the user is trying to read.
         self.query_one("#sidebar").display = not models_page
         self.query_one("#summary").display = not models_page
 
-    async def _render_models(self, table: DataTable, *, refresh: bool = False) -> None:
+    async def _render_models(
+        self,
+        table: DataTable,
+        *,
+        refresh: bool = False,
+    ) -> None:
         await super()._render_models(table, refresh=refresh)
         self._apply_readable_model_identity()
 
@@ -69,7 +79,7 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
         self._apply_readable_model_identity()
 
     def _apply_readable_model_identity(self) -> None:
-        """Render friendly text and exact route identity as separate information."""
+        """Render friendly text and exact route identity separately."""
         for row in self.query(ModelListButton):
             model_ref = row.model_ref
             friendly = self._model_labels.get(model_ref, model_ref)
@@ -85,9 +95,8 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
         if not model_ref:
             return
         friendly = self._model_labels.get(model_ref, model_ref)
-        self.query_one("#model-inspector-title", Static).update(
-            f"{friendly}\n{model_ref}"
-        )
+        title = f"{friendly}\n{model_ref}"
+        self.query_one("#model-inspector-title", Static).update(title)
 
 
 def run_control_tui(
@@ -98,7 +107,6 @@ def run_control_tui(
     startup_error: str | None = None,
 ) -> None:
     """Run the readability-first model control center."""
-
     selected_repo: RepoEntry | None = None
     server_profile = configured_profile()
     next_profile = server_profile

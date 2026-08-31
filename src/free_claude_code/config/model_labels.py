@@ -20,8 +20,8 @@ def model_display_name(model_ref: str) -> str:
     """Return a readable label while preserving exact route identity.
 
     Aggregating providers commonly return nested ids such as
-    ``openai/gpt-model``.  The old labeler threw the namespace away and could
-    render several distinct routes as the same ``GPT Model`` row.  Keep the
+    ``openai/gpt-model``. The old labeler threw the namespace away and could
+    render several distinct routes as the same ``GPT Model`` row. Keep the
     pretty leaf, but surface the nested provider/model suffix whenever dropping
     it would hide routing identity.
     """
