@@ -145,6 +145,7 @@ class OpenAICodexProvider(BaseProvider):
 
         tool_names = OpenAIToolNameCodec.from_request(request)
         body = self._build_body(request, reasoning=reasoning)
+        cache_session_id = body.get("prompt_cache_key")
         return self._run_stream(
             body,
             input_tokens=input_tokens,
@@ -152,6 +153,11 @@ class OpenAICodexProvider(BaseProvider):
             response_model=response_model or request.model,
             tool_names=tool_names,
             reasoning=reasoning,
+            session_id=(
+                cache_session_id
+                if isinstance(cache_session_id, str) and cache_session_id
+                else None
+            ),
         )
 
     def _build_body(
@@ -185,11 +191,12 @@ class OpenAICodexProvider(BaseProvider):
         response_model: str,
         tool_names: OpenAIToolNameCodec,
         reasoning: ReasoningPolicy,
+        session_id: str | None,
     ) -> AsyncIterator[str]:
         retry_session = self._admission.new_retry_session(request_id=request_id)
         recovery = RecoveryController()
         message_id = f"msg_{uuid.uuid4()}"
-        session_id = str(uuid.uuid4())
+        session_id = session_id or str(uuid.uuid4())
         authentication_recovered = False
         prompt_cache_breakpoint_fallback_used = False
         trace_event(
@@ -232,6 +239,7 @@ class OpenAICodexProvider(BaseProvider):
                             **self._client_headers,
                             **_auth_headers(access),
                             "Accept": "text/event-stream",
+                            "session-id": session_id,
                             "session_id": session_id,
                         },
                     ),

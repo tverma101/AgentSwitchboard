@@ -27,9 +27,10 @@ from .egress import (
     WebFetchEgressViolation,
     get_validated_stream_addrinfos_for_egress,
 )
-from .parsers import HTMLTextParser
+from .parsers import HTMLTextParser, SearchResultParser
 
 _FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search"
+_DUCKDUCKGO_SEARCH_URL = "https://lite.duckduckgo.com/lite/"
 
 
 def _safe_public_host_for_logs(url: str) -> str:
@@ -62,6 +63,19 @@ def _log_web_tool_failure(
         )
     else:
         logger.warning("web_tool_failure tool={} exc_type={}", tool_name, exc_type)
+
+
+def _log_search_backend_failure(backend: str, error: BaseException) -> None:
+    """Log enough to diagnose a free-search backend without leaking response bodies."""
+    status_code = (
+        error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+    )
+    logger.warning(
+        "web_search_backend_failure backend={} exc_type={} status_code={}",
+        backend,
+        type(error).__name__,
+        status_code,
+    )
 
 
 def _web_tool_client_error_summary(
@@ -253,8 +267,8 @@ def _firecrawl_search_results(payload: dict[str, object]) -> list[dict[str, str]
     return normalized
 
 
-async def _run_web_search(query: str) -> list[dict[str, str]]:
-    """Run one anonymous Firecrawl Keyless search against the fixed hosted endpoint."""
+async def _run_firecrawl_search(query: str) -> list[dict[str, str]]:
+    """Run one anonymous Firecrawl Keyless search against the hosted endpoint."""
     headers = {**_WEB_TOOL_HTTP_HEADERS, "Content-Type": "application/json"}
     async with (
         httpx.AsyncClient(
@@ -282,6 +296,44 @@ async def _run_web_search(query: str) -> list[dict[str, str]]:
     if payload.get("success") is False:
         raise RuntimeError("Firecrawl Search reported an unsuccessful response")
     return _firecrawl_search_results(payload)
+
+
+async def _run_duckduckgo_search(query: str) -> list[dict[str, str]]:
+    """Use the previous keyless DuckDuckGo Lite backend as a bounded fallback."""
+    async with (
+        httpx.AsyncClient(
+            timeout=_REQUEST_TIMEOUT_S,
+            follow_redirects=True,
+            headers=_WEB_TOOL_HTTP_HEADERS,
+        ) as client,
+        client.stream(
+            "GET",
+            _DUCKDUCKGO_SEARCH_URL,
+            params={"q": query},
+        ) as response,
+    ):
+        response.raise_for_status()
+        body_bytes = await _read_response_body_capped(
+            response, constants._MAX_WEB_FETCH_RESPONSE_BYTES
+        )
+    text = body_bytes.decode("utf-8", errors="replace")
+    parser = SearchResultParser()
+    parser.feed(text)
+    return parser.results[:_MAX_SEARCH_RESULTS]
+
+
+async def _run_web_search(query: str) -> list[dict[str, str]]:
+    """Prefer Firecrawl Keyless and fall back to the previous free search backend."""
+    try:
+        return await _run_firecrawl_search(query)
+    except Exception as error:
+        _log_search_backend_failure("firecrawl", error)
+
+    try:
+        return await _run_duckduckgo_search(query)
+    except Exception as error:
+        _log_search_backend_failure("duckduckgo", error)
+        raise
 
 
 async def _run_web_fetch(url: str, egress: WebFetchEgressPolicy) -> dict[str, str]:
