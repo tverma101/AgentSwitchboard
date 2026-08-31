@@ -243,6 +243,12 @@ class Settings(BaseSettings):
         validation_alias="FCC_PAID_FALLBACK",
     )
 
+    # ==================== Claude context window ====================
+    claude_context_tokens: int = Field(
+        default=256_000,
+        validation_alias="FCC_CLAUDE_CONTEXT_TOKENS",
+    )
+
     # ==================== Context-pressure governor ====================
     context_governor_enabled: bool = Field(
         default=True, validation_alias="FCC_CONTEXT_GOVERNOR_ENABLED"
@@ -503,6 +509,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "FCC_COMPUTER_USE_APPROVAL must be one of "
                 f"{sorted(_COMPUTER_USE_APPROVAL_MODES)}, got {value!r}"
+            )
+        return value
+
+    @field_validator("claude_context_tokens")
+    @classmethod
+    def validate_claude_context_tokens(cls, value: int) -> int:
+        if not 32_000 <= value <= 1_000_000:
+            raise ValueError(
+                "FCC_CLAUDE_CONTEXT_TOKENS must be between 32000 and 1000000"
             )
         return value
 
