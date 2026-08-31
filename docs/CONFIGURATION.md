@@ -213,11 +213,13 @@ request cannot silently start or replace a login.
 
 - `FCC_CLAUDE_CONTEXT_TOKENS` defaults to `256000` and accepts `32000` through
   `1000000`.
-- `fcc-claude` sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` by default so Claude
-  Code compacts before the bounded window is exhausted. An explicit value is
-  preserved. FCC removes inherited `DISABLE_COMPACT` and
-  `DISABLE_AUTO_COMPACT`, and does not disable Claude Code's unknown-model
-  compaction safety path.
+- `fcc-claude` sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to FCC's bounded context window (`256000`
+  by default). FCC does not inject a default `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`;
+  Claude Code owns its internal compaction reserve and trigger inside that
+  window. An explicit user-supplied percentage override is preserved. FCC
+  removes inherited `DISABLE_COMPACT` and `DISABLE_AUTO_COMPACT`, and does not
+  disable Claude Code's unknown-model compaction safety path.
 - `fcc-claude` supplies Claude Code's `MAX_MCP_OUTPUT_TOKENS=12000` by
   default, unless that public Claude setting is already present in the
   environment. An explicit value is preserved so a user-owned MCP server can
@@ -375,9 +377,9 @@ connection; mutating calls are never replayed after an uncertain result.
 Registration is idempotent, migrates FCC-owned raw-bridge/direct-launcher
 entries, and refuses to overwrite a different user or project entry. The
 native host remains lazy and starts only when Claude calls a Computer Use tool;
-launch setup does not capture the screen. If setup fails, the launch is
-blocked with the reason and exact config/project locations instead of returning
-an unexplained status code.
+launch setup does not capture the screen. If setup fails, the launch is blocked
+with the reason and exact config/project locations instead of returning an
+unexplained status code.
 
 Provider fault-attribution receipts also record `duration_ms` and
 `time_to_first_token_ms` when a provider stream is attempted. The first is the
