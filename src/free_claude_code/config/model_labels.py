@@ -17,13 +17,12 @@ _KNOWN_LABELS = {
 
 
 def model_display_name(model_ref: str) -> str:
-    """Return a readable label while preserving exact route identity.
+    """Return a readable label while preserving ``model_ref`` for routing.
 
-    Aggregating providers commonly return nested ids such as
-    ``openai/gpt-model``. The old labeler threw the namespace away and could
-    render several distinct routes as the same ``GPT Model`` row. Keep the
-    pretty leaf, but surface the nested provider/model suffix whenever dropping
-    it would hide routing identity.
+    Friendly labels intentionally omit nested routing namespaces. Callers that
+    render several models together must use :func:`model_display_names`, which
+    disambiguates collisions with the literal routable identity. This keeps the
+    primary name readable without ever allowing two visible routes to collapse.
     """
     display_ref = model_ref.removeprefix("anthropic/")
     provider_id, separator, model_id = display_ref.partition("/")
@@ -31,10 +30,7 @@ def model_display_name(model_ref: str) -> str:
         return _pretty_model_id(model_ref)
     provider = PROVIDER_CATALOG.get(provider_id)
     provider_label = provider.display_name if provider is not None else provider_id
-    friendly = f"{provider_label} · {_pretty_model_id(model_id)}"
-    if "/" in model_id:
-        return f"{friendly} [{model_id}]"
-    return friendly
+    return f"{provider_label} · {_pretty_model_id(model_id)}"
 
 
 def disambiguate_model_labels(labels: dict[str, str]) -> dict[str, str]:
