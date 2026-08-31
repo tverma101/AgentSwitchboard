@@ -43,3 +43,14 @@
 - `evidence`: implemented and locally targeted-tested; installed/live behavior, external account identity, GitHub Actions, and user visual confirmation remain separate evidence states.
 - `residual_gap`: pre-migration events remain account-unidentified because historical account identity is not reconstructed.
 - `next_action`: push this verified follow-up to PR #200 if publication is authorized; review/merge remains a separate maintainer action.
+
+## 2026-08-31 — repair FCC install and update Claude Code
+
+- `scope`: local `fcc-server` installation provenance and global Claude Code client; no provider credentials, source behavior, GitHub, or Actions changes.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Projects/AgentSwitchboard`; existing `main` work and untracked `.project-memory/` preserved.
+- `status`: refreshed the editable uv tool from the canonical checkout and updated `@anthropic-ai/claude-code` globally to the user-requested latest package.
+- `changed`: installed FCC `4.62.8` from `file:///Users/tejas/Projects/AgentSwitchboard`, replacing stale provenance to the deleted Harness path; Claude Code now resolves to `2.1.251`.
+- `validation`: `fcc-server --version`, direct `free_claude_code.cli` import, package provenance, `claude --version`, npm package metadata, and FCC `/health` plus `/admin/api/status` passed. The bounded server probe was shut down cleanly.
+- `evidence`: FCC install and Claude package are installed/current and server startup was live-verified; Claude `2.1.251` remains outside the source firewall's known-good `2.1.228` checkpoint, so latest-client FCC compatibility is not certified.
+- `residual_gap`: `FCC_CLAUDE_ALLOW_UNCERTIFIED=0` remains in the documented default; enabling a canary or changing the certified checkpoint requires an explicit compatibility decision.
+- `next_action`: use the repaired `fcc-server`; if routing the latest Claude client through FCC is desired, explicitly authorize an uncertified canary or complete the compatibility matrix first.
