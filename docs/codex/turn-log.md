@@ -32,3 +32,14 @@
 - `evidence`: implemented and locally tested; installed/live macOS behavior, provider network refresh, GitHub Actions, and user visual confirmation remain separate evidence states.
 - `residual_gap`: a configured provider with no model-list result still requires an explicit `Refresh` and a healthy upstream endpoint; this is now visible and actionable instead of being omitted.
 - `next_action`: push the verified topic branch and let PR #200 run the normal protected-branch review/check workflow.
+
+## 2026-08-30 — FCC usage attribution labels
+
+- `scope`: FCC metadata-only usage ledger, account attribution, Admin usage view, and terminal usage surfaces; native Codex account snapshots remain separate.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Documents/ChatGPT/Harness`; follow-up branch `codex/tui-hardening` and PR #200.
+- `status`: implemented and locally validated; no merge or protected-branch mutation performed.
+- `changed`: persisted `fcc_proxy` source and privacy-preserving per-account fingerprints, separated model totals by source/account/wire API, added legacy schema migration, and clarified Admin/TUI labels and usage documentation.
+- `validation`: 30 focused regressions passed; `./scripts/ci.sh` passed with 3798 passed, 4 skipped, and 173 deselected; suppression scan, Ruff format/lint, `ty`, and `git diff --check` passed.
+- `evidence`: implemented and locally targeted-tested; installed/live behavior, external account identity, GitHub Actions, and user visual confirmation remain separate evidence states.
+- `residual_gap`: pre-migration events remain account-unidentified because historical account identity is not reconstructed.
+- `next_action`: push this verified follow-up to PR #200 if publication is authorized; review/merge remains a separate maintainer action.

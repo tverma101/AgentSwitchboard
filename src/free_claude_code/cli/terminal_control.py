@@ -1764,7 +1764,12 @@ def _run_usage_menu(settings: Settings) -> None:
         print("By model:")
         for row in models[:20]:
             if isinstance(row, Mapping):
-                print("  " + ", ".join(f"{key}={value}" for key, value in row.items()))
+                label = row.get("tracking_label") or row.get("model") or "unknown"
+                print(
+                    f"  {label}: requests={row.get('requests', 0)}, "
+                    f"input={row.get('input_tokens', 0)}, "
+                    f"output={row.get('output_tokens', 0)}"
+                )
 
 
 def _run_diagnostics_menu(settings: Settings) -> None:

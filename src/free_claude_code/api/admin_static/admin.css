@@ -89,6 +89,19 @@
   font-size: 13px;
 }
 
+.usage-tracking {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.usage-tracking strong {
+  color: var(--text-strong);
+}
+
 .usage-range {
   display: flex;
   flex-wrap: wrap;
@@ -192,6 +205,11 @@
 
 .usage-table th:first-child,
 .usage-table td:first-child {
+  text-align: left;
+}
+
+.usage-table th:nth-child(2),
+.usage-table td:nth-child(2) {
   text-align: left;
 }
 

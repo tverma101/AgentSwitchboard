@@ -41,6 +41,7 @@ from free_claude_code.learning.reviewer_scars import (
     ScarRegistry,
     ScarState,
 )
+from free_claude_code.usage import tracking_summary
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -455,6 +456,7 @@ async def usage(
             "daily": [],
             "models": [],
             "model_labels": {},
+            "tracking": tracking_summary(),
         }
     summary = services.usage.summary(days)
     summary["model_labels"] = model_display_names(

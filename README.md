@@ -37,7 +37,7 @@ terminal-browser presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.62.6`; examples below describe this checkout, not every feature proposed in
+`4.62.7`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -358,14 +358,20 @@ installer, integration, live, and interactive tests; those tiers are explicit.
 
 FCC's local usage ledger records requests, input/output
 tokens, cache reads, daily activity, failures, and model breakdowns over the
-last 7, 30, or 90 days. FCC records the final Anthropic-compatible usage event
-in <code>~/.fcc/usage.db</code>; prompt and response content is never stored.
+last 7, 30, or 90 days. FCC records the final provider usage event in
+<code>~/.fcc/usage.db</code>; prompt and response content is never stored.
+Each event is labeled as an <code>FCC proxy</code> event and keeps its exact
+provider, model, wire API, and—when FCC's connected account provides one—a
+privacy-preserving per-account fingerprint. Native Codex account usage remains
+separate, so the same routed request is not presented as a native Codex event.
 The graph starts recording after this version is installed, so older requests
 are not retroactively reconstructed.
 
 Model labels are cosmetic: the exact provider model id remains the value sent to
-the router, and custom model ids remain supported. Use the generated local
-catalog at `~/.fcc/codex-model-catalog.json` when a client needs discovery.
+the router, and custom model ids remain supported. Usage breakdown rows also
+show the ingress wire API and FCC account label so Messages and Responses usage
+cannot be mistaken for one another. Use the generated local catalog at
+`~/.fcc/codex-model-catalog.json` when a client needs discovery.
 
 ## Choose a provider
 

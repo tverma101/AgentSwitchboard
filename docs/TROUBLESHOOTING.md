@@ -93,6 +93,16 @@ and inspect the terminal/server receipt. A provider HTTP error or usage limit is
 not evidence that FCC silently switched providers. Do not enable a fallback
 route unless it is explicitly configured and its provider boundary is understood.
 
+## Usage labels look like native Codex usage
+
+FCC's usage page labels its ledger as `FCC proxy` and shows the ingress API and
+account fingerprint for each model row. Native Codex Tool Account usage is a
+separate snapshot and is not folded into FCC's proxy ledger. An older usage
+database may show `Account not identified` for historical rows; FCC does not
+guess an account after the fact. See
+[usage attribution](troubleshooting/usage-attribution.md) for the schema and
+privacy boundary.
+
 ## Inspect installed versions
 
 ```bash

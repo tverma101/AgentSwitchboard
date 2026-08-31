@@ -79,7 +79,14 @@ def build_asgi_app(
         requests=provider_manager,
         admin=runtime,
         tasks=runtime,
-        usage=UsageStore(usage_db_path()),
+        usage=UsageStore(
+            usage_db_path(),
+            account_fingerprint_resolver=lambda provider_id: (
+                openai_auth.usage_account_fingerprint()
+                if provider_id == openai_auth.provider_id
+                else None
+            ),
+        ),
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

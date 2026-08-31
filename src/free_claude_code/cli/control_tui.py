@@ -1732,12 +1732,26 @@ class ControlCenterApp(HarlequinAppBase):
         result = await asyncio.to_thread(get_usage, self.settings, days=30)
         if not isinstance(result, Mapping):
             raise TypeError("usage returned an invalid response")
-        self.query_one("#summary", Static).update("Local metadata-only usage · 30 days")
+        tracking = result.get("tracking")
+        source_label = (
+            tracking.get("source_label") if isinstance(tracking, Mapping) else None
+        )
+        self.query_one("#summary", Static).update(
+            f"{source_label or 'FCC proxy'} · metadata-only usage · 30 days"
+        )
         table.add_columns("Metric", "Value")
         totals = result.get("totals")
         if isinstance(totals, Mapping):
             for key, value in totals.items():
                 table.add_row(str(key), str(value))
+        models = result.get("models")
+        if isinstance(models, list) and models:
+            table.add_row("", "")
+            table.add_row("Breakdown", "Source · API · account")
+            for row in models[:20]:
+                if isinstance(row, Mapping):
+                    label = row.get("tracking_label") or row.get("model") or "unknown"
+                    table.add_row(str(label), f"{row.get('requests', 0)} requests")
         await self._add_action("refresh", "Refresh")
 
     async def _render_diagnose(self, content: VerticalScroll) -> None:

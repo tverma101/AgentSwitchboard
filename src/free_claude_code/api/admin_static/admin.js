@@ -1508,6 +1508,20 @@ function renderUsage(summary) {
     stats.appendChild(card);
   });
 
+  const tracking = byId("usageTracking");
+  tracking.textContent = "";
+  const trackingInfo = summary.tracking || {};
+  const trackingLabel = document.createElement("strong");
+  trackingLabel.textContent = trackingInfo.source_label || "FCC proxy";
+  const trackingDetails = document.createElement("span");
+  trackingDetails.textContent = [
+    trackingInfo.account_labeling,
+    trackingInfo.native_codex_usage,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  tracking.append(trackingLabel, trackingDetails);
+
   const chart = byId("usageChart");
   chart.innerHTML = "";
   const days = summary.daily || [];
@@ -1548,7 +1562,7 @@ function renderUsage(summary) {
   }
   const table = document.createElement("table");
   table.className = "usage-table";
-  table.innerHTML = "<thead><tr><th>Model</th><th>Requests</th><th>Failed</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead>";
+  table.innerHTML = "<thead><tr><th>Model</th><th>Tracking</th><th>Requests</th><th>Failed</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead>";
   const body = document.createElement("tbody");
   rows.forEach((row) => {
     const tr = document.createElement("tr");
@@ -1559,8 +1573,11 @@ function renderUsage(summary) {
     const id = document.createElement("small");
     id.textContent = row.model;
     modelCell.append(label, id);
+    const trackingCell = document.createElement("td");
+    trackingCell.textContent = row.tracking_label || "FCC proxy · account not identified";
     tr.append(
       modelCell,
+      trackingCell,
       usageCell(row.requests),
       usageCell(row.failed_requests),
       usageCell(formatTokens(row.input_tokens)),

@@ -394,7 +394,7 @@ results. See [terminal diagnostics](DIAGNOSTICS.md).
 | --- | --- |
 | `~/.fcc/.env` | Managed provider and server configuration |
 | `~/.fcc/logs/server.log` | FCC server log |
-| `~/.fcc/usage.db` | Metadata-only usage ledger |
+| `~/.fcc/usage.db` | Metadata-only FCC proxy usage ledger with provider/model, wire-API, source, and privacy-preserving account labels |
 | `~/.fcc/codex-model-catalog.json` | Generated client-visible model catalog |
 | `~/.fcc/learning/` | Local memory, skill, and bounded learning queue state |
 | `~/.claude/CLAUDE.md` | Optional managed context-discipline block |
