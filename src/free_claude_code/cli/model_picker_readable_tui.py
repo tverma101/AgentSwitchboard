@@ -21,12 +21,11 @@ from .repo_picker import RepoEntry
 def _compact_exact_ref(model_ref: str, *, limit: int = 62) -> str:
     """Keep both the routing prefix and variant-bearing tail visible."""
 
-    exact = model_ref.removeprefix("anthropic/")
-    if len(exact) <= limit:
-        return exact
+    if len(model_ref) <= limit:
+        return model_ref
     left = max(12, limit // 3)
     right = max(18, limit - left - 1)
-    return f"{exact[:left]}…{exact[-right:]}"
+    return f"{model_ref[:left]}…{model_ref[-right:]}"
 
 
 def _readable_row_label(row: ModelListButton) -> str:
@@ -43,8 +42,7 @@ def _readable_inspector_title(friendly: str, model_ref: str) -> str:
     """Never let a friendly label hide the exact routable model."""
 
     friendly = " ".join(friendly.split()) or model_ref
-    exact = model_ref.removeprefix("anthropic/")
-    return f"{friendly}\n{exact}"
+    return f"{friendly}\n{model_ref}"
 
 
 class ReadableModelControlCenterApp(TuiuiControlCenterApp):
@@ -74,7 +72,7 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
 
     #model-inspector-title {
         min-height: 3;
-        padding-bottom: 1;
+        padding: 0 0 1 0;
         color: $text;
         text-style: bold;
     }
