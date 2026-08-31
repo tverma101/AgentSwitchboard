@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$RepoArchiveUrl = "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+$RepoArchiveUrl = "https://github.com/tverma101/AgentSwitchboard/archive/refs/heads/main.zip"
 # Windows on ARM emulates x64, whose Python package ecosystem has broader wheel support.
 $PythonRequest = "cpython-3.14.0-windows-x86_64-none"
 $MinUvVersion = "0.11.16"
@@ -32,7 +32,7 @@ $script:InstallPi = $true
 $script:PiAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
 $FccCommands = @(
-    # Include retired entry points so updates reject older FCC processes before replacement.
+    # Stop-only cleanup for the retired unsafe alias keeps updates safe for old installs.
     "fcc-desktop",
     "fcc-server",
     "fcc-claude",
@@ -286,7 +286,7 @@ function Invoke-DownloadedPowerShellInstaller {
     if ($DryRun) {
         Write-Host "+ irm $Url -OutFile <temporary-script>"
         $prefix = if ($NonInteractive) { "CODEX_NON_INTERACTIVE=1 " } else { "" }
-        Write-Host "+ ${prefix}powershell -NoProfile -ExecutionPolicy Bypass -File <temporary-script>"
+        Write-Host "+ ${prefix}powershell -NoProfile -ExecutionPolicy RemoteSigned -File <temporary-script>"
         return
     }
 
@@ -320,7 +320,7 @@ function Invoke-DownloadedPowerShellInstaller {
             Invoke-NativeCommand -FilePath $powerShellPath -Arguments @(
                 "-NoProfile",
                 "-ExecutionPolicy",
-                "Bypass",
+                "RemoteSigned",
                 "-File",
                 $temporaryScript
             )
@@ -800,7 +800,7 @@ function Configure-AndConfirmFreeClaudeCode {
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
-        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fccdanger, fcc-codex, and fcc-pi in the uv tool bin directory"
+        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, and fcc-pi in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
         Export-FccDesktopIcon `
             -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
@@ -827,7 +827,7 @@ function Configure-AndConfirmFreeClaudeCode {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fccdanger", "fcc-codex", "fcc-pi")) {
+    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -960,7 +960,6 @@ else {
     Write-Host "For terminal use, start the proxy with: fcc-server"
     if ($script:InstallClaudeCode) {
         Write-Host "Run Claude Code with: fcc-claude"
-        Write-Host "Run Claude Code in personal terminal mode with: fccdanger"
     }
     if ($script:InstallCodex) {
         Write-Host "Run Codex with: fcc-codex"

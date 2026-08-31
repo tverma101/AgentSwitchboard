@@ -12,7 +12,7 @@ from .control_tui import _format_launch_failure
 from .model_picker_tui import run_control_tui
 from .terminal_control import _wait_for_proxy
 
-ControlClientLauncher = Callable[[bool, Sequence[str], Path | None], None]
+ControlClientLauncher = Callable[[Sequence[str], Path | None], None]
 TUI_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
@@ -42,7 +42,7 @@ def run_owned_control_center(
             raise SystemExit(1)
         if initial_argv is not None:
             try:
-                launch_client(False, initial_argv, None)
+                launch_client(initial_argv, None)
             except SystemExit as exc:
                 startup_error = _format_launch_failure(exc)
             except Exception as exc:

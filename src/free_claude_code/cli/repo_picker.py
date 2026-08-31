@@ -1,4 +1,4 @@
-"""Terminal repository inventory and picker for launching ``fccdanger`` locally."""
+"""Terminal repository inventory and picker for launching ``fcc-claude`` locally."""
 
 import argparse
 import json
@@ -598,12 +598,12 @@ def mark_repo_used(repos: Iterable[RepoEntry], selected: RepoEntry) -> list[Repo
 
 
 def launch_repo(repo: RepoEntry) -> NoReturn:
-    """Replace the picker with canonical ``fccdanger`` in the selected cwd."""
+    """Replace the picker with canonical ``fcc-claude`` in the selected cwd."""
 
     previous = Path.cwd()
     os.chdir(repo.path)
     try:
-        os.execvp("fccdanger", ["fccdanger"])
+        os.execvp("fcc-claude", ["fcc-claude"])
     finally:
         # ``execvp`` normally never returns, but restoring the parent process
         # cwd keeps tests, embedders, and a mocked launcher safe.
@@ -613,7 +613,7 @@ def launch_repo(repo: RepoEntry) -> NoReturn:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Pick a local Git repository and launch fccdanger"
+        description="Pick a local Git repository and launch fcc-claude"
     )
     parser.add_argument("query", nargs="?", default="", help="initial fuzzy filter")
     parser.add_argument(

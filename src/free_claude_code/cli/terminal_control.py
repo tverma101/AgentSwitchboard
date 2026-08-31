@@ -92,7 +92,6 @@ class ControlClientLauncher(Protocol):
 
     def __call__(
         self,
-        danger: bool,
         argv: Sequence[str],
         cwd: Path | None = None,
     ) -> None: ...
@@ -135,7 +134,7 @@ def run_owned_control_center(
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
         if initial_argv is not None:
-            _call_launcher(launch_client, False, initial_argv)
+            _call_launcher(launch_client, initial_argv)
         run_control_menu(
             settings,
             supervisor=supervisor,
@@ -197,14 +196,6 @@ def run_control_menu(
         if choice in {"", "c", "claude"}:
             _launch_selected(
                 launch_client,
-                danger=False,
-                profile=next_profile,
-                repo=selected_repo,
-            )
-        elif choice in {"d", "danger"}:
-            _launch_selected(
-                launch_client,
-                danger=True,
                 profile=next_profile,
                 repo=selected_repo,
             )
@@ -295,7 +286,7 @@ def _print_home(
     print(f"Codex Tools  {codex_account}")
     print(f"Context   {context_cap_tokens(os.environ):,} tokens")
     print()
-    print("[Enter/C] Claude   [D] Danger   [A] Accounts [O] Repos")
+    print("[Enter/C] Claude   [A] Accounts [O] Repos")
     print("[F] Profiles       [P] Providers [M] Models   [U] Usage")
     print("[V] Reviewers      [N] Diagnose  [Y] Policy")
     print("[X] Codex tools    [S] Settings [L] Logs")
@@ -345,7 +336,6 @@ def _string_values(value: object) -> tuple[str, ...]:
 def _launch_selected(
     launch_client: ControlClientLauncher,
     *,
-    danger: bool,
     profile: str,
     repo: RepoEntry | None,
 ) -> None:
@@ -357,9 +347,9 @@ def _launch_selected(
     previous_profile = os.environ.get(PROFILE_ENV)
     try:
         if repo is None:
-            _call_launcher(launch_client, danger, argv)
+            _call_launcher(launch_client, argv)
         else:
-            _call_launcher(launch_client, danger, argv, Path(repo.path))
+            _call_launcher(launch_client, argv, Path(repo.path))
     finally:
         if previous_profile is None:
             os.environ.pop(PROFILE_ENV, None)
@@ -369,7 +359,6 @@ def _launch_selected(
 
 def _call_launcher(
     launch_client: ControlClientLauncher,
-    danger: bool,
     argv: Sequence[str],
     cwd: Path | None = None,
 ) -> bool:
@@ -377,9 +366,9 @@ def _call_launcher(
 
     try:
         if cwd is None:
-            launch_client(danger, argv)
+            launch_client(argv)
         else:
-            launch_client(danger, argv, cwd)
+            launch_client(argv, cwd)
     except SystemExit as exc:
         if exc.code not in {None, 0}:
             print(f"Claude launch failed: exit status {exc.code}.", file=sys.stderr)

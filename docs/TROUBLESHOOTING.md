@@ -3,7 +3,7 @@
 Use the terminal evidence first. AgentSwitchboard does not open a browser as
 part of server or launcher startup.
 
-## `fccdanger` says the proxy is not reachable
+## `fcc-claude` says the proxy is not reachable
 
 Start the server in another terminal and keep it running:
 
@@ -11,7 +11,7 @@ Start the server in another terminal and keep it running:
 fcc-server
 ```
 
-Then retry `fccdanger`. A healthy startup reports the configured local port and
+Then retry `fcc-claude`. A healthy startup reports the configured local port and
 the terminal-only control endpoint. If the port is already occupied, inspect
 the existing process instead of starting a second server:
 
@@ -108,7 +108,7 @@ privacy boundary.
 ```bash
 fcc-server --version
 fcc-claude --version
-command -v fcc-server fccdanger fcc-claude
+command -v fcc-server fcc-claude
 ```
 
 If an old executable is selected, refresh the editable uv tool installation and

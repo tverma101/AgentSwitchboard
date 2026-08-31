@@ -44,6 +44,7 @@ class TestSettings:
         monkeypatch.delenv("VERTEX_LOCATION", raising=False)
         monkeypatch.delenv("HTTP_READ_TIMEOUT", raising=False)
         monkeypatch.delenv("HTTP_CONNECT_TIMEOUT", raising=False)
+        monkeypatch.delenv("FCC_COMPUTER_USE_APPROVAL", raising=False)
         monkeypatch.setitem(Settings.model_config, "env_file", ())
         settings = Settings()
         assert settings.model == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -64,6 +65,21 @@ class TestSettings:
         assert settings.model_metadata_catalog_enabled is True
         assert settings.model_metadata_catalog_ttl_hours == 24.0
         assert settings.subagent_model_inherit is True
+        assert settings.host == "127.0.0.1"
+        assert settings.computer_use_approval == "decline"
+
+    def test_non_loopback_host_requires_proxy_auth(self, monkeypatch):
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.delenv("HOST", raising=False)
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        with pytest.raises(ValueError, match=r"ANTHROPIC_AUTH_TOKEN.*HOST"):
+            Settings(host="0.0.0.0")
+
+        settings = Settings(host="0.0.0.0", ANTHROPIC_AUTH_TOKEN="local-token")
+        assert settings.host == "0.0.0.0"
 
     def test_default_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
         """Unset CLAUDE_WORKSPACE stores agent data under the fixed path helper."""

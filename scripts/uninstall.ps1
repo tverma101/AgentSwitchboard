@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 $PackageName = "free-claude-code"
 $FccHomeDirname = ".fcc"
 $FccCommands = @(
-    # Include retired entry points so older installations are fully stopped and removed.
+    # Stop-only cleanup for the retired unsafe alias keeps removal safe for old installs.
     "fcc-desktop",
     "fcc-server",
     "fcc-claude",

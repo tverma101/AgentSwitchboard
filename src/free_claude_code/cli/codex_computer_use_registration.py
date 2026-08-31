@@ -2,19 +2,14 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
 from pathlib import Path
 from typing import TypedDict
 
 MCP_SERVER_NAME = "fcc-codex-computer-use"
 MCP_SERVER_MODULE = "free_claude_code.cli.codex_computer_use_mcp"
-MCP_SERVER_BRIDGE_RELATIVE_PATH = Path(
-    "_vendor/claude_codex_computer_use/computer-use-mcp-bridge.mjs"
-)
 MCP_COMMAND_TIMEOUT_SECONDS = 20.0
 
 
@@ -49,36 +44,6 @@ def legacy_local_mcp_spec(
     return local_mcp_spec(python_executable=python_executable or sys.executable)
 
 
-def bridge_mcp_spec(
-    *,
-    node_executable: str | Path | None = None,
-    bridge_path: str | Path | None = None,
-) -> _LocalMcpSpec:
-    """Return the retired raw-client bridge identity for safe migration only."""
-
-    node = os.fspath(node_executable) if node_executable is not None else None
-    if node is None:
-        node = shutil.which("node")
-    if node is None:
-        raise ClaudeMcpRegistrationError(
-            "FCC Computer Use migration requires Node.js to identify the retired bridge"
-        )
-    bridge = (
-        Path(__file__).resolve().parent / MCP_SERVER_BRIDGE_RELATIVE_PATH
-        if bridge_path is None
-        else Path(bridge_path).expanduser()
-    )
-    if not bridge.is_file():
-        raise ClaudeMcpRegistrationError(
-            f"retired FCC Computer Use bridge is missing: {bridge}"
-        )
-    return {
-        "type": "stdio",
-        "command": _absolute_path_without_resolving(node),
-        "args": [_absolute_path_without_resolving(bridge)],
-    }
-
-
 def native_mcp_spec(launcher: str | Path) -> _LocalMcpSpec:
     """Return a direct native launcher spec kept for migration diagnostics.
 
@@ -98,8 +63,6 @@ def ensure_claude_local_computer_use_mcp(
     claude_binary: str,
     cwd: str | Path,
     base_env: Mapping[str, str] | None = None,
-    node_executable: str | Path | None = None,
-    bridge_path: str | Path | None = None,
     python_executable: str | Path | None = None,
     native_launcher: str | Path | None = None,
     legacy_native_launcher: str | Path | None = None,
@@ -107,21 +70,14 @@ def ensure_claude_local_computer_use_mcp(
     """Ensure Claude uses FCC's app-server-backed Computer Use MCP.
 
     The Python MCP server owns the Claude-facing boundary and delegates native
-    actions through Codex app-server. Node/bridge and native-launcher arguments
-    are accepted only as old FCC-owned registration identities for migration.
+    actions through Codex app-server. Native-launcher arguments are accepted
+    only as old FCC-owned registration identities for migration.
     """
 
     expected = local_mcp_spec(
         python_executable=python_executable or sys.executable,
     )
     legacy_candidates: list[_LocalMcpSpec] = []
-    with suppress(ClaudeMcpRegistrationError):
-        legacy_candidates.append(
-            bridge_mcp_spec(
-                node_executable=node_executable,
-                bridge_path=bridge_path,
-            )
-        )
     if python_executable is not None:
         legacy_candidates.append(
             legacy_local_mcp_spec(python_executable=python_executable)
@@ -196,8 +152,6 @@ def remove_claude_local_computer_use_mcp(
     claude_binary: str,
     cwd: str | Path,
     base_env: Mapping[str, str] | None = None,
-    node_executable: str | Path | None = None,
-    bridge_path: str | Path | None = None,
     python_executable: str | Path | None = None,
     native_launcher: str | Path | None = None,
     legacy_native_launcher: str | Path | None = None,
@@ -208,13 +162,6 @@ def remove_claude_local_computer_use_mcp(
         python_executable=python_executable or sys.executable,
     )
     legacy_candidates: list[_LocalMcpSpec] = []
-    with suppress(ClaudeMcpRegistrationError):
-        legacy_candidates.append(
-            bridge_mcp_spec(
-                node_executable=node_executable,
-                bridge_path=bridge_path,
-            )
-        )
     if python_executable is not None:
         legacy_candidates.append(
             legacy_local_mcp_spec(python_executable=python_executable)
@@ -484,11 +431,9 @@ def _safe_subprocess_detail(result: subprocess.CompletedProcess[str]) -> str:
 
 
 __all__ = [
-    "MCP_SERVER_BRIDGE_RELATIVE_PATH",
     "MCP_SERVER_MODULE",
     "MCP_SERVER_NAME",
     "ClaudeMcpRegistrationError",
-    "bridge_mcp_spec",
     "ensure_claude_local_computer_use_mcp",
     "legacy_local_mcp_spec",
     "local_mcp_spec",

@@ -145,7 +145,6 @@ def build_managed_claude_command(
             prompt,
             "--output-format",
             "stream-json",
-            "--dangerously-skip-permissions",
             "--verbose",
         ]
     else:
@@ -157,7 +156,6 @@ def build_managed_claude_command(
             prompt,
             "--output-format",
             "stream-json",
-            "--dangerously-skip-permissions",
             "--verbose",
         ]
 

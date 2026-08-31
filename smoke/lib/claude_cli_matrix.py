@@ -406,7 +406,7 @@ def _build_attached_claude_command(
 def _native_attach_binary(claude_bin: str) -> str:
     """Use Claude's native command parser for ``attach`` subcommands."""
 
-    if Path(claude_bin).name in {"fccdanger", "fcc-claude"}:
+    if Path(claude_bin).name == "fcc-claude":
         return shutil.which("claude") or claude_bin
     return claude_bin
 
@@ -508,8 +508,7 @@ def _build_claude_cli_command(
         cmd.extend(
             [
                 "--permission-mode",
-                "bypassPermissions",
-                "--dangerously-skip-permissions",
+                "default",
                 "--model",
                 "sonnet",
             ]
@@ -522,8 +521,7 @@ def _build_claude_cli_command(
                 "--include-partial-messages",
                 "--verbose",
                 "--permission-mode",
-                "bypassPermissions",
-                "--dangerously-skip-permissions",
+                "default",
                 "--model",
                 "sonnet",
             ]
@@ -1257,7 +1255,6 @@ def _subagent_task(
                     "inside it."
                 ),
                 "tools": ["Read"],
-                "permissionMode": "bypassPermissions",
                 "background": False,
             }
         }

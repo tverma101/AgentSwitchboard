@@ -291,7 +291,7 @@ def test_non_tty_picker_prefers_selected_default_when_it_matches(
     assert selected.path == str(second.resolve())
 
 
-def test_launch_repo_execs_canonical_fccdanger_with_selected_cwd(
+def test_launch_repo_execs_canonical_fcc_claude_with_selected_cwd(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     repo_path = tmp_path / "repo with spaces"
@@ -311,7 +311,7 @@ def test_launch_repo_execs_canonical_fccdanger_with_selected_cwd(
     finally:
         os.chdir(previous)
 
-    assert calls == [("fccdanger", ["fccdanger"], str(repo_path))]
+    assert calls == [("fcc-claude", ["fcc-claude"], str(repo_path))]
 
 
 def test_explicit_root_bypasses_unrelated_cache_without_overwriting_it(

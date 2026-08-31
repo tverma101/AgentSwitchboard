@@ -196,7 +196,7 @@ exit 1
     contents = app / "Contents"
     contents.mkdir(parents=True)
     (contents / ".free-claude-code-owner").write_text(
-        "io.github.alishahryar1.free-claude-code\n",
+        "io.github.tverma101.agentswitchboard\n",
         encoding="utf-8",
     )
     desktop = home / "Desktop"

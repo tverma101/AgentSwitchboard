@@ -92,7 +92,6 @@ def test_cli_scripts_are_registered() -> None:
         "fcc": "free_claude_code.cli.entrypoints:main",
         "fcc-server": "free_claude_code.cli.entrypoints:serve",
         "fcc-claude": "free_claude_code.cli.launchers.claude:launch",
-        "fccdanger": "free_claude_code.cli.launchers.claude:launch_danger",
         "fcc-codex": "free_claude_code.cli.launchers.codex:launch",
         "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
         "fcc-learning": "free_claude_code.learning.cli:main",
@@ -577,19 +576,6 @@ def test_launch_claude_refuses_settings_env_routing_override(
     popen.assert_not_called()
 
 
-def test_launch_danger_adds_skip_permissions_once() -> None:
-    from free_claude_code.cli.launchers import claude
-
-    with patch.object(claude, "launch") as launch:
-        claude.launch_danger(("--model", "sonnet"))
-        claude.launch_danger(("--dangerously-skip-permissions", "--model", "sonnet"))
-
-    assert [entry.args[0] for entry in launch.call_args_list] == [
-        ["--dangerously-skip-permissions", "--model", "sonnet"],
-        ["--dangerously-skip-permissions", "--model", "sonnet"],
-    ]
-
-
 def test_fcc_claude_help_does_not_start_proxy_or_control_center() -> None:
     from free_claude_code.cli.launchers import claude
 
@@ -609,6 +595,24 @@ def test_fcc_claude_help_does_not_start_proxy_or_control_center() -> None:
         "--help",
     ]
     preflight.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ("--dangerously-skip-permissions",),
+        ("--permission-mode", "bypassPermissions"),
+        ("--permission-mode=bypassPermissions",),
+        ("--dangerously-skip-permissions=true",),
+    ),
+)
+def test_fcc_claude_rejects_permission_bypass_arguments(
+    argv: tuple[str, ...],
+) -> None:
+    from free_claude_code.cli.launchers import claude
+
+    with pytest.raises(claude.ClientLaunchError, match="permission-bypass"):
+        claude.launch(argv, raise_for_control=True)
 
 
 def test_launch_claude_allows_unrelated_settings_env_keys(
@@ -816,8 +820,6 @@ def test_prepare_computer_use_session_uses_active_profile_and_registers_mcp(
         claude_binary="claude",
         cwd=project_dir.resolve(),
         base_env=environment,
-        node_executable=None,
-        bridge_path=None,
         python_executable=sys.executable,
         native_launcher=old_profile_launcher,
         legacy_native_launcher=bundled_launcher,
@@ -1228,8 +1230,8 @@ def test_launch_pi_fails_closed_when_bundled_extension_is_missing(
 def test_pi_install_hints_use_official_platform_installers() -> None:
     from free_claude_code.cli.launchers.pi import pi_install_hint
 
-    assert "https://pi.dev/install.ps1" in pi_install_hint("win32")
-    assert "https://pi.dev/install.sh" in pi_install_hint("darwin")
+    assert "https://pi.dev/" in pi_install_hint("win32")
+    assert "https://pi.dev/" in pi_install_hint("darwin")
 
 
 @pytest.mark.parametrize(
@@ -1280,7 +1282,7 @@ def test_launch_pi_rejects_unrelated_pi_binary(
     popen.assert_not_called()
     captured = capsys.readouterr()
     assert "not a compatible Pi Coding Agent" in captured.err
-    assert "https://pi.dev/install." in captured.err
+    assert "official instructions at https://pi.dev/" in captured.err
 
 
 def test_launch_claude_keyboard_interrupt_kills_child_tree() -> None:

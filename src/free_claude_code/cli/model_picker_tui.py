@@ -440,7 +440,6 @@ class TuiuiControlCenterApp(ControlCenterApp):
                 )
                 with Horizontal(id="launch-row"):
                     yield Button("Claude", id="launch-claude", variant="primary")
-                    yield Button("Danger", id="launch-danger", variant="error")
             with Vertical(id="main-panel"):
                 with Horizontal(id="window-titlebar"):
                     yield Static("●  ●  ●", id="window-controls")
@@ -856,7 +855,7 @@ def run_control_tui(
     settings: Settings,
     *,
     supervisor: ServerSupervisor | None,
-    launch_client: Callable[[bool, Sequence[str], Path | None], None],
+    launch_client: Callable[[Sequence[str], Path | None], None],
     startup_error: str | None = None,
 ) -> None:
     """Run the tuiui-inspired desktop control center."""
@@ -886,7 +885,6 @@ def run_control_tui(
                 argv = ("--profile", next_profile)
             try:
                 launch_client(
-                    result.danger,
                     argv,
                     Path(selected_repo.path) if selected_repo is not None else None,
                 )
