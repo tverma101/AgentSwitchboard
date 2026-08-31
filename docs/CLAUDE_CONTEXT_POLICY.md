@@ -13,10 +13,10 @@ much larger native window.
 
 This keeps session behavior consistent across gateway models and prevents 1M-advertised models from silently pushing Claude Code into very long, degraded sessions.
 
-FCC also sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` by default. Claude Code
-therefore starts compaction with approximately 25% of the bounded window left
-for the compaction turn and its continuation. An explicit value in the launch
-environment is preserved. FCC removes inherited `DISABLE_COMPACT` and
+FCC does not inject a default `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`. Claude Code
+owns its native token reserve and auto-compaction trigger inside the explicit
+256,000-token window. An explicit percentage override already present in the
+launch environment is preserved. FCC removes inherited `DISABLE_COMPACT` and
 `DISABLE_AUTO_COMPACT` so a stale shell setting cannot disable this safety
 boundary.
 
