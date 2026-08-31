@@ -1,9 +1,11 @@
 """Provider-owned stream holdback and recovery decisions."""
 
+import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 import httpx
 import openai
@@ -70,6 +72,21 @@ class RecoveryHoldbackBuffer:
             return self.flush()
         return []
 
+    def restart_deadline(self) -> None:
+        """Start the real holdback clock from an accepted upstream stream."""
+
+        if self.committed or not self._events:
+            return
+        self._started_at = self._now()
+
+    def remaining_holdback_seconds(self) -> float | None:
+        """Return wall-clock time left before buffered output must be committed."""
+
+        if self.committed or self._started_at is None:
+            return None
+        elapsed = self._now() - self._started_at
+        return max(0.0, self._holdback_seconds - elapsed)
+
     def flush(self) -> list[str]:
         if self.committed:
             return []
@@ -93,8 +110,24 @@ class RecoveryHoldbackBuffer:
 class RecoveryController:
     """Own commit-boundary holdback for one provider stream lifecycle."""
 
-    def __init__(self) -> None:
-        self._holdback = RecoveryHoldbackBuffer()
+    def __init__(
+        self,
+        *,
+        holdback_seconds: float = EARLY_HOLDBACK_SECONDS,
+        max_bytes: int = RECOVERY_BUFFER_MAX_BYTES,
+        now: Callable[[], float] | None = None,
+    ) -> None:
+        self._holdback_seconds = holdback_seconds
+        self._max_bytes = max_bytes
+        self._now = now
+        self._holdback = self._new_holdback()
+
+    def _new_holdback(self) -> RecoveryHoldbackBuffer:
+        return RecoveryHoldbackBuffer(
+            holdback_seconds=self._holdback_seconds,
+            max_bytes=self._max_bytes,
+            now=self._now,
+        )
 
     @property
     def committed(self) -> bool:
@@ -106,6 +139,27 @@ class RecoveryController:
 
     def push(self, event: str) -> list[str]:
         return self._holdback.push(event)
+
+    def restart_holdback_deadline(self) -> None:
+        """Restart the holdback clock after upstream accepted the streaming request."""
+
+        self._holdback.restart_deadline()
+
+    async def event_arrived_before_holdback_deadline(
+        self,
+        task: asyncio.Task[Any],
+    ) -> bool:
+        """Wait only until the commit deadline without cancelling ``task``.
+
+        Returning ``False`` means the caller must flush the buffered Anthropic
+        frames before it continues waiting on the same upstream read task.
+        """
+
+        remaining = self._holdback.remaining_holdback_seconds()
+        if remaining is None or task.done():
+            return True
+        done, _pending = await asyncio.wait({task}, timeout=remaining)
+        return bool(done)
 
     def flush(self) -> list[str]:
         return self._holdback.flush()
@@ -147,7 +201,7 @@ class RecoveryController:
             and not reserve_last_attempt_for_recovery
         ):
             self._holdback.discard()
-            self._holdback = RecoveryHoldbackBuffer()
+            self._holdback = self._new_holdback()
             return RecoveryDecision(
                 action=RecoveryFailureAction.EARLY_RETRY,
                 retryable=True,

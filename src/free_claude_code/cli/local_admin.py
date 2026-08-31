@@ -13,6 +13,9 @@ from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings
 
 ADMIN_REQUEST_TIMEOUT_SECONDS = 5.0
+_MODEL_SELECTION_KEYS = frozenset(
+    {"MODEL", "MODEL_CATALOG_MODE", "MODEL_CATALOG_ALLOWLIST"}
+)
 
 
 class LocalAdminError(RuntimeError):
@@ -172,11 +175,58 @@ def apply_admin_values(
     )
     if validation.get("valid") is not True:
         return validation | {"applied": False}
-    return _request_json(
+    result = _request_json(
         settings,
         "/admin/api/config/apply",
         method="POST",
         payload=payload,
+    )
+    if result.get("applied") is True and _MODEL_SELECTION_KEYS.intersection(values):
+        _verify_model_selection_round_trip(settings, values)
+    return result
+
+
+def _verify_model_selection_round_trip(
+    settings: Settings,
+    requested: Mapping[str, Any],
+) -> None:
+    """Fail closed when the model picker did not persist what it reported saving."""
+
+    config = get_admin_config(settings)
+    fields = config.get("fields")
+    if not isinstance(fields, list):
+        raise LocalAdminError("Admin config could not verify saved model settings")
+    persisted = {
+        field.get("key"): field.get("value")
+        for field in fields
+        if isinstance(field, dict) and isinstance(field.get("key"), str)
+    }
+    for key in _MODEL_SELECTION_KEYS.intersection(requested):
+        expected = requested[key]
+        actual = persisted.get(key)
+        if key == "MODEL_CATALOG_ALLOWLIST":
+            matches = _normalized_model_allowlist(actual) == _normalized_model_allowlist(
+                expected
+            )
+        else:
+            matches = str(actual).strip() == str(expected).strip()
+        if not matches:
+            raise LocalAdminError(
+                "Saved model settings did not match the server's persisted config"
+            )
+
+
+def _normalized_model_allowlist(value: Any) -> tuple[str, ...]:
+    """Normalize allowlist formatting while preserving exact model references."""
+
+    if not isinstance(value, str):
+        return ()
+    entries = value.replace("\r", "\n").replace("\n", ",").split(",")
+    return tuple(
+        sorted(
+            {entry.strip() for entry in entries if entry.strip()},
+            key=str.casefold,
+        )
     )
 
 
