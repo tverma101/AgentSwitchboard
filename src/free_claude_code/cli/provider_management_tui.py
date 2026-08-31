@@ -131,17 +131,23 @@ class CustomProviderModal(ModalScreen[dict[str, Any] | None]):
             )
             with Horizontal(id="custom-provider-buttons"):
                 yield Button("Cancel", id="custom-provider-cancel")
-                yield Button("Save & test", variant="primary", id="custom-provider-save")
+                yield Button(
+                    "Save & test", variant="primary", id="custom-provider-save"
+                )
 
     @on(Button.Pressed, "#custom-provider-save")
     def save(self) -> None:
         values: dict[str, Any] = {
-            "display_name": self.query_one("#custom-provider-name", Input).value.strip(),
+            "display_name": self.query_one(
+                "#custom-provider-name", Input
+            ).value.strip(),
             "base_url": self.query_one("#custom-provider-url", Input).value.strip(),
             "local": self.query_one("#custom-provider-local", Select).value == "local",
             "models": [
                 value.strip()
-                for value in self.query_one("#custom-provider-models", Input).value.split(",")
+                for value in self.query_one(
+                    "#custom-provider-models", Input
+                ).value.split(",")
                 if value.strip()
             ],
             "enabled": (
@@ -340,7 +346,9 @@ class ProviderManagementControlCenterApp(TuiuiControlCenterApp):
             raw_id = values.get("id")
             provider_id = raw_id if isinstance(raw_id, str) else None
         if not provider_id:
-            self.notify("Provider saved, but its ID was not returned.", severity="warning")
+            self.notify(
+                "Provider saved, but its ID was not returned.", severity="warning"
+            )
             await self._show_page("providers", force=True)
             return
 
@@ -357,7 +365,9 @@ class ProviderManagementControlCenterApp(TuiuiControlCenterApp):
                 remove_custom_provider, self.settings, provider_id
             )
         except LocalAdminError as exc:
-            self.notify(str(exc), title="Custom provider removal failed", severity="error")
+            self.notify(
+                str(exc), title="Custom provider removal failed", severity="error"
+            )
             return
         except Exception as exc:
             self._notify_action_error("Custom provider removal failed", exc)
@@ -435,7 +445,9 @@ class ProviderManagementControlCenterApp(TuiuiControlCenterApp):
             if attempt:
                 await asyncio.sleep(0.25)
             try:
-                result = await asyncio.to_thread(test_provider, self.settings, provider_id)
+                result = await asyncio.to_thread(
+                    test_provider, self.settings, provider_id
+                )
             except LocalAdminError:
                 continue
             if not isinstance(result, Mapping):
@@ -444,7 +456,10 @@ class ProviderManagementControlCenterApp(TuiuiControlCenterApp):
             if result.get("ok") is True:
                 return result
             error_type = str(result.get("error_type", ""))
-            if error_type not in {"UnknownProviderError", "ApplicationUnavailableError"}:
+            if error_type not in {
+                "UnknownProviderError",
+                "ApplicationUnavailableError",
+            }:
                 return result
         return latest
 
@@ -491,7 +506,9 @@ def _provider_test_error_message(error_type: str) -> str:
     if "authentication" in normalized or "permissiondenied" in normalized:
         return "authentication rejected; check the API key and account access."
     if "notfound" in normalized:
-        return "model-list endpoint was not found; check the base URL (/v1 compatibility)."
+        return (
+            "model-list endpoint was not found; check the base URL (/v1 compatibility)."
+        )
     if "timeout" in normalized:
         return "provider timed out while listing models."
     if "connection" in normalized or "connecterror" in normalized:
