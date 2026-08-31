@@ -1,6 +1,6 @@
 """Regression tests for first-class provider onboarding in the active TUI."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -46,13 +46,12 @@ def test_provider_test_errors_are_actionable() -> None:
 
 def test_failed_provider_test_is_never_reported_as_ok() -> None:
     app = ProviderManagementControlCenterApp(_settings(), supervisor=None)
-    notify = Mock()
-    app.notify = notify  # type: ignore[method-assign]
 
-    app._notify_provider_test(
-        "deepseek",
-        {"ok": False, "error_type": "AuthenticationError"},
-    )
+    with patch.object(app, "notify") as notify:
+        app._notify_provider_test(
+            "deepseek",
+            {"ok": False, "error_type": "AuthenticationError"},
+        )
 
     assert notify.call_count == 1
     message = notify.call_args.args[0]
@@ -62,13 +61,12 @@ def test_failed_provider_test_is_never_reported_as_ok() -> None:
 
 def test_successful_provider_test_reports_discovered_models() -> None:
     app = ProviderManagementControlCenterApp(_settings(), supervisor=None)
-    notify = Mock()
-    app.notify = notify  # type: ignore[method-assign]
 
-    app._notify_provider_test(
-        "deepseek",
-        {"ok": True, "models": ["deepseek-chat", "deepseek-reasoner"]},
-    )
+    with patch.object(app, "notify") as notify:
+        app._notify_provider_test(
+            "deepseek",
+            {"ok": True, "models": ["deepseek-chat", "deepseek-reasoner"]},
+        )
 
     message = notify.call_args.args[0]
     assert "connected" in message
@@ -109,11 +107,12 @@ async def test_custom_provider_gets_real_crud_controls_in_active_tui() -> None:
 @pytest.mark.asyncio
 async def test_builtin_provider_save_immediately_tests_discovery() -> None:
     app = ProviderManagementControlCenterApp(_settings(), supervisor=None)
-    app.notify = Mock()  # type: ignore[method-assign]
-    app._show_provider_detail = AsyncMock()  # type: ignore[method-assign]
-    app._refresh_settings_snapshot = Mock()  # type: ignore[method-assign]
+    show_detail = AsyncMock()
 
     with (
+        patch.object(app, "notify") as notify,
+        patch.object(app, "_show_provider_detail", new=show_detail),
+        patch.object(app, "_refresh_settings_snapshot"),
         patch(
             "free_claude_code.cli.provider_management_tui.apply_admin_values",
             return_value={"applied": True},
@@ -126,10 +125,10 @@ async def test_builtin_provider_save_immediately_tests_discovery() -> None:
         await app._apply_field("deepseek", "DEEPSEEK_API_KEY", "secret")
 
     provider_test.assert_called_once()
-    message = app.notify.call_args.args[0]
+    message = notify.call_args.args[0]
     assert "Saved DEEPSEEK_API_KEY" in message
     assert "1 models discovered" in message
-    app._show_provider_detail.assert_awaited_once_with("deepseek")
+    show_detail.assert_awaited_once_with("deepseek")
 
 
 @pytest.mark.asyncio
