@@ -3,9 +3,9 @@ set -eu
 
 PACKAGE_NAME="free-claude-code"
 FCC_HOME_DIRNAME=".fcc"
-FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
+FCC_MACOS_BUNDLE_ID="io.github.tverma101.agentswitchboard"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
-# Include retired entry points so older installations are fully stopped and removed.
+# Stop-only cleanup for the retired unsafe alias keeps removal safe for old installs.
 FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fccdanger fcc-codex fcc-pi fcc-init free-claude-code"
 
 dry_run=0

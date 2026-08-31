@@ -77,9 +77,9 @@ def test_background_handle_is_extracted_for_terminal_attach() -> None:
 
 def test_background_attach_uses_screen_reader_terminal_mode() -> None:
     assert _build_attached_claude_command(
-        claude_bin="fccdanger", session_id="2c91c5f2"
+        claude_bin="fcc-claude", session_id="2c91c5f2"
     ) == (
-        "fccdanger",
+        "fcc-claude",
         "attach",
         "2c91c5f2",
     )

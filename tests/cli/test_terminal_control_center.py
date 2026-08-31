@@ -119,7 +119,7 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
             launch_client=launch,
         )
 
-    launch.assert_called_once_with(False, (), Path.cwd())
+    launch.assert_called_once_with((), Path.cwd())
 
 
 def test_home_redraw_uses_passed_settings_without_admin_io(
@@ -455,13 +455,11 @@ def test_selected_profile_and_repo_are_forwarded_without_mutating_server_state(
         os.environ.pop(PROFILE_ENV, None)
         terminal_control._launch_selected(
             launch,
-            danger=True,
             profile="coding",
             repo=repo,
         )
 
     launch.assert_called_once_with(
-        True,
         ("--profile", "coding"),
         Path(repo.path),
     )
@@ -629,20 +627,6 @@ def test_direct_claude_launch_preserves_explicit_profile_for_owned_control_cente
     assert "FCC_LEARNING_PROFILE" not in os.environ
 
 
-def test_direct_danger_launch_preserves_skip_permissions_through_startup() -> None:
-    from free_claude_code.cli.launchers import claude
-
-    settings = _settings()
-    with (
-        patch.object(claude, "get_settings", return_value=settings),
-        patch.object(claude, "preflight_proxy", return_value="connection refused"),
-        patch.object(claude, "_start_interactive_owner", return_value=True) as owner,
-    ):
-        claude.launch_danger(())
-
-    owner.assert_called_once_with(["--dangerously-skip-permissions"])
-
-
 def test_control_callback_returns_exit_status_instead_of_printing_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -651,10 +635,10 @@ def test_control_callback_returns_exit_status_instead_of_printing_it(
     from free_claude_code.cli.launchers.common import ClientLaunchError
 
     with (
-        patch.object(claude, "launch_danger", side_effect=SystemExit(78)),
+        patch.object(claude, "launch", side_effect=SystemExit(78)),
         pytest.raises(ClientLaunchError) as exc_info,
     ):
-        entrypoints._launch_claude_from_control(True, (), None)
+        entrypoints._launch_claude_from_control((), None)
 
     assert exc_info.value.exit_code == 78
     assert str(exc_info.value) == "Claude exited with status 78."
@@ -805,7 +789,7 @@ def test_control_tui_passes_launch_failure_to_the_next_screen() -> None:
     from free_claude_code.cli.launchers.common import ClientLaunchError
 
     first_app = MagicMock()
-    first_app.run.return_value = control_tui.ControlResult("launch", danger=True)
+    first_app.run.return_value = control_tui.ControlResult("launch")
     second_app = MagicMock()
     second_app.run.return_value = control_tui.ControlResult("quit")
     launch_error = ClientLaunchError(
@@ -846,9 +830,7 @@ def test_control_tui_does_not_adopt_a_child_profile_as_server_state(
     third_app = MagicMock()
     third_app.run.return_value = control_tui.ControlResult("quit")
     launch = MagicMock(
-        side_effect=lambda _danger, _argv, _cwd: monkeypatch.setenv(
-            PROFILE_ENV, "coding"
-        )
+        side_effect=lambda _argv, _cwd: monkeypatch.setenv(PROFILE_ENV, "coding")
     )
     monkeypatch.setenv(PROFILE_ENV, "default")
 
@@ -863,7 +845,7 @@ def test_control_tui_does_not_adopt_a_child_profile_as_server_state(
             launch_client=launch,
         )
 
-    assert [call.args[1] for call in launch.call_args_list] == [
+    assert [call.args[0] for call in launch.call_args_list] == [
         ("--profile", "coding"),
         ("--profile", "coding"),
     ]
@@ -984,7 +966,7 @@ def test_owned_control_center_launches_initial_client_after_health() -> None:
         )
 
     server_thread.start.assert_called_once_with()
-    launch.assert_called_once_with(False, ("--model", "muse"))
+    launch.assert_called_once_with(("--model", "muse"))
     menu.assert_called_once_with(
         settings,
         supervisor=supervisor,
@@ -1112,12 +1094,12 @@ def test_terminal_picker_tolerates_system_exit_from_launcher(
 ) -> None:
     from free_claude_code.cli import terminal_control
 
-    def fail(_danger: bool, _argv: tuple[str, ...]) -> None:
+    def fail(_argv: tuple[str, ...]) -> None:
         raise SystemExit(78)
 
     assert (
         terminal_control._call_launcher(
-            cast(terminal_control.ControlClientLauncher, fail), False, ()
+            cast(terminal_control.ControlClientLauncher, fail), ()
         )
         is False
     )

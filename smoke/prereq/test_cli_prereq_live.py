@@ -275,7 +275,7 @@ def test_claude_cli_subagent_when_requested(
             "MODEL": provider_model.full_model,
             "MESSAGING_PLATFORM": "none",
             "LOG_LEVEL": "DEBUG",
-            "LOG_RAW_API_PAYLOADS": "true",
+            "LOG_RAW_API_PAYLOADS": "false",
         },
         name="claude-subagent",
     ) as server:
@@ -348,7 +348,7 @@ def test_claude_cli_background_subagent_when_requested(
             "MODEL": provider_model.full_model,
             "MESSAGING_PLATFORM": "none",
             "LOG_LEVEL": "DEBUG",
-            "LOG_RAW_API_PAYLOADS": "true",
+            "LOG_RAW_API_PAYLOADS": "false",
         },
         name="claude-background-subagent",
     ) as server:

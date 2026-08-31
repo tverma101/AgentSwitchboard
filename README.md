@@ -26,7 +26,7 @@ local tool plane for coding agents. It keeps the Claude Code client and terminal
 experience while routing requests through a local FCC compatibility gateway:
 
 ```text
-Claude Code / fccdanger -> FCC -> selected provider protocol -> model
+Claude Code / fcc-claude -> FCC -> selected provider protocol -> model
 ```
 
 The current release path is terminal-first. `fcc-server` opens the
@@ -37,7 +37,7 @@ terminal-browser presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.62.7`; examples below describe this checkout, not every feature proposed in
+`5.0.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -53,7 +53,7 @@ trademarks of OpenAI. See [upstream attribution](UPSTREAM.md) and
 ## What You Get
 
 - **Use Claude Code in the terminal.** Run the legacy-compatible `fcc-claude`
-  or `fccdanger` launcher through the local FCC gateway.
+  launcher through the local FCC gateway.
 - **Choose a configured model.** Set an exact `provider/model` reference or a
   stable alias in FCC's managed environment file.
 - **Preserve coding-agent behavior.** The release path covers streaming text,
@@ -69,8 +69,8 @@ trademarks of OpenAI. See [upstream attribution](UPSTREAM.md) and
 
 | Status | Current scope |
 | --- | --- |
-| **Current-source verified** | Textual terminal `fcc-server`/`fccdanger`, the local repo/profile control center with next-launch isolation and bundle transfer, fuzzy provider/model selection, secret-safe custom OpenAI-compatible provider CRUD, independent FCC provider and Codex Tool Account management, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
-| **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
+| **Current-source verified** | Textual terminal `fcc-server`/`fcc-claude`, the local repo/profile control center with next-launch isolation and bundle transfer, fuzzy provider/model selection, secret-safe custom OpenAI-compatible provider CRUD, independent FCC provider and Codex Tool Account management, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, and the compatibility wrapper/certification path. |
+| **Live receipt evidence** | The checked-in receipts prove managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, and foreground Agent/subagent execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
 | **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
 | **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/AgentSwitchboard/issues/66). |
@@ -95,7 +95,7 @@ uv tool install --editable . --force
 The repository installers remain available for a full machine setup:
 [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1). Review
 them before running. Re-run the editable uv command after local changes so the
-installed `fcc-server`, `fcc-claude`, and `fccdanger` commands use this release
+installed `fcc-server` and `fcc-claude` commands use this release
 head.
 
 ### Local test loop
@@ -178,7 +178,7 @@ standard local project roots for Git checkouts; GitHub or other remote metadata
 is optional. The Repositories page marks the default checkout for the next
 launch, keeps the selected row after refresh, and lets you open a path outside
 those roots. A selected repository and profile apply only to the next
-Claude/Danger launch and never mutate a running session.
+Claude launch and never mutate a running session.
 FCC keeps two account surfaces independent. The FCC OpenAI/Codex provider uses
 `~/.fcc/auth/openai.json`; installed Codex, Computer Use, and Browser helpers
 use `$CODEX_HOME/auth.json` plus local snapshots under
@@ -217,7 +217,7 @@ choose an exact model reference. For the verified Muse path:
 ```dotenv
 OPENCODE_API_KEY=your-opencode-key
 MODEL=opencode_go/muse-spark-1.2-contributor
-ANTHROPIC_AUTH_TOKEN=freecc
+ANTHROPIC_AUTH_TOKEN=replace-with-your-long-random-token
 ```
 
 Restart `fcc-server` after changing configuration. The local `/admin` endpoint
@@ -251,16 +251,6 @@ Claude Code:
 ```bash
 fcc-claude
 ```
-
-For AgentSwitchboard's terminal-only, skip-permissions workflow:
-
-```bash
-fccdanger
-```
-
-`fccdanger` is only a convenience alias for `fcc-claude` that adds
-`--dangerously-skip-permissions`; it still uses the FCC proxy and never opens a
-browser or starts a second server.
 
 Codex:
 
@@ -305,13 +295,6 @@ fcc-learning context-artifact slice /path/from-the-locator.txt \
   --start-line 1 --line-count 80 --max-bytes 16384
 ```
 
-The compact/resume claim is backed by the current sanitized
-[Muse receipt](smoke/receipts/muse-auto-compact-2026-08-24.json). It records the
-literal Claude Code version, the effective 50K context window, an automatic
-compact boundary, a post-compact tool turn, resume success, and the OpenCode Go
-Responses route. The local debug trace and prompt content are intentionally not
-published.
-
 The managed-session inheritance slice is separately recorded in the sanitized
 [managed fresh/resume/fork receipt](smoke/receipts/claude-managed-resume-2026-08-24.json).
 It proves one fresh managed Claude task, one resume, and one forked continuation
@@ -336,11 +319,7 @@ supported `minimal` effort. Both requests completed with opaque provider
 reasoning hidden from the Anthropic stream.
 
 The foreground Agent/subagent route is separately recorded in the sanitized
-[subagent receipt](smoke/receipts/claude-subagent-2026-08-24.json). The literal
-top-level `--bg` route is recorded in the sanitized
-[background-subagent receipt](smoke/receipts/claude-background-subagent-2026-08-24.json):
-Claude 2.1.228 returns a handle, attaches through the native terminal path, and
-completes a Bash marker through FCC/OpenCode Go/Muse. The earlier
+[subagent receipt](smoke/receipts/claude-subagent-2026-08-24.json). The earlier
 [background-session receipt](smoke/receipts/claude-background-session-2026-08-24.json)
 is retained as historical failed-probe evidence. The complete
 PASS/UNVERIFIED/SKIPPED map is in the
@@ -524,11 +503,11 @@ upstream effective value as `xhigh`.
 ## Connect Your Client
 
 For the supported release path, start `fcc-server`, then run `fcc-claude`,
-`fccdanger`, `fcc-codex`, or `fcc-pi` in a terminal. The editor/App examples
+`fcc-codex`, or `fcc-pi` in a terminal. The editor/App examples
 below are reference-only integrations; they are not part of the terminal-only
 Muse release proof and have not been used to establish the stable product gate.
 
-FCC owns Claude's gateway routing for `fcc-claude`, `fccdanger`, and managed
+FCC owns Claude's gateway routing for `fcc-claude` and managed
 sessions. Do not set `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, or
 `ANTHROPIC_API_KEY` in an active Claude settings `env` block for those launchers:
 user `CLAUDE_CONFIG_DIR/settings.json`, project `.claude/settings.json`,
@@ -586,7 +565,7 @@ network call is attempted.
 <summary><strong>Claude Code in VS Code</strong></summary>
 
 Reference-only: this configures the editor extension directly and is not part of
-the supported terminal-only release gate. Use `fcc-claude` or `fccdanger` for
+the supported terminal-only release gate. Use `fcc-claude` for
 the verified path.
 
 Install the [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code). Open VS Code's user settings as JSON and add:
@@ -595,7 +574,7 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
 "claudeCode.disableLoginPrompt": true,
 "claudeCode.environmentVariables": [
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
-  { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" },
+  { "name": "ANTHROPIC_AUTH_TOKEN", "value": "replace-with-your-long-random-token" },
   { "name": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "value": "1" },
   { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "256000" },
   { "name": "DISABLE_AUTOUPDATER", "value": "1" },
@@ -639,7 +618,7 @@ model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 [model_providers.fcc]
 name = "AgentSwitchboard"
 base_url = "http://127.0.0.1:8082/v1"
-http_headers = { Authorization = "Bearer freecc" }
+http_headers = { Authorization = "Bearer replace-with-your-long-random-token" }
 wire_api = "responses"
 ```
 
@@ -660,7 +639,7 @@ model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 [model_providers.fcc]
 name = "AgentSwitchboard"
 base_url = "http://127.0.0.1:8082/v1"
-http_headers = { Authorization = "Bearer freecc" }
+http_headers = { Authorization = "Bearer replace-with-your-long-random-token" }
 wire_api = "responses"
 ```
 
@@ -672,8 +651,8 @@ Match `model`, the port, and bearer token to `~/.fcc/.env`, then restart VS Code
 <summary><strong>Claude Code in JetBrains ACP</strong></summary>
 
 Reference-only: this configures JetBrains' external ACP process directly and is
-not part of the supported terminal-only release gate. Use `fcc-claude` or
-`fccdanger` for the verified path.
+not part of the supported terminal-only release gate. Use `fcc-claude` for the
+verified path.
 
 Edit the installed Claude ACP configuration:
 
@@ -685,7 +664,7 @@ Set the environment for `acp.registry.claude-acp`:
 ```json
 "env": {
   "ANTHROPIC_BASE_URL": "http://localhost:8082",
-  "ANTHROPIC_AUTH_TOKEN": "freecc",
+  "ANTHROPIC_AUTH_TOKEN": "replace-with-your-long-random-token",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "256000",
   "DISABLE_AUTOUPDATER": "1",
@@ -730,7 +709,7 @@ Restart Claude Code or the IDE after saving the file.
 
 Optional integrations remain configured through the local settings surface. They
 are outside the minimal terminal-only Muse release proof and should be enabled
-only after the core `fccdanger` path is healthy.
+only after the core `fcc-claude` path is healthy.
 
 <details>
 <summary><strong>Discord bot</strong></summary>

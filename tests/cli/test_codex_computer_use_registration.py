@@ -32,20 +32,14 @@ def _details(
     scope: str = "Local",
     command: str | None = None,
     args: str | None = None,
-    node: Path | None = None,
-    bridge: Path | None = None,
 ) -> str:
-    if node is None and bridge is None:
+    if command is None and args is None:
         current = registration.local_mcp_spec(python_executable=python)
         default_command = current["command"]
         default_args = " ".join(current["args"])
     else:
-        default_command = node or python
-        default_args = (
-            str(bridge)
-            if bridge is not None
-            else f"-m {registration.MCP_SERVER_MODULE}"
-        )
+        default_command = command or python
+        default_args = args or f"-m {registration.MCP_SERVER_MODULE}"
     return (
         f"{registration.MCP_SERVER_NAME}:\n"
         f"  Scope: {scope}\n"
@@ -53,14 +47,6 @@ def _details(
         f"  Command: {command or default_command}\n"
         f"  Args: {args or default_args}\n"
     )
-
-
-def _bridge_paths(tmp_path: Path) -> tuple[Path, Path]:
-    node = tmp_path / "node"
-    bridge = tmp_path / "computer-use-mcp-bridge.mjs"
-    node.write_text("", encoding="utf-8")
-    bridge.write_text("", encoding="utf-8")
-    return node, bridge
 
 
 def _native_paths(tmp_path: Path) -> tuple[CodexComputerUsePaths, Path]:
@@ -186,7 +172,7 @@ def test_native_mcp_spec_uses_official_bundled_launcher(tmp_path: Path) -> None:
     }
 
 
-def test_ensure_migrates_owned_direct_launcher_to_bridge(tmp_path: Path) -> None:
+def test_ensure_migrates_owned_direct_launcher_to_python_server(tmp_path: Path) -> None:
     _paths, launcher = _native_paths(tmp_path)
     python = tmp_path / "python"
     python.write_text("", encoding="utf-8")
@@ -225,7 +211,7 @@ def test_ensure_migrates_owned_direct_launcher_to_bridge(tmp_path: Path) -> None
     assert run.call_count == 4
 
 
-def test_ensure_migrates_previous_direct_launcher_to_bridge(
+def test_ensure_migrates_previous_direct_launcher_to_python_server(
     tmp_path: Path,
 ) -> None:
     _paths, bundled_launcher = _native_paths(tmp_path)
@@ -267,7 +253,9 @@ def test_ensure_migrates_previous_direct_launcher_to_bridge(
     assert payload == registration.local_mcp_spec(python_executable=python)
 
 
-def test_ensure_migrates_resolved_native_launcher_to_bridge(tmp_path: Path) -> None:
+def test_ensure_migrates_resolved_native_launcher_to_python_server(
+    tmp_path: Path,
+) -> None:
     _paths, launcher = _native_paths(tmp_path)
     python = tmp_path / "python"
     python.write_text("", encoding="utf-8")
@@ -299,7 +287,7 @@ def test_ensure_migrates_resolved_native_launcher_to_bridge(tmp_path: Path) -> N
     assert run.call_count == 4
 
 
-def test_ensure_migrates_exact_native_launcher_to_bridge(tmp_path: Path) -> None:
+def test_ensure_migrates_exact_native_launcher_to_python_server(tmp_path: Path) -> None:
     _paths, launcher = _native_paths(tmp_path)
     python = tmp_path / "python"
     python.write_text("", encoding="utf-8")

@@ -88,14 +88,13 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
     commands.serve()
 
 
-def _launch_control_claude(*, danger: bool, argv: Sequence[str] = ()) -> None:
+def _launch_control_claude(*, argv: Sequence[str] = ()) -> None:
     """Adapt the installed Claude launcher to the terminal-control callback."""
 
-    from free_claude_code.cli.launchers.claude import launch, launch_danger
+    from free_claude_code.cli.launchers.claude import launch
 
-    launcher = launch_danger if danger else launch
     try:
-        launcher(tuple(argv))
+        launch(tuple(argv))
     except SystemExit as exc:
         if exc.code not in {None, 0}:
             print(f"Claude exited with status {exc.code}.")
@@ -158,17 +157,14 @@ def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
     return True
 
 
-def _launch_claude_from_control(
-    danger: bool, argv: Sequence[str], cwd: Path | None = None
-) -> None:
+def _launch_claude_from_control(argv: Sequence[str], cwd: Path | None = None) -> None:
     """Adapt the terminal client callback to the Claude launcher entry points."""
 
-    from free_claude_code.cli.launchers.claude import launch, launch_danger
+    from free_claude_code.cli.launchers.claude import launch
     from free_claude_code.cli.launchers.common import ClientLaunchError
 
-    launcher = launch_danger if danger else launch
     try:
-        launcher(tuple(argv), cwd=cwd, raise_for_control=True)
+        launch(tuple(argv), cwd=cwd, raise_for_control=True)
     except SystemExit as exc:
         if exc.code in {None, 0}:
             return

@@ -108,21 +108,13 @@ The reader is confined to FCC's configured artifact directory, reports the
 full-artifact hash and line/byte metadata, and returns only the requested
 slice. It cannot be used to read an arbitrary path outside that directory.
 
-The current live compact/resume evidence is recorded in the sanitized
-[Muse auto-compact receipt](../smoke/receipts/muse-auto-compact-2026-08-24.json).
-That receipt is evidence for one installed-client boundary, not a claim that
-the advisory leash replaces the hard runtime governor.
-
 The separate managed-session inheritance check is recorded in the sanitized
 [managed fresh/resume/fork receipt](../smoke/receipts/claude-managed-resume-2026-08-24.json).
 It covers one fresh managed task, one resumed task, and one forked continuation;
 background and subagent inheritance remain outside that receipt.
 The independent foreground Agent/subagent route has a separate
-[metadata-only receipt](../smoke/receipts/claude-subagent-2026-08-24.json);
-the opt-in top-level background route has a separate
-[metadata-only receipt](../smoke/receipts/claude-background-subagent-2026-08-24.json).
-It proves Claude 2.1.228 returning a background handle, native terminal attach,
-and a routed Bash marker through FCC/OpenCode Go/Muse. The earlier
+[metadata-only receipt](../smoke/receipts/claude-subagent-2026-08-24.json).
+Background inheritance remains unverified; the earlier
 [historical receipt](../smoke/receipts/claude-background-session-2026-08-24.json)
 preserves the failed daemon-lifecycle probe.
 

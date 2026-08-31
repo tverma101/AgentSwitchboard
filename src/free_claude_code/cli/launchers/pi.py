@@ -162,8 +162,8 @@ def pi_binary_is_compatible(binary_path: str) -> bool:
 
 
 def pi_install_hint(platform: str | None = None) -> str:
-    """Return Pi's official installer command for the current platform."""
+    """Return Pi's official installation documentation for the current platform."""
 
     if (platform or sys.platform) == "win32":
-        return 'Install Pi with: powershell -c "irm https://pi.dev/install.ps1 | iex"'
-    return "Install Pi with: curl -fsSL https://pi.dev/install.sh | sh"
+        return "Install Pi using the official instructions at https://pi.dev/"
+    return "Install Pi using the official instructions at https://pi.dev/"

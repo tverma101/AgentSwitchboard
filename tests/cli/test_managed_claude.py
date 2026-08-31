@@ -63,6 +63,7 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert "--add-dir" in invocation.argv
     assert os.path.normpath("/tmp/extra") in invocation.argv
     assert "--settings" not in invocation.argv
+    assert "--dangerously-skip-permissions" not in invocation.argv
     assert invocation.env["PATH"] == "keep"
     assert invocation.env["ANTHROPIC_BASE_URL"] == "http://localhost:8082"
     assert invocation.env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"

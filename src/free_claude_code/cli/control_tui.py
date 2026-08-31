@@ -97,7 +97,6 @@ class ControlResult:
     """One action that must temporarily leave the alternate-screen TUI."""
 
     action: str
-    danger: bool = False
     profile: str | None = None
     repo: RepoEntry | None = None
 
@@ -741,7 +740,6 @@ class ControlCenterApp(HarlequinAppBase):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("q", "quit", "Quit"),
         ("c", "launch_claude", "Claude"),
-        ("d", "launch_danger", "Danger"),
         ("r", "refresh", "Refresh"),
         ("escape", "dashboard", "Dashboard"),
     ]
@@ -833,7 +831,6 @@ class ControlCenterApp(HarlequinAppBase):
                 )
                 with Horizontal(id="launch-row"):
                     yield Button("Claude", id="launch-claude", variant="primary")
-                    yield Button("Danger", id="launch-danger", variant="error")
             with Vertical(id="main-panel"):
                 yield Static("Dashboard", id="page-title")
                 yield Static("", id="summary")
@@ -890,37 +887,16 @@ class ControlCenterApp(HarlequinAppBase):
     def launch_claude_button(self) -> None:
         self.action_launch_claude()
 
-    @on(Button.Pressed, "#launch-danger")
-    def launch_danger_button(self) -> None:
-        self.action_launch_danger()
-
     @on(Button.Pressed, "#launch-retry-claude")
     def launch_retry_claude_button(self) -> None:
         """Retry a failed launch through the launcher's recovery path."""
 
         self.action_launch_claude()
 
-    @on(Button.Pressed, "#launch-retry-danger")
-    def launch_retry_danger_button(self) -> None:
-        """Retry a failed danger launch through the launcher's recovery path."""
-
-        self.action_launch_danger()
-
     def action_launch_claude(self) -> None:
         self.exit(
             ControlResult(
                 "launch",
-                danger=False,
-                profile=self.next_profile,
-                repo=self.selected_repo,
-            )
-        )
-
-    def action_launch_danger(self) -> None:
-        self.exit(
-            ControlResult(
-                "launch",
-                danger=True,
                 profile=self.next_profile,
                 repo=self.selected_repo,
             )
@@ -1125,8 +1101,7 @@ class ControlCenterApp(HarlequinAppBase):
                 "FCC will use an exact known-good fallback or show the repair "
                 "command."
                 if compatibility_block
-                else "Launch failed. Read the error below, then choose Retry "
-                "Claude or Retry Danger."
+                else "Launch failed. Read the error below, then choose Retry Claude."
             )
             self.query_one("#summary", Static).update(summary)
             await content.mount(Static(self.startup_error, classes="launch-error-card"))
@@ -1138,11 +1113,7 @@ class ControlCenterApp(HarlequinAppBase):
         await content.mount(Static(text, classes="dashboard-card"))
         if self.startup_error:
             claude_label = "Repair & start" if compatibility_block else "Retry Claude"
-            danger_label = (
-                "Repair & start Danger" if compatibility_block else "Retry Danger"
-            )
             await self._add_action("launch-retry-claude", claude_label)
-            await self._add_action("launch-retry-danger", danger_label)
         await self._add_action("refresh", "Refresh")
 
     async def _render_providers(self, table: DataTable) -> None:
@@ -2831,7 +2802,7 @@ def run_control_tui(
     settings: Settings,
     *,
     supervisor: ServerSupervisor | None,
-    launch_client: Callable[[bool, Sequence[str], Path | None], None],
+    launch_client: Callable[[Sequence[str], Path | None], None],
     startup_error: str | None = None,
 ) -> None:
     """Run the Harlequin-derived control shell and temporarily yield to Claude."""
@@ -2864,7 +2835,6 @@ def run_control_tui(
                 argv = ("--profile", next_profile)
             try:
                 launch_client(
-                    result.danger,
                     argv,
                     Path(selected_repo.path) if selected_repo is not None else None,
                 )

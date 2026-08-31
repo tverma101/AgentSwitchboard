@@ -11,12 +11,17 @@ current legacy compatibility surface. They remain documented so existing
 installations continue to work while AgentSwitchboard's public namespace is
 migrated separately.
 
+The server binds to `127.0.0.1:8082` by default. Keep `HOST` loopback when the
+proxy is only for this computer. If remote access is intentional, set `HOST` to
+the required interface and configure a unique long `ANTHROPIC_AUTH_TOKEN`; FCC
+rejects a non-loopback host without a token.
+
 ## Minimal OpenCode Go / Muse setup
 
 ```dotenv
 OPENCODE_API_KEY=your-opencode-key
 MODEL=opencode_go/muse-spark-1.2-contributor
-ANTHROPIC_AUTH_TOKEN=freecc
+ANTHROPIC_AUTH_TOKEN=replace-with-your-long-random-token
 FCC_CLAUDE_CONTEXT_TOKENS=256000
 REASONING_POLICY=client
 ```
@@ -30,7 +35,7 @@ fcc-server
 The command opens the terminal control center. In the Textual control center,
 choose **Repositories** in the sidebar; the current working directory is
 selected by default, and **Open path** adds any local Git checkout. Press
-Enter/C for `fcc-claude`, D for `fccdanger`, O in the legacy line-oriented menu
+Enter/C for `fcc-claude`, O in the legacy line-oriented menu
 to select a local repository, or F to select/manage the profile used by the
 next launch. F also exposes explicit selective bundle
 preview/export/import. P opens provider status and FCC account actions; its custom-provider
@@ -49,13 +54,12 @@ requests happen only after selecting their explicit action.
 You can also run the terminal client from another terminal:
 
 ```bash
-fccdanger
+fcc-claude
 ```
 
-`fccdanger` is a convenience launcher for `fcc-claude` that adds
-`--dangerously-skip-permissions` exactly once. It still targets the local FCC
-gateway. If the gateway is unavailable, it exits with a terminal instruction to
-start `fcc-server`; it does not open a browser.
+The launcher uses Claude Code's normal permission policy and targets the local
+FCC gateway. If the gateway is unavailable, it exits with a terminal instruction
+to start `fcc-server`; it does not open a browser.
 
 ## Provider and model values
 
@@ -359,10 +363,10 @@ their full lifetime. The terminal control center's `P` command prints the
 live metadata-only policy and egress receipt.
 
 `FCC_COMPUTER_USE_APPROVAL` controls the native Codex app-access form used by
-the Computer Use bridge. It defaults to `auto`, but the MCP process accepts the
-form only when `codex-computer-use` is also present in `FCC_ALLOWED_HELPERS`.
-Set it to `decline` to keep native app access fail-closed. This setting is
-captured at server/session startup and requires a restart.
+the Computer Use MCP boundary. It defaults to `decline`; the MCP process accepts
+the form only when `codex-computer-use` is also present in `FCC_ALLOWED_HELPERS`.
+Set it to `auto` only when native app access is intentionally enabled. This
+setting is captured at server/session startup and requires a restart.
 
 When `codex-computer-use` is explicitly allow-listed, `fcc-claude` validates
 the signed Codex Computer Use installation, exposes the official Computer Use
@@ -374,8 +378,8 @@ Computer Use plugin launcher, waits for the ten native tools, preserves native
 JSON-RPC results including screenshots, and handles the app-access elicitation
 handshake. Read-only list/state calls can recover once from a lost native
 connection; mutating calls are never replayed after an uncertain result.
-Registration is idempotent, migrates FCC-owned raw-bridge/direct-launcher
-entries, and refuses to overwrite a different user or project entry. The
+Registration is idempotent, migrates FCC-owned direct-launcher entries, and
+refuses to overwrite a different user or project entry. The
 native host remains lazy and starts only when Claude calls a Computer Use tool;
 launch setup does not capture the screen. If setup fails, the launch is blocked
 with the reason and exact config/project locations instead of returning an

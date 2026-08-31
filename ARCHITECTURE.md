@@ -42,12 +42,14 @@ Local capability plane (provider-independent)
 ```
 
 The supported release boundary is terminal-only: `fcc-server` starts the local
-gateway and `fcc-claude`/`fccdanger` run Claude Code through it. The gateway
+gateway and `fcc-claude` runs Claude Code through it. The gateway
 accepts Anthropic Messages traffic from Claude Code and Pi clients and OpenAI
 Responses traffic from Codex clients, routes requests to a configured upstream
 provider, and preserves the caller's wire protocol.
 
-The local Admin HTTP surface, desktop shell, messaging bridge, direct editor
+The local proxy binds to loopback by default. A non-loopback `HOST` requires a
+non-empty `ANTHROPIC_AUTH_TOKEN`; an unauthenticated non-loopback configuration
+is rejected before the server starts. The local Admin HTTP surface, desktop shell, messaging bridge, direct editor
 integrations, and tool-plane experiments remain package capabilities with their
 own permissions and evidence boundaries. They are not implied by, or required
 for, the terminal-only Muse release claim. `fcc-server` never opens a browser

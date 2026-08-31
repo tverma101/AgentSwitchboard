@@ -72,6 +72,7 @@ async def test_model_picker_uses_compact_browser_and_inspector() -> None:
             await pilot.pause()
 
             assert app.query_one("#model-workspace", Horizontal).display
+            assert len(app.query("#launch-danger")) == 0
             assert len(app.query(ModelListButton)) == 2
             assert _row(app, MODEL_A).has_class("model-row-default")
             assert _row(app, MODEL_A).has_class("model-row-enabled")

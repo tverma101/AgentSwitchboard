@@ -65,7 +65,7 @@ Important compatibility warning: older observed Computer Use builds could list M
 - exposes native tool names/auth state only as runtime evidence, never as dynamic Luna tool-schema input;
 - defaults low-level elicitations to cancel; the FCC Claude MCP server supplies
   an explicit `auto` handler only when `codex-computer-use` is allow-listed,
-  while `FCC_COMPUTER_USE_APPROVAL=decline` keeps the user-facing bridge
+  while `FCC_COMPUTER_USE_APPROVAL=decline` keeps the user-facing MCP boundary
   fail-closed;
 - reports mutating timeout/transport loss as **indeterminate** instead of retrying;
 - retains the zero-Codex-model-turn fatal guard inherited from the base broker.
@@ -79,9 +79,7 @@ official bundled Computer Use plugin launcher, waits for all ten native tools,
 and dispatches calls through `mcpServer/tool/call`. It answers the native
 elicitation handshake and preserves structured screenshot blocks. Read-only
 state/list calls get one bounded connection-recovery attempt; mutating calls
-are never replayed after an uncertain result. The old vendored Node bridge is
-kept only as a narrowly identified migration entry for older FCC installs;
-it is not the normal Claude MCP path. The signed native client remains
+are never replayed after an uncertain result. The signed native client remains
 unmodified.
 
 The registration is project-local and the Claude launcher does not replace or

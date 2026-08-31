@@ -336,7 +336,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "select",
         settings_attr="computer_use_approval",
-        default="auto",
+        default="decline",
         options=(
             ConfigOptionSpec("auto", "Automatic when helper is allow-listed"),
             ConfigOptionSpec("decline", "Decline native app access"),
@@ -427,7 +427,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "secret",
         settings_attr="anthropic_auth_token",
-        default="freecc",
+        default="",
         secret=True,
         restart_required=True,
         description="Bearer token protecting Claude/API access. It is not admin-page login.",

@@ -62,6 +62,8 @@ from .common import (
 _DISPLAY_NAME = "Claude Code"
 _INSTALL_HINT = "Install Claude Code with: npm install -g @anthropic-ai/claude-code"
 _COMPUTER_USE_HELPER_ID = "codex-computer-use"
+_PERMISSION_BYPASS_FLAG = "--dangerously-skip-permissions"
+_PERMISSION_BYPASS_MODE = "bypasspermissions"
 
 
 def launch(
@@ -73,6 +75,16 @@ def launch(
     """Launch Claude Code with Free Claude Code proxy environment variables."""
 
     args = list(sys.argv[1:] if argv is None else argv)
+    unsafe_permission_request = _unsafe_permission_request(args)
+    if unsafe_permission_request is not None:
+        message = (
+            "FCC refused to launch Claude with a permission-bypass argument. "
+            "Use Claude Code's normal approval flow."
+        )
+        if raise_for_control:
+            raise ClientLaunchError(message, 2)
+        print(message, file=sys.stderr)
+        raise SystemExit(2)
     try:
         args, selected_profile = extract_profile_argument(args)
         server_profile = configured_profile()
@@ -305,7 +317,7 @@ def _prepare_computer_use_session(
     session_cwd = (cwd or Path.cwd()).expanduser().resolve()
     claude_config_dir = claude_config_dir_from_env(base_env)
     home = Path(base_env.get("HOME", str(Path.home()))).expanduser()
-    approval_mode = getattr(settings, "computer_use_approval", "auto")
+    approval_mode = getattr(settings, "computer_use_approval", "decline")
     if isinstance(approval_mode, str):
         base_env["FCC_COMPUTER_USE_APPROVAL"] = approval_mode
     try:
@@ -324,8 +336,6 @@ def _prepare_computer_use_session(
             claude_binary=claude_binary,
             cwd=session_cwd,
             base_env=base_env,
-            node_executable=None,
-            bridge_path=None,
             python_executable=sys.executable,
             native_launcher=old_profile_launcher,
             legacy_native_launcher=bundled_launcher,
@@ -464,17 +474,33 @@ def _start_interactive_owner(
     return True
 
 
-def _launch_control_client(
-    danger: bool, argv: Sequence[str], cwd: Path | None = None
-) -> None:
+def _unsafe_permission_request(args: Sequence[str]) -> str | None:
+    """Return a permission-bypass argument when the caller requested one."""
+
+    for index, argument in enumerate(args):
+        if argument == _PERMISSION_BYPASS_FLAG or argument.startswith(
+            f"{_PERMISSION_BYPASS_FLAG}="
+        ):
+            return _PERMISSION_BYPASS_FLAG
+        if argument == "--permission-mode" and index + 1 < len(args):
+            if args[index + 1].casefold() == _PERMISSION_BYPASS_MODE:
+                return "--permission-mode"
+        elif (
+            argument.startswith("--permission-mode=")
+            and argument.partition("=")[2].casefold() == _PERMISSION_BYPASS_MODE
+        ):
+            return "--permission-mode"
+    return None
+
+
+def _launch_control_client(argv: Sequence[str], cwd: Path | None = None) -> None:
     """Launch a Claude client selected by the terminal control callback."""
 
-    launcher = launch_danger if danger else launch
     try:
         if cwd is None:
-            launcher(tuple(argv), raise_for_control=True)
+            launch(tuple(argv), raise_for_control=True)
         else:
-            launcher(tuple(argv), cwd=cwd, raise_for_control=True)
+            launch(tuple(argv), cwd=cwd, raise_for_control=True)
     except SystemExit as exc:
         if exc.code in {None, 0}:
             return
@@ -505,23 +531,6 @@ def _firewall_environment(
     if isinstance(wrapper_path, str) and wrapper_path.strip():
         environment[CLAUDE_PROCESS_WRAPPER_PATH_ENV] = wrapper_path.strip()
     return environment
-
-
-def launch_danger(
-    argv: Sequence[str] | None = None,
-    *,
-    cwd: Path | None = None,
-    raise_for_control: bool = False,
-) -> None:
-    """Launch Claude Code with FCC and skip-permissions enabled explicitly."""
-
-    args = list(sys.argv[1:] if argv is None else argv)
-    if "--dangerously-skip-permissions" not in args:
-        args.insert(0, "--dangerously-skip-permissions")
-    if raise_for_control:
-        launch(args, cwd=cwd, raise_for_control=True)
-    else:
-        launch(args, cwd=cwd)
 
 
 def claude_binary_name() -> str:

@@ -62,7 +62,7 @@ async def test_control_tui_mounts_persistent_navigation_shell() -> None:
             assert app.query_one("#main-panel")
             assert app.query_one("#actions")
             assert app.query_one("#launch-claude")
-            assert app.query_one("#launch-danger")
+            assert len(app.query("#launch-danger")) == 0
             assert app.theme == "harlequin"
             dashboard = str(app.query_one(".dashboard-card", Static).content)
             assert "OpenAI / ChatGPT  fcc@example.com" in dashboard
@@ -1027,9 +1027,7 @@ async def test_control_tui_keeps_launch_failures_visible_for_retry() -> None:
             assert "version 2.1.250 is quarantined" in str(error_card.content)
             assert "Exit status: 78." in str(error_card.content)
             assert app.query_one("#launch-claude")
-            assert app.query_one("#launch-danger")
             assert app.query_one("#launch-retry-claude")
-            assert app.query_one("#launch-retry-danger")
 
 
 @pytest.mark.asyncio

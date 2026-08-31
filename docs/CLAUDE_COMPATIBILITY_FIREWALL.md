@@ -36,7 +36,7 @@ Candidate certification should cover, as applicable:
 9. resume/fork;
 10. context advertisement and auto-compact;
 11. stream-json;
-12. permissions and `--dangerously-skip-permissions`;
+12. permission-policy settings that would bypass Claude's normal approval flow;
 13. cancellation/interrupt;
 14. steering and queued follow-up prompts;
 15. subagent/background behavior;

@@ -16,8 +16,8 @@ conflict without emitting a Uvicorn bind traceback. Use `--headless` or a
 non-TTY invocation for the prior blocking server-only behavior.
 
 The control center is a Textual application with a persistent sidebar and a
-main pane. Navigate with the arrow keys, mouse, or Enter. The Claude and Danger
-buttons launch the selected next-launch profile and repository; the application
+main pane. Navigate with the arrow keys, mouse, or Enter. The Claude button
+launches the selected next-launch profile and repository; the application
 returns to the control center when that child exits or reports a launch error.
 Launch failures remain in a persistent red error card with the actionable
 diagnostic and exit status. When the FCC Claude compatibility firewall blocks a
@@ -69,9 +69,8 @@ this fork's startup contract.
 
 The local HTTP Admin API remains an implementation surface for explicitly
 scripted local tooling. It is never opened automatically by FCC. Normal agent
-work stays in the terminal through `fcc-claude`, `fccdanger`, `fcc-codex`, or
-`fcc-pi`. `fccdanger` is the personal-fork convenience alias that adds
-`--dangerously-skip-permissions` while retaining FCC routing.
+work stays in the terminal through `fcc-claude`, `fcc-codex`, or `fcc-pi`.
+Claude Code retains its normal permission prompts.
 
 The terminal control-center home redraw uses the already-loaded local settings
 object and does not make an Admin request. Explicit settings edits still use

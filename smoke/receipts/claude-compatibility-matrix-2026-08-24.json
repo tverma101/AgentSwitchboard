@@ -13,16 +13,6 @@
   },
   "surfaces": [
     {
-      "name": "fresh_fccdanger",
-      "status": "passed",
-      "evidence": "smoke/receipts/muse-auto-compact-2026-08-24.json"
-    },
-    {
-      "name": "fccdanger_shell_alias",
-      "status": "passed",
-      "evidence": "smoke/receipts/muse-auto-compact-2026-08-24.json"
-    },
-    {
       "name": "managed_fresh",
       "status": "passed",
       "evidence": "smoke/receipts/claude-managed-resume-2026-08-24.json"
@@ -38,16 +28,6 @@
       "evidence": "smoke/receipts/claude-managed-resume-2026-08-24.json"
     },
     {
-      "name": "resume_after_compaction",
-      "status": "passed",
-      "evidence": "smoke/receipts/muse-auto-compact-2026-08-24.json"
-    },
-    {
-      "name": "threshold_crossing_before_compaction",
-      "status": "passed",
-      "evidence": "smoke/receipts/muse-auto-compact-2026-08-24.json"
-    },
-    {
       "name": "foreground_agent_subagent",
       "status": "passed",
       "evidence": "smoke/receipts/claude-subagent-2026-08-24.json"
@@ -56,12 +36,6 @@
       "name": "process_wrapper_contract",
       "status": "passed",
       "evidence": "tests/cli/test_claude_firewall.py"
-    },
-    {
-      "name": "top_level_background_session",
-      "status": "passed",
-      "evidence": "smoke/receipts/claude-background-subagent-2026-08-24.json",
-      "reason": "Claude returned a handle, attached through the native terminal path, and completed a routed Bash marker"
     },
     {
       "name": "subagent_around_compaction",

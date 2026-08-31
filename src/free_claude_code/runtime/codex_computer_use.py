@@ -395,8 +395,8 @@ class CodexComputerUseBroker:
             "thread/start",
             {
                 "cwd": str(work_dir),
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
+                "approvalPolicy": "on-request",
+                "sandbox": "workspace-write",
                 "ephemeral": True,
                 "serviceName": "fcc_codex_computer_use",
             },
