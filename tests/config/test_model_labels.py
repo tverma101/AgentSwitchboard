@@ -1,7 +1,4 @@
-from free_claude_code.config.model_labels import (
-    model_display_name,
-    model_display_names,
-)
+from free_claude_code.config.model_labels import model_display_name, model_display_names
 
 
 def test_model_display_name_preserves_nested_vendor_slug() -> None:

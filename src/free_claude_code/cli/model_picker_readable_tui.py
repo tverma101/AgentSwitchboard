@@ -51,9 +51,7 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
     """
     )
 
-    async def _after_page_render(
-        self, page: str, *, focus_target: str | None
-    ) -> None:
+    async def _after_page_render(self, page: str, *, focus_target: str | None) -> None:
         await super()._after_page_render(page, focus_target=focus_target)
         models_page = page == "models"
         # The model browser is a workspace, not a dashboard card. Give it the

@@ -3,9 +3,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Static
 
-from free_claude_code.cli.model_picker_readable_tui import (
-    ReadableModelControlCenterApp,
-)
+from free_claude_code.cli.model_picker_readable_tui import ReadableModelControlCenterApp
 from free_claude_code.cli.model_picker_tui import ModelListButton
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.reasoning import ReasoningPreference
