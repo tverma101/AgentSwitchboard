@@ -41,7 +41,9 @@ def _catalog() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_models_page_zooms_workspace_and_never_hides_exact_model_identity() -> None:
+async def test_models_page_zooms_workspace_and_never_hides_exact_model_identity() -> (
+    None
+):
     app = ReadableModelControlCenterApp(_settings(), supervisor=None)
     with patch("free_claude_code.cli.control_tui.get_models", return_value=_catalog()):
         async with app.run_test(size=(120, 40)) as pilot:
