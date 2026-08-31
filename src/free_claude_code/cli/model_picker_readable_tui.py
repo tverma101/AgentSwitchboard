@@ -3,44 +3,94 @@
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from textual.widgets import Footer, Header, Static
+
 from free_claude_code.cli.commands import ServerSupervisor
 from free_claude_code.config.settings import Settings
 from free_claude_code.learning.config import configured_profile
 
 from .control_tui import _format_launch_failure
-from .model_picker_tui import TuiuiControlCenterApp
+from .model_picker_tui import ModelListButton, TuiuiControlCenterApp, _model_provider_id
 from .repo_picker import RepoEntry
 
 
+def _compact_exact_ref(model_ref: str, *, limit: int = 62) -> str:
+    """Keep both the routing prefix and variant-bearing tail visible."""
+
+    exact = model_ref.removeprefix("anthropic/")
+    if len(exact) <= limit:
+        return exact
+    left = max(12, limit // 3)
+    right = max(18, limit - left - 1)
+    return f"{exact[:left]}…{exact[-right:]}"
+
+
+def _readable_row_label(row: ModelListButton) -> str:
+    """Render human name and exact model identity as separate information."""
+
+    default_mark = "★" if row._is_default else " "
+    access_mark = "✓" if row._enabled else "○"
+    friendly = " ".join(row.friendly.split()) or row.model_ref
+    identity = _compact_exact_ref(row.model_ref)
+    return (
+        f"{default_mark} {access_mark}  {friendly}\n"
+        f"     {identity}    {row.price}"
+    )
+
+
+def _readable_inspector_title(friendly: str, model_ref: str) -> str:
+    """Never let a friendly label hide the exact routable model."""
+
+    friendly = " ".join(friendly.split()) or model_ref
+    exact = model_ref.removeprefix("anthropic/")
+    return f"{friendly}\n{exact}"
+
+
 class ReadableModelControlCenterApp(TuiuiControlCenterApp):
-    """Give the Models workspace the screen space its information needs."""
+    """Give model identity the screen space it needs to remain obvious."""
 
     CSS = (
         TuiuiControlCenterApp.CSS
         + """
 
+    #model-browser {
+        width: 44%;
+        min-width: 38;
+    }
+
     #model-list .model-list-row {
-        height: 2;
-        min-height: 2;
+        height: 3;
+        min-height: 3;
         padding: 0 1;
         content-align: left middle;
     }
 
     #model-inspector {
-        width: 48%;
-        min-width: 46;
+        width: 56%;
+        min-width: 48;
         padding: 1 2;
     }
 
     #model-inspector-title {
+        min-height: 3;
+        padding-bottom: 1;
+        color: $text;
+        text-style: bold;
+    }
+
+    #model-inspector-status {
         min-height: 2;
         color: $text;
         text-style: bold;
     }
 
-    #model-inspector-status,
     #model-inspector-meta {
+        min-height: 9;
         color: $text;
+    }
+
+    #model-inspector-hint {
+        color: $text-muted;
     }
     """
     )
@@ -48,8 +98,45 @@ class ReadableModelControlCenterApp(TuiuiControlCenterApp):
     async def _after_page_render(self, page: str, *, focus_target: str | None) -> None:
         await super()._after_page_render(page, focus_target=focus_target)
         models_page = page == "models"
+
+        # The model picker is a focused task. Hide dashboard chrome, not the
+        # action bar: Save / Discard / Refresh must remain immediately visible.
         self.query_one("#sidebar").display = not models_page
         self.query_one("#summary").display = not models_page
+        self.query_one("#window-titlebar").display = not models_page
+        self.query_one(Header).display = not models_page
+        self.query_one(Footer).display = not models_page
+
+    def _refresh_model_editor_widgets(self) -> None:
+        super()._refresh_model_editor_widgets()
+        for row in self.query(ModelListButton):
+            row.label = _readable_row_label(row)
+
+    def _update_model_inspector(self) -> None:
+        super()._update_model_inspector()
+        model = self._model_inspector_ref
+        if model is None or model not in self._model_known_refs:
+            return
+
+        friendly = self._model_labels.get(model, model)
+        self.query_one("#model-inspector-title", Static).update(
+            _readable_inspector_title(friendly, model)
+        )
+        self.query_one("#model-inspector-meta", Static).update(
+            "\n".join(
+                (
+                    "EXACT MODEL REF",
+                    model,
+                    "",
+                    f"Provider   {_model_provider_id(model)}",
+                    f"Price      {self._model_prices.get(model, 'PRICE?')}",
+                    f"Source     {self._model_sources.get(model, 'unknown')}",
+                )
+            )
+        )
+        self.query_one("#model-inspector-hint", Static).update(
+            "Friendly names are display-only. The exact ref above is what Claude routes."
+        )
 
 
 def run_control_tui(
