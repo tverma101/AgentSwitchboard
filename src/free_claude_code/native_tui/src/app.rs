@@ -2,6 +2,9 @@ use crate::api::{
     AdminClient, ConfigField, ConfigOption, ConfigResponse, CustomProvider, CustomProviderPayload,
     ModelsResponse, ProviderStatus, MASKED_SECRET,
 };
+use crate::models::{
+    verify_catalog_readback, AccessFilter, CatalogSnapshot, ModelBrowser, PriceFilter, MODEL_KEY,
+};
 use anyhow::Result;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -103,6 +106,13 @@ pub enum UiAction {
     ToggleAdvanced,
     AssignModel(String),
     SearchModels,
+    SetPriceFilter(PriceFilter),
+    SetAccessFilter(AccessFilter),
+    CycleProviderFilter,
+    CycleSort,
+    ToggleModelAccess,
+    SaveModels,
+    DiscardModels,
     RunDiagnostic,
     LaunchClaude(bool),
 }
@@ -370,9 +380,6 @@ pub enum Modal {
         selected: usize,
         editing: Option<TextInput>,
     },
-    SearchModels {
-        input: TextInput,
-    },
     Confirm {
         title: String,
         body: String,
@@ -396,11 +403,10 @@ pub struct App {
     pub usage: Value,
     pub diagnostic: Value,
     pub provider_selected: usize,
-    pub model_selected: usize,
     pub routing_selected: usize,
     pub local_selected: usize,
     pub setting_selected: usize,
-    pub model_query: String,
+    pub browser: ModelBrowser,
     pub show_advanced: bool,
     pub modal: Option<Modal>,
     pub notice: Option<String>,
@@ -450,7 +456,7 @@ impl App {
                 Value::Null
             }
         };
-        Ok(Self {
+        let mut app = Self {
             api,
             page: Page::Dashboard,
             config,
@@ -461,11 +467,10 @@ impl App {
             usage,
             diagnostic: Value::Null,
             provider_selected: 0,
-            model_selected: 0,
             routing_selected: 0,
             local_selected: 0,
             setting_selected: 0,
-            model_query: String::new(),
+            browser: ModelBrowser::default(),
             show_advanced: false,
             modal: None,
             notice,
@@ -474,7 +479,9 @@ impl App {
             hitboxes: Vec::new(),
             geometry: ChromeGeometry::default(),
             mouse: None,
-        })
+        };
+        app.sync_model_browser();
+        Ok(app)
     }
 
     pub fn refresh_all(&mut self) {
@@ -502,6 +509,7 @@ impl App {
             Ok(value) => self.usage = value,
             Err(error) => self.set_error(error.to_string()),
         }
+        self.sync_model_browser();
         self.clamp_selections();
     }
 
@@ -523,6 +531,17 @@ impl App {
             self.should_quit = true;
             return Ok(None);
         }
+        if self.page == Page::Models
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('s')
+        {
+            self.save_model_catalog();
+            return Ok(None);
+        }
+        if self.page == Page::Models && self.browser.search_focused {
+            return self.handle_model_search_key(key);
+        }
+
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') | KeyCode::F(1) => self.modal = Some(Modal::Help),
@@ -533,6 +552,7 @@ impl App {
             KeyCode::Char('r') => self.refresh_current(),
             KeyCode::Char('c') => return Ok(Some(ExternalAction::LaunchClaude { danger: false })),
             KeyCode::Enter => self.default_action()?,
+            KeyCode::Char('e') if self.page == Page::Models => self.toggle_selected_model_access(),
             KeyCode::Char('e') => self.edit_action()?,
             KeyCode::Char('t') if self.page == Page::Providers => self.test_selected_provider(),
             KeyCode::Char('n') if self.page == Page::Providers => self.new_custom_provider(),
@@ -540,11 +560,7 @@ impl App {
             KeyCode::Char('l') if self.page == Page::Providers => self.login_provider("browser"),
             KeyCode::Char('L') if self.page == Page::Providers => self.login_provider("device"),
             KeyCode::Char('D') if self.page == Page::Providers => self.disconnect_provider(),
-            KeyCode::Char('/') if self.page == Page::Models => {
-                self.modal = Some(Modal::SearchModels {
-                    input: TextInput::new(self.model_query.clone(), false, false),
-                });
-            }
+            KeyCode::Char('/') if self.page == Page::Models => self.focus_model_search(),
             KeyCode::Char('d') if self.page == Page::Models => self.assign_selected_model("MODEL"),
             KeyCode::Char('f') if self.page == Page::Models => {
                 self.assign_selected_model("MODEL_FABLE")
@@ -558,6 +574,23 @@ impl App {
             KeyCode::Char('h') if self.page == Page::Models => {
                 self.assign_selected_model("MODEL_HAIKU")
             }
+            KeyCode::Char('p') if self.page == Page::Models => {
+                self.browser.price_filter = self.browser.price_filter.next();
+                self.browser.selected = 0;
+            }
+            KeyCode::Char('v') if self.page == Page::Models => {
+                self.browser.access_filter = self.browser.access_filter.next();
+                self.browser.selected = 0;
+            }
+            KeyCode::Char('g') if self.page == Page::Models => {
+                self.browser.sort = self.browser.sort.next();
+                self.browser.selected = 0;
+            }
+            KeyCode::Char('P') if self.page == Page::Models => {
+                let snapshot = self.catalog_snapshot();
+                self.browser.cycle_provider_filter(&snapshot);
+            }
+            KeyCode::Char('u') if self.page == Page::Models => self.discard_model_changes(),
             KeyCode::Char('a') if self.page == Page::Settings => {
                 self.show_advanced = !self.show_advanced
             }
@@ -573,6 +606,37 @@ impl App {
             _ => {}
         }
         Ok(None)
+    }
+
+    fn handle_model_search_key(&mut self, key: KeyEvent) -> Result<Option<ExternalAction>> {
+        match key.code {
+            KeyCode::Esc => {
+                self.browser.search_focused = false;
+            }
+            KeyCode::Enter => {
+                self.browser.search_focused = false;
+            }
+            KeyCode::Up => self.move_selection(-1),
+            KeyCode::Down => self.move_selection(1),
+            KeyCode::Backspace => {
+                self.browser.query.pop();
+                self.browser.selected = 0;
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.browser.query.clear();
+                self.browser.selected = 0;
+            }
+            KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.browser.query.push(character);
+                self.browser.selected = 0;
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn focus_model_search(&mut self) {
+        self.browser.search_focused = true;
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<Option<ExternalAction>> {
@@ -602,10 +666,13 @@ impl App {
     }
 
     fn invoke_ui_action(&mut self, action: UiAction) -> Result<Option<ExternalAction>> {
+        if !matches!(action, UiAction::SearchModels) {
+            self.browser.search_focused = false;
+        }
         match action {
             UiAction::Navigate(page) => self.page = page,
             UiAction::SelectProvider(index) => self.provider_selected = index,
-            UiAction::SelectModel(index) => self.model_selected = index,
+            UiAction::SelectModel(index) => self.browser.selected = index,
             UiAction::SelectRouting(index) => self.routing_selected = index,
             UiAction::SelectLocal(index) => self.local_selected = index,
             UiAction::SelectSetting(index) => self.setting_selected = index,
@@ -620,11 +687,26 @@ impl App {
             UiAction::EditField => self.edit_action()?,
             UiAction::ToggleAdvanced => self.show_advanced = !self.show_advanced,
             UiAction::AssignModel(key) => self.assign_selected_model(&key),
-            UiAction::SearchModels => {
-                self.modal = Some(Modal::SearchModels {
-                    input: TextInput::new(self.model_query.clone(), false, false),
-                });
+            UiAction::SearchModels => self.focus_model_search(),
+            UiAction::SetPriceFilter(filter) => {
+                self.browser.price_filter = filter;
+                self.browser.selected = 0;
             }
+            UiAction::SetAccessFilter(filter) => {
+                self.browser.access_filter = filter;
+                self.browser.selected = 0;
+            }
+            UiAction::CycleProviderFilter => {
+                let snapshot = self.catalog_snapshot();
+                self.browser.cycle_provider_filter(&snapshot);
+            }
+            UiAction::CycleSort => {
+                self.browser.sort = self.browser.sort.next();
+                self.browser.selected = 0;
+            }
+            UiAction::ToggleModelAccess => self.toggle_selected_model_access(),
+            UiAction::SaveModels => self.save_model_catalog(),
+            UiAction::DiscardModels => self.discard_model_changes(),
             UiAction::RunDiagnostic => self.run_diagnostic(),
             UiAction::LaunchClaude(danger) => {
                 return Ok(Some(ExternalAction::LaunchClaude { danger }));
@@ -662,6 +744,7 @@ impl App {
             Page::Models => match self.api.refresh_models() {
                 Ok(value) => {
                     self.models = value;
+                    self.sync_model_browser();
                     self.set_notice("Model catalog refreshed".to_string());
                 }
                 Err(error) => self.set_error(error.to_string()),
@@ -697,7 +780,7 @@ impl App {
         };
         let selection = match self.page {
             Page::Providers => &mut self.provider_selected,
-            Page::Models => &mut self.model_selected,
+            Page::Models => &mut self.browser.selected,
             Page::Routing => &mut self.routing_selected,
             Page::Local => &mut self.local_selected,
             Page::Settings => &mut self.setting_selected,
@@ -712,65 +795,40 @@ impl App {
 
     fn clamp_selections(&mut self) {
         self.provider_selected = clamp(self.provider_selected, self.config.provider_status.len());
-        self.model_selected = clamp(self.model_selected, self.filtered_models().len());
+        let snapshot = self.catalog_snapshot();
+        self.browser.clamp_selection(&snapshot);
         self.routing_selected = clamp(self.routing_selected, self.routing_field_indices().len());
         self.local_selected = clamp(self.local_selected, self.local_field_indices().len());
         self.setting_selected = clamp(self.setting_selected, self.settings_field_indices().len());
     }
 
+    pub fn catalog_snapshot(&self) -> CatalogSnapshot {
+        CatalogSnapshot::from_admin(&self.models, &self.config)
+    }
+
+    pub fn sync_model_browser(&mut self) {
+        let snapshot = self.catalog_snapshot();
+        self.browser.sync(&snapshot);
+    }
+
     pub fn filtered_models(&self) -> Vec<String> {
-        let query = self.model_query.trim().to_ascii_lowercase();
-        self.model_inventory()
-            .iter()
-            .filter(|model| {
-                if query.is_empty() {
-                    return true;
-                }
-                let label = self.model_label(model);
-                model.to_ascii_lowercase().contains(&query)
-                    || label.to_ascii_lowercase().contains(&query)
-            })
-            .cloned()
-            .collect()
+        let snapshot = self.catalog_snapshot();
+        self.browser.filtered_refs(&snapshot)
     }
 
     pub fn model_inventory(&self) -> Vec<String> {
-        let mut models = if self.models.catalog_models.is_empty() {
-            self.models.models.clone()
-        } else {
-            self.models.catalog_models.clone()
-        };
-        for model in &self.models.models {
-            if !models.iter().any(|candidate| candidate == model) {
-                models.push(model.clone());
-            }
-        }
-        models.sort_by_key(|model| model.to_ascii_lowercase());
-        models.dedup();
-        models
+        self.catalog_snapshot()
+            .records
+            .iter()
+            .map(|record| record.model_ref.clone())
+            .collect()
     }
 
     pub fn model_is_routable(&self, model: &str) -> bool {
-        self.models
-            .models
-            .iter()
-            .any(|candidate| candidate == model)
-    }
-
-    pub fn model_label(&self, model: &str) -> String {
-        self.models
-            .catalog_model_labels
-            .get(model)
-            .or_else(|| self.models.model_labels.get(model))
-            .cloned()
-            .unwrap_or_else(|| model.to_string())
-    }
-
-    pub fn model_evidence(&self, model: &str) -> Option<&Value> {
-        self.models
-            .catalog_model_evidence
-            .get(model)
-            .or_else(|| self.models.model_evidence.get(model))
+        self.catalog_snapshot()
+            .record(model)
+            .map(|record| record.routable)
+            .unwrap_or(false)
     }
 
     pub fn routing_field_indices(&self) -> Vec<usize> {
@@ -820,7 +878,8 @@ impl App {
     }
 
     pub fn selected_model(&self) -> Option<String> {
-        self.filtered_models().get(self.model_selected).cloned()
+        let snapshot = self.catalog_snapshot();
+        self.browser.selected_ref(&snapshot)
     }
 
     pub fn selected_field_index(&self) -> Option<usize> {
@@ -1003,15 +1062,85 @@ impl App {
         let Some(model) = self.selected_model() else {
             return;
         };
-        if !self.model_is_routable(&model) {
-            self.set_error(format!(
-                "{model} is cataloged but not currently routable; update the model catalog policy first"
-            ));
+        if key == MODEL_KEY {
+            let snapshot = self.catalog_snapshot();
+            match self.browser.make_default(&model, &snapshot) {
+                Some(message) => self.set_notice(message),
+                None => self.set_error("Select a catalog model first".to_string()),
+            }
             return;
         }
         self.apply_field_value(key, Value::String(model.clone()));
         if self.error.is_none() {
             self.set_notice(format!("{key} → {model}"));
+        }
+    }
+
+    fn toggle_selected_model_access(&mut self) {
+        let Some(model) = self.selected_model() else {
+            return;
+        };
+        let snapshot = self.catalog_snapshot();
+        match self.browser.toggle_access(&model, &snapshot) {
+            Ok(message) => self.set_notice(message),
+            Err(message) => self.set_error(message),
+        }
+    }
+
+    fn discard_model_changes(&mut self) {
+        self.browser.discard();
+        self.set_notice("Discarded unsaved model changes".to_string());
+    }
+
+    fn save_model_catalog(&mut self) {
+        let snapshot = self.catalog_snapshot();
+        if !self.browser.dirty() {
+            self.set_notice("No model changes to save".to_string());
+            return;
+        }
+        let payload = self.browser.save_payload();
+        let expected = self.browser.expected_readback(&snapshot);
+        match self.api.apply_fields(payload) {
+            Ok(result) if result.valid && result.applied => {
+                match self.api.config() {
+                    Ok(config) => {
+                        if let Err(message) = verify_catalog_readback(&expected, &config) {
+                            self.config = config;
+                            self.set_error(message);
+                            return;
+                        }
+                        self.config = config;
+                    }
+                    Err(error) => {
+                        self.set_error(format!(
+                            "Saved, but could not read Admin config back: {error}"
+                        ));
+                        return;
+                    }
+                }
+                match self.api.models() {
+                    Ok(models) => self.models = models,
+                    Err(error) => self.set_error(format!(
+                        "Saved, but could not reload the cached model catalog: {error}"
+                    )),
+                }
+                let snapshot = self.catalog_snapshot();
+                self.browser.commit(&snapshot);
+                if result.pending_fields.is_empty() {
+                    self.set_notice("Saved model catalog (read-back verified)".to_string());
+                } else {
+                    self.set_notice(format!(
+                        "Saved model catalog; restart/session boundary: {}",
+                        result.pending_fields.join(", ")
+                    ));
+                }
+            }
+            Ok(result) => self.set_error(if result.errors.is_empty() {
+                "Model catalog was not applied".to_string()
+            } else {
+                result.errors.join("\n")
+            }),
+            Err(error) => self.set_error(error.to_string()),
         }
     }
 
@@ -1144,14 +1273,6 @@ impl App {
                     self.modal = Some(Modal::Help);
                 }
             }
-            Modal::SearchModels { mut input } => match edit_input(&mut input, key) {
-                InputOutcome::Cancel => {}
-                InputOutcome::Submit => {
-                    self.model_query = input.value.trim().to_string();
-                    self.model_selected = 0;
-                }
-                InputOutcome::Continue => self.modal = Some(Modal::SearchModels { input }),
-            },
             Modal::EditField { field, mut input } => match edit_input(&mut input, key) {
                 InputOutcome::Cancel => {}
                 InputOutcome::Submit => {
@@ -1409,7 +1530,7 @@ impl App {
             description: "New FCC-launched Claude sessions.".to_string(),
             ..ConfigField::default()
         };
-        Self {
+        let mut app = Self {
             api,
             page: Page::Dashboard,
             config: ConfigResponse {
@@ -1423,11 +1544,10 @@ impl App {
             usage: Value::Null,
             diagnostic: Value::Null,
             provider_selected: 0,
-            model_selected: 0,
             routing_selected: 0,
             local_selected: 0,
             setting_selected: 0,
-            model_query: String::new(),
+            browser: ModelBrowser::default(),
             show_advanced: false,
             modal: None,
             notice: None,
@@ -1436,7 +1556,9 @@ impl App {
             hitboxes: Vec::new(),
             geometry: ChromeGeometry::default(),
             mouse: None,
-        }
+        };
+        app.sync_model_browser();
+        app
     }
 }
 
@@ -1598,28 +1720,36 @@ mod tests {
             "provider/hidden-free".to_string(),
             "Hidden Free".to_string(),
         );
+        app.sync_model_browser();
 
-        assert_eq!(
-            app.filtered_models(),
-            ["provider/free", "provider/hidden-free"]
-        );
+        let visible = app.filtered_models();
+        assert!(visible.contains(&"provider/free".to_string()));
+        assert!(visible.contains(&"provider/hidden-free".to_string()));
         app.handle_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
             .unwrap();
-        assert_eq!(app.model_selected, 1);
-        assert_eq!(
-            app.selected_model().as_deref(),
-            Some("provider/hidden-free")
-        );
+        assert_eq!(app.browser.selected, 1);
+        assert_eq!(app.selected_model().as_deref(), Some(visible[1].as_str()));
         assert!(!app.model_is_routable("provider/hidden-free"));
 
-        app.model_query = "hidden".to_string();
-        app.clamp_selections();
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        for character in ['h', 'i', 'd', 'd', 'e', 'n'] {
+            app.handle_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        }
         assert_eq!(app.filtered_models(), ["provider/hidden-free"]);
-        assert_eq!(app.model_selected, 0);
+        assert_eq!(app.browser.selected, 0);
+        assert!(app.browser.search_focused);
     }
 
     #[test]
-    fn hidden_catalog_model_cannot_be_assigned_without_policy_change() {
+    fn blocked_catalog_model_can_be_enabled_and_made_default() {
         let mut app = App::fixture();
         app.page = Page::Models;
         app.models.models = vec!["provider/routable".to_string()];
@@ -1627,7 +1757,14 @@ mod tests {
             "provider/routable".to_string(),
             "provider/hidden".to_string(),
         ];
-        app.model_query = "hidden".to_string();
+        app.config.fields.push(ConfigField {
+            key: MODEL_KEY.to_string(),
+            value: "provider/routable".to_string(),
+            ..ConfigField::default()
+        });
+        app.sync_model_browser();
+        app.browser.query = "hidden".to_string();
+        app.clamp_selections();
 
         app.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Char('d'),
@@ -1635,10 +1772,35 @@ mod tests {
         )))
         .unwrap();
 
-        assert!(app
-            .error
-            .as_deref()
-            .is_some_and(|message| message.contains("not currently routable")));
+        assert!(app.error.is_none());
+        assert_eq!(app.browser.pending_default(), "provider/hidden");
+        assert!(app.browser.is_enabled("provider/hidden"));
+        assert!(app.browser.dirty());
+        let payload = app.browser.save_payload();
+        assert_eq!(
+            payload.get(MODEL_KEY),
+            Some(&Value::String("provider/hidden".to_string()))
+        );
+    }
+
+    #[test]
+    fn unavailable_configured_default_stays_visible_in_chrome() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/alpha".to_string()];
+        app.models.catalog_models = vec!["provider/alpha".to_string()];
+        app.config.fields.push(ConfigField {
+            key: MODEL_KEY.to_string(),
+            value: "gateway/missing".to_string(),
+            ..ConfigField::default()
+        });
+        app.sync_model_browser();
+        let snapshot = app.catalog_snapshot();
+        assert_eq!(app.browser.pending_default(), "gateway/missing");
+        assert!(app.browser.default_unavailable(&snapshot));
+        assert!(snapshot.default_unavailable());
+        assert!(!app.browser.dirty());
+        assert_eq!(app.filtered_models(), ["provider/alpha"]);
     }
 
     #[test]
@@ -1650,6 +1812,7 @@ mod tests {
         app.page = Page::Models;
         app.models.models = vec!["provider/one".to_string(), "provider/two".to_string()];
         app.models.catalog_models = app.models.models.clone();
+        app.sync_model_browser();
         let backend = TestBackend::new(160, 50);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -1672,7 +1835,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(app.model_selected, 1);
+        assert_eq!(app.browser.selected, 1);
         assert_eq!(app.selected_model().as_deref(), Some("provider/two"));
     }
 }

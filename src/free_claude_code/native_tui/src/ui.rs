@@ -2,6 +2,9 @@ use crate::api::{ConfigField, ProviderStatus};
 use crate::app::{
     pretty, App, ChromeGeometry, Hitbox, Modal, Page, UiAction, CONTEXT_MAX, CONTEXT_MIN,
 };
+use crate::models::{
+    capability_summary, pricing_signal, AccessFilter, ModelSort, PriceFilter, PriceState, MODEL_KEY,
+};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -183,12 +186,26 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         width: inner.width.saturating_sub(4),
         height: 5,
     };
+    let model_line = if app.browser.default_unavailable(&app.catalog_snapshot()) {
+        format!(
+            "unavailable · {}",
+            trim_to(app.browser.pending_default(), 18)
+        )
+    } else {
+        trim_to(&app.status_model(), 22)
+    };
     frame.render_widget(
         Paragraph::new(Text::from(vec![
             Line::from(Span::styled("ACTIVE MODEL", Style::default().fg(MUTED))),
             Line::from(Span::styled(
-                trim_to(&app.status_model(), 22),
-                Style::default().fg(TEXT),
+                model_line,
+                Style::default().fg(
+                    if app.browser.default_unavailable(&app.catalog_snapshot()) {
+                        WARN
+                    } else {
+                        TEXT
+                    },
+                ),
             )),
             Line::from(""),
             Line::from(vec![
@@ -210,7 +227,7 @@ fn render_page(frame: &mut Frame, app: &mut App, area: Rect) {
         Page::Models => render_models(frame, app, area),
         Page::Routing => render_field_page(frame, app, area, Page::Routing),
         Page::Context => render_context(frame, app, area),
-        Page::Local => render_field_page(frame, app, area, Page::Local),
+        Page::Local => render_local(frame, app, area),
         Page::Settings => render_field_page(frame, app, area, Page::Settings),
         Page::Usage => render_usage(frame, app, area),
         Page::Diagnostics => render_diagnostics(frame, app, area),
@@ -257,9 +274,10 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
         Line::from(Span::styled("The Rust control center is a thin client of fcc-server.", Style::default().fg(TEXT))),
         Line::from(""),
         Line::from(vec![Span::styled("Context window  ", Style::default().fg(MUTED)), Span::styled(format_tokens(&app.current_context()), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled("Catalog         ", Style::default().fg(MUTED)), Span::styled(format!("{} models · {} routable · {} providers", app.model_inventory().len(), app.models.models.len(), app.config.provider_status.len()), Style::default().fg(TEXT))]),
         Line::from(vec![Span::styled("Pending changes  ", Style::default().fg(MUTED)), Span::styled(compact_json(&pending), Style::default().fg(WARN))]),
         Line::from(""),
-        Line::from(Span::styled("API keys, model routing, local endpoints, custom providers, reasoning and context remain owned by the canonical loopback Admin API.", Style::default().fg(MUTED))),
+        Line::from(Span::styled("Click the sidebar to open a workspace. Models is a live catalog browser: search, filter, inspect, enable, and assign defaults without leaving this terminal.", Style::default().fg(MUTED))),
     ]);
     frame.render_widget(
         Paragraph::new(body)
@@ -457,15 +475,72 @@ fn render_models(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(5),
             Constraint::Min(10),
             Constraint::Length(4),
         ])
         .split(area);
-    let query = if app.model_query.is_empty() {
-        "Search all models…".to_string()
+    render_model_toolbar(frame, app, rows[0]);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+        .split(rows[1]);
+    let models = app.filtered_models();
+    render_model_list(frame, app, panes[0], &models);
+    render_model_detail(frame, app, panes[1], models.get(app.browser.selected));
+    let enable_label = app
+        .selected_model()
+        .map(|model| {
+            if app.browser.is_enabled(&model) {
+                "Disable"
+            } else {
+                "Enable"
+            }
+        })
+        .unwrap_or("Enable");
+    let mut actions = vec![
+        ("Default", UiAction::AssignModel(MODEL_KEY.to_string())),
+        (enable_label, UiAction::ToggleModelAccess),
+        ("Fable", UiAction::AssignModel("MODEL_FABLE".to_string())),
+        ("Opus", UiAction::AssignModel("MODEL_OPUS".to_string())),
+        ("Sonnet", UiAction::AssignModel("MODEL_SONNET".to_string())),
+        ("Haiku", UiAction::AssignModel("MODEL_HAIKU".to_string())),
+        ("Refresh", UiAction::Refresh),
+    ];
+    if app.browser.dirty() {
+        actions.insert(0, ("Save", UiAction::SaveModels));
+        actions.insert(1, ("Discard", UiAction::DiscardModels));
+    }
+    action_bar(frame, app, rows[2], &actions);
+}
+
+fn render_model_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Length(2)])
+        .split(area);
+    let snapshot = app.catalog_snapshot();
+    let query = if app.browser.query.is_empty() {
+        if app.browser.search_focused {
+            "▌".to_string()
+        } else {
+            "Search provider, model, alias, capability, free/paid…  (/)".to_string()
+        }
+    } else if app.browser.search_focused {
+        format!("{}▌", app.browser.query)
     } else {
-        format!("Filter: {}", app.model_query)
+        format!("Filter: {}", app.browser.query)
+    };
+    let unavailable =
+        if app.browser.default_unavailable(&snapshot) || snapshot.default_unavailable() {
+            "  ·  default unavailable"
+        } else {
+            ""
+        };
+    let search_style = if app.browser.search_focused {
+        Style::default().fg(TEXT).bg(ACCENT_DIM)
+    } else {
+        Style::default().fg(TEXT).bg(PANEL_2)
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -473,46 +548,81 @@ fn render_models(frame: &mut Frame, app: &mut App, area: Rect) {
                 "MODEL CATALOG",
                 Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
             ),
-            Span::raw("    "),
-            Span::styled(query, Style::default().fg(TEXT)),
-            Span::raw("    "),
+            Span::raw("  "),
+            Span::styled(query, search_style),
+            Span::raw("  "),
             Span::styled(
                 format!(
-                    "{} shown · {} catalog · {} routable · {} providers · {} failures",
+                    "{} shown · {} catalog · {} enabled · {} unsaved{unavailable}",
                     app.filtered_models().len(),
-                    app.model_inventory().len(),
-                    app.models.models.len(),
-                    app.models.provider_status.len(),
-                    app.models.failed_providers.len()
+                    snapshot.records.len(),
+                    snapshot
+                        .records
+                        .iter()
+                        .filter(|record| app.browser.is_enabled(&record.model_ref))
+                        .count(),
+                    app.browser.changes_count()
                 ),
-                Style::default().fg(MUTED),
+                Style::default().fg(if unavailable.is_empty() { MUTED } else { WARN }),
             ),
         ]))
         .style(Style::default().bg(PANEL_2))
         .block(bottom_border()),
-        rows[0],
+        chunks[0],
     );
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
-        .split(rows[1]);
-    let models = app.filtered_models();
-    render_model_list(frame, app, panes[0], &models);
-    render_model_detail(frame, app, panes[1], models.get(app.model_selected));
-    action_bar(
-        frame,
-        app,
-        rows[2],
-        &[
-            ("Search", UiAction::SearchModels),
-            ("Default", UiAction::AssignModel("MODEL".to_string())),
-            ("Fable", UiAction::AssignModel("MODEL_FABLE".to_string())),
-            ("Opus", UiAction::AssignModel("MODEL_OPUS".to_string())),
-            ("Sonnet", UiAction::AssignModel("MODEL_SONNET".to_string())),
-            ("Haiku", UiAction::AssignModel("MODEL_HAIKU".to_string())),
-            ("Refresh", UiAction::Refresh),
-        ],
-    );
+    app.hitboxes.push(Hitbox {
+        rect: chunks[0],
+        action: UiAction::SearchModels,
+    });
+
+    let mut x = chunks[1].x + 1;
+    let chip_y = chunks[1].y;
+    let chips: Vec<(String, UiAction, bool)> = vec![
+        (
+            app.browser.price_filter.label().to_string(),
+            UiAction::SetPriceFilter(app.browser.price_filter.next()),
+            app.browser.price_filter != PriceFilter::All,
+        ),
+        (
+            app.browser.access_filter.label().to_string(),
+            UiAction::SetAccessFilter(app.browser.access_filter.next()),
+            app.browser.access_filter != AccessFilter::All,
+        ),
+        (
+            app.browser.provider_filter_label(&snapshot),
+            UiAction::CycleProviderFilter,
+            app.browser.provider_filter.is_some(),
+        ),
+        (
+            app.browser.sort.label().to_string(),
+            UiAction::CycleSort,
+            app.browser.sort != ModelSort::Provider,
+        ),
+    ];
+    for (label, action, active) in chips {
+        let width = (label.chars().count() as u16 + 4).min(chunks[1].right().saturating_sub(x));
+        if width < 5 {
+            break;
+        }
+        let chip = Rect {
+            x,
+            y: chip_y,
+            width,
+            height: chunks[1].height,
+        };
+        let hovered = app
+            .mouse
+            .map(|(mx, my)| contains(chip, mx, my))
+            .unwrap_or(false);
+        let style = if hovered || active {
+            Style::default().fg(TEXT).bg(ACCENT_DIM)
+        } else {
+            Style::default().fg(MUTED).bg(PANEL)
+        };
+        frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), chip);
+        app.hitboxes.push(Hitbox { rect: chip, action });
+        x = x.saturating_add(width + 1);
+    }
 }
 
 fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[String]) {
@@ -520,53 +630,100 @@ fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[Str
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if models.is_empty() {
+        let snapshot = app.catalog_snapshot();
+        let message = if snapshot.records.is_empty() {
+            "No models discovered. Press Refresh to query configured providers."
+        } else {
+            "No models match these filters. Clear search or broaden the chips."
+        };
         frame.render_widget(
-            Paragraph::new("No discovered/configured models match the filter")
-                .style(Style::default().fg(MUTED)),
+            Paragraph::new(message).style(Style::default().fg(MUTED)),
             inner,
         );
         return;
     }
-    let offset = list_offset(app.model_selected, models.len(), inner.height as usize);
-    for (visible, model) in models
+    let snapshot = app.catalog_snapshot();
+    let mut display: Vec<(Option<String>, Option<usize>)> = Vec::new();
+    let mut last_provider = String::new();
+    let grouped = app.browser.sort == ModelSort::Provider;
+    for (index, model) in models.iter().enumerate() {
+        if grouped {
+            let provider = snapshot
+                .record(model)
+                .map(|record| record.provider_label.clone())
+                .unwrap_or_else(|| model.clone());
+            if provider != last_provider {
+                display.push((Some(provider.clone()), None));
+                last_provider = provider;
+            }
+        }
+        display.push((None, Some(index)));
+    }
+    let selected_display = display
+        .iter()
+        .position(|(_, model_index)| *model_index == Some(app.browser.selected))
+        .unwrap_or(0);
+    let offset = list_offset(selected_display, display.len(), inner.height as usize);
+    for (visible, (header, model_index)) in display
         .iter()
         .skip(offset)
         .take(inner.height as usize)
         .enumerate()
     {
-        let index = offset + visible;
         let row = Rect {
             x: inner.x,
             y: inner.y + visible as u16,
             width: inner.width,
             height: 1,
         };
-        let selected = index == app.model_selected;
-        let label = app.model_label(model);
-        let routable = app.model_is_routable(model);
-        let marker = if routable { "✓ " } else { "· " };
-        let suffix = if routable { "" } else { "  (policy)" };
+        if let Some(header) = header {
+            frame.render_widget(
+                Paragraph::new(format!(" {header}")).style(
+                    Style::default()
+                        .fg(ACCENT)
+                        .bg(PANEL)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                row,
+            );
+            continue;
+        }
+        let Some(index) = *model_index else {
+            continue;
+        };
+        let model = &models[index];
+        let selected = index == app.browser.selected;
+        let record = snapshot.record(model);
+        let label = record
+            .map(|item| item.label.as_str())
+            .unwrap_or(model.as_str());
+        let price = record.map(|item| item.price).unwrap_or(PriceState::Unknown);
+        let enabled = app.browser.is_enabled(model);
+        let is_default = app.browser.is_default(model);
+        let marker = format!(
+            "{} {} {:<6}",
+            if is_default { "★" } else { " " },
+            if enabled { "✓" } else { "○" },
+            price.label()
+        );
         let style = if selected {
             Style::default()
                 .bg(ACCENT_DIM)
                 .fg(TEXT)
                 .add_modifier(Modifier::BOLD)
-        } else {
+        } else if is_default {
+            Style::default().bg(BG).fg(GOOD)
+        } else if enabled {
             Style::default().bg(BG).fg(TEXT)
+        } else {
+            Style::default().bg(BG).fg(MUTED)
         };
-        let prefix = format!("{}{}", if selected { "▌ " } else { "  " }, marker);
+        let prefix = format!("{} {}", if selected { "▌" } else { " " }, marker);
         let available = inner
             .width
-            .saturating_sub(prefix.chars().count() as u16)
-            .saturating_sub(suffix.chars().count() as u16) as usize;
+            .saturating_sub(prefix.chars().count() as u16 + 1) as usize;
         frame.render_widget(
-            Paragraph::new(format!(
-                "{}{}{}",
-                prefix,
-                trim_to(&label, available),
-                suffix
-            ))
-            .style(style),
+            Paragraph::new(format!("{} {}", prefix, trim_to(label, available))).style(style),
             row,
         );
         app.hitboxes.push(Hitbox {
@@ -587,50 +744,86 @@ fn render_model_detail(frame: &mut Frame, app: &App, area: Rect, model: Option<&
         );
         return;
     };
-    let label = app.model_label(model);
-    let evidence = app.model_evidence(model).cloned().unwrap_or(Value::Null);
-    let free = evidence
-        .get("is_free")
-        .map(compact_json)
-        .unwrap_or_else(|| "unknown".to_string());
-    let source = evidence
-        .get("evidence_source")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let capabilities = evidence.get("capabilities").cloned().unwrap_or(Value::Null);
-    let lines = vec![
+    let snapshot = app.catalog_snapshot();
+    let record = snapshot.record(model);
+    let label = record
+        .map(|item| item.label.clone())
+        .unwrap_or_else(|| model.clone());
+    let evidence = record
+        .map(|item| item.evidence.clone())
+        .unwrap_or(Value::Null);
+    let aliases = snapshot.aliases_for(model);
+    let assigned = snapshot.assigned_keys(model);
+    let enabled = app.browser.is_enabled(model);
+    let is_default = app.browser.is_default(model);
+    let unavailable = app.browser.default_unavailable(&snapshot) && is_default;
+    let status = if unavailable {
+        "★ Default unavailable"
+    } else if is_default && enabled {
+        "★ Default · ✓ Enabled"
+    } else if is_default {
+        "★ Default"
+    } else if enabled {
+        "✓ Enabled"
+    } else {
+        "○ Cataloged · blocked"
+    };
+    let mut lines = vec![
         Line::from(Span::styled(
-            label.to_string(),
+            label,
             Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(model.to_string(), Style::default().fg(MUTED))),
         Line::from(""),
+        kv("Status", status),
         kv(
             "Availability",
             if app.model_is_routable(model) {
                 "routable"
             } else {
-                "cataloged; blocked by policy"
+                "cataloged; blocked until enabled"
             },
         ),
-        kv("Free", &free),
-        kv("Evidence", source),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Routing shortcuts",
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-        )),
-        Line::from("D default   F fable   O opus   S sonnet   H haiku"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Capabilities",
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            trim_to(&compact_json(&capabilities), 280),
-            Style::default().fg(TEXT),
-        )),
+        kv(
+            "Price",
+            record.map(|item| item.price.label()).unwrap_or("PRICE?"),
+        ),
+        kv("Pricing", &pricing_signal(&evidence)),
     ];
+    if !aliases.is_empty() {
+        lines.push(kv("Alias", &aliases.join(", ")));
+    }
+    if !assigned.is_empty() {
+        lines.push(kv("Assigned", &assigned.join(" · ")));
+    }
+    if let Some(record) = record {
+        lines.push(kv("Provider", &record.provider_label));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Capabilities",
+        Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+    )));
+    for (label, value) in capability_summary(&evidence) {
+        lines.push(kv(&label, &value));
+    }
+    lines.push(Line::from(""));
+    if is_default && enabled {
+        lines.push(Line::from(Span::styled(
+            "Disable hands default status to another enabled model on Save.",
+            Style::default().fg(MUTED),
+        )));
+    } else if enabled {
+        lines.push(Line::from(Span::styled(
+            "Disable removes this model from the curated catalog on Save.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Enable adds this model to the curated catalog on Save. Making it default also enables it.",
+            Style::default().fg(MUTED),
+        )));
+    }
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
         inner,
@@ -846,19 +1039,258 @@ fn render_context(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
+fn render_local(frame: &mut Frame, app: &mut App, area: Rect) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(10), Constraint::Length(4)])
+        .split(area);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+        .split(rows[0]);
+    render_local_status_list(frame, app, panes[0]);
+    render_local_detail(frame, app, panes[1]);
+    action_bar(
+        frame,
+        app,
+        rows[1],
+        &[
+            ("Edit endpoint", UiAction::EditField),
+            ("Refresh", UiAction::Refresh),
+        ],
+    );
+}
+
+fn render_local_status_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = section_block("Local endpoints");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let indices = app.local_field_indices();
+    if indices.is_empty() && app.local_status.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No local provider fields advertised").style(Style::default().fg(MUTED)),
+            inner,
+        );
+        return;
+    }
+    let offset = list_offset(
+        app.local_selected,
+        indices.len().max(1),
+        inner.height as usize,
+    );
+    for (visible, field_index) in indices
+        .iter()
+        .skip(offset)
+        .take(inner.height as usize)
+        .enumerate()
+    {
+        let index = offset + visible;
+        let field = &app.config.fields[*field_index];
+        let row = Rect {
+            x: inner.x,
+            y: inner.y + visible as u16,
+            width: inner.width,
+            height: 1,
+        };
+        let selected = index == app.local_selected;
+        let status = local_status_for(app, &field.key);
+        let line = format!(
+            "{}{:18}  {}",
+            if selected { "▌ " } else { "  " },
+            trim_to(&field.label, 18),
+            status
+        );
+        let style = if selected {
+            Style::default()
+                .bg(ACCENT_DIM)
+                .fg(TEXT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(BG).fg(TEXT)
+        };
+        frame.render_widget(Paragraph::new(line).style(style), row);
+        app.hitboxes.push(Hitbox {
+            rect: row,
+            action: UiAction::SelectLocal(index),
+        });
+    }
+}
+
+fn render_local_detail(frame: &mut Frame, app: &App, area: Rect) {
+    let indices = app.local_field_indices();
+    let field = indices
+        .get(app.local_selected)
+        .and_then(|index| app.config.fields.get(*index));
+    let block = section_block("Reachability");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let Some(field) = field else {
+        frame.render_widget(
+            Paragraph::new("Select a local endpoint").style(Style::default().fg(MUTED)),
+            inner,
+        );
+        return;
+    };
+    let status = app
+        .local_status
+        .iter()
+        .find(|provider| local_field_matches_provider(&field.key, &provider.provider_id));
+    let mut lines = vec![
+        Line::from(Span::styled(
+            field.label.clone(),
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(field.key.clone(), Style::default().fg(MUTED))),
+        Line::from(""),
+        kv("Value", &App::display_field_value(field)),
+    ];
+    if let Some(status) = status {
+        lines.push(kv(
+            "Probe",
+            if status.label.is_empty() {
+                &status.status
+            } else {
+                &status.label
+            },
+        ));
+        if !status.base_url.is_empty() {
+            lines.push(kv("Probed URL", &status.base_url));
+        }
+        lines.push(Line::from(Span::styled(
+            "Reachability uses /admin/api/providers/local-status. This UI never probes hosts itself.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Press Refresh to probe LM Studio, llama.cpp, and Ollama through the Admin API.",
+            Style::default().fg(MUTED),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
+        inner,
+    );
+}
+
+fn local_status_for(app: &App, field_key: &str) -> String {
+    if let Some(provider) = app
+        .local_status
+        .iter()
+        .find(|provider| local_field_matches_provider(field_key, &provider.provider_id))
+    {
+        if provider.label.is_empty() {
+            return provider.status.clone();
+        }
+        return provider.label.clone();
+    }
+    app.config
+        .fields
+        .iter()
+        .find(|field| field.key == field_key)
+        .map(App::display_field_value)
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn local_field_matches_provider(field_key: &str, provider_id: &str) -> bool {
+    matches!(
+        (field_key, provider_id),
+        ("LM_STUDIO_BASE_URL", "lmstudio")
+            | ("LLAMACPP_BASE_URL", "llamacpp")
+            | ("OLLAMA_BASE_URL" | "OLLAMA_API_KEY", "ollama")
+    )
+}
+
 fn render_usage(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(4)])
+        .constraints([
+            Constraint::Length(7),
+            Constraint::Min(8),
+            Constraint::Length(4),
+        ])
         .split(area);
+    let totals = app.usage.get("totals").cloned().unwrap_or(Value::Null);
+    let range = app
+        .usage
+        .get("range_days")
+        .map(compact_json)
+        .unwrap_or_else(|| "30".to_string());
     frame.render_widget(
-        Paragraph::new(pretty(&app.usage))
-            .style(Style::default().fg(TEXT).bg(BG))
-            .wrap(Wrap { trim: false })
-            .block(section_block("30-day metadata-only usage")),
+        Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                format!("{range}-day metadata-only usage"),
+                Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::styled("Requests  ", Style::default().fg(MUTED)),
+                Span::styled(json_number(&totals, "requests"), Style::default().fg(TEXT)),
+                Span::raw("    "),
+                Span::styled("Input  ", Style::default().fg(MUTED)),
+                Span::styled(
+                    json_number(&totals, "input_tokens"),
+                    Style::default().fg(TEXT),
+                ),
+                Span::raw("    "),
+                Span::styled("Output  ", Style::default().fg(MUTED)),
+                Span::styled(
+                    json_number(&totals, "output_tokens"),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(Span::styled(
+                "Prompt and response content are never shown here.",
+                Style::default().fg(MUTED),
+            )),
+        ]))
+        .block(section_block("Totals")),
         rows[0],
     );
-    action_bar(frame, app, rows[1], &[("Refresh", UiAction::Refresh)]);
+    let model_rows = app
+        .usage
+        .get("models")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = Vec::new();
+    if model_rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No usage events in this window.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        for row in model_rows.iter().take(16) {
+            let model = row
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let label = app
+                .usage
+                .get("model_labels")
+                .and_then(Value::as_object)
+                .and_then(|labels| labels.get(model))
+                .and_then(Value::as_str)
+                .unwrap_or(model);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<28}", trim_to(label, 28)),
+                    Style::default().fg(TEXT),
+                ),
+                Span::styled(
+                    format!(
+                        "  in {}  out {}",
+                        json_number(row, "input_tokens"),
+                        json_number(row, "output_tokens")
+                    ),
+                    Style::default().fg(MUTED),
+                ),
+            ]));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).block(section_block("By model")),
+        rows[1],
+    );
+    action_bar(frame, app, rows[2], &[("Refresh", UiAction::Refresh)]);
 }
 
 fn render_diagnostics(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -866,15 +1298,17 @@ fn render_diagnostics(frame: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(8), Constraint::Length(4)])
         .split(area);
-    let body = if app.diagnostic.is_null() {
-        "Run a synthetic route diagnostic. No prompt content is sent to a provider.".to_string()
+    let lines = if app.diagnostic.is_null() {
+        vec![Line::from(Span::styled(
+            "Run a synthetic route diagnostic. No prompt content is sent to a provider.",
+            Style::default().fg(MUTED),
+        ))]
     } else {
-        pretty(&app.diagnostic)
+        diagnostic_lines(&app.diagnostic)
     };
     frame.render_widget(
-        Paragraph::new(body)
-            .style(Style::default().fg(TEXT))
-            .wrap(Wrap { trim: false })
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: true })
             .block(section_block("Route diagnostic")),
         rows[0],
     );
@@ -887,6 +1321,93 @@ fn render_diagnostics(frame: &mut Frame, app: &mut App, area: Rect) {
             ("Refresh", UiAction::Refresh),
         ],
     );
+}
+
+fn diagnostic_lines(value: &Value) -> Vec<Line<'static>> {
+    let controller = value.get("controller").cloned().unwrap_or(Value::Null);
+    let policy = value.get("policy").cloned().unwrap_or(Value::Null);
+    let mut lines = vec![
+        kv(
+            "Requested",
+            controller
+                .get("requested_model")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Provider",
+            controller
+                .get("provider")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Model ref",
+            controller
+                .get("model_ref")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Route source",
+            controller
+                .get("route_source")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Network",
+            value
+                .get("network")
+                .and_then(Value::as_str)
+                .unwrap_or("none"),
+        ),
+        kv(
+            "Policy",
+            policy.get("mode").and_then(Value::as_str).unwrap_or("—"),
+        ),
+    ];
+    if let Some(error) = value
+        .pointer("/policy/error")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/decision/error").and_then(Value::as_str))
+    {
+        lines.push(kv("Error", error));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Capability evidence",
+        Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+    )));
+    if let Some(rows) = value.get("capability_evidence").and_then(Value::as_array) {
+        for row in rows.iter().take(8) {
+            let name = row
+                .get("capability")
+                .or_else(|| row.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("capability");
+            let state = row
+                .get("state")
+                .or_else(|| row.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            lines.push(kv(name, state));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            trim_to(&pretty(value), 400),
+            Style::default().fg(MUTED),
+        )));
+    }
+    lines
+}
+
+fn json_number(value: &Value, key: &str) -> String {
+    match value.get(key) {
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::String(text)) => text.clone(),
+        _ => "0".to_string(),
+    }
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
@@ -911,10 +1432,12 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new("Mouse · ↑↓ Navigate · Enter Open · R Refresh · C Claude · ? Help · Q Quit")
-            .alignment(ratatui::layout::Alignment::Right)
-            .style(Style::default().fg(MUTED).bg(PANEL))
-            .block(top_border()),
+        Paragraph::new(
+            "Mouse · ↑↓ Navigate · / Search · Enter Open · R Refresh · C Claude · ? Help · Q Quit",
+        )
+        .alignment(ratatui::layout::Alignment::Right)
+        .style(Style::default().fg(MUTED).bg(PANEL))
+        .block(top_border()),
         chunks[1],
     );
 }
@@ -982,10 +1505,9 @@ fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
         Modal::Choice { label, options, selected, .. } => render_choice_modal(frame, rect, label, options, *selected),
         Modal::FieldPicker { title, field_indices, selected } => render_field_picker(frame, app, rect, title, field_indices, *selected),
         Modal::ProviderEditor { existing_id, draft, selected, editing } => render_provider_editor(frame, rect, existing_id.as_deref(), draft, *selected, editing.as_ref()),
-        Modal::SearchModels { input } => render_simple_input(frame, rect, "Search models", input, "Enter filters · Esc cancels"),
         Modal::Confirm { title, body, .. } => render_message_box(frame, rect, title, &format!("{body}\n\nEnter/Y confirms · Esc/N cancels"), WARN),
         Modal::Message { title, body } => render_message_box(frame, rect, title, body, TEXT),
-        Modal::Help => render_message_box(frame, rect, "Keyboard + mouse", "Click sidebar rows, list rows, and action buttons.\n\nGlobal: Tab/Shift-Tab pages · R refresh · C launch Claude · ! danger launcher · Q quit\nProviders: Enter configure · T test · N new custom · E edit custom · X delete · L browser login · Shift-L device login · Shift-D disconnect\nModels: / search · D/F/O/S/H assign default/Fable/Opus/Sonnet/Haiku\nSettings: Enter edit · A advanced · X clear selected secret\nMultiline editor: Ctrl-Enter saves · Esc cancels\nCustom provider editor: ↑↓ field · Enter edit · Space toggle booleans · Ctrl-S save", TEXT),
+        Modal::Help => render_message_box(frame, rect, "Keyboard + mouse", "Click sidebar rows, list rows, filter chips, and action buttons.\n\nGlobal: Tab/Shift-Tab pages · R refresh · C launch Claude · ! danger launcher · Q quit\nProviders: Enter configure · T test · N new custom · E edit custom · X delete · L browser login · Shift-L device login · Shift-D disconnect\nModels: / live search · click chips to filter · D default (enables) · E enable/disable · F/O/S/H assign tiers · Ctrl-S save · U discard · P price · V visibility · G sort · Shift-P provider\nSettings: Enter edit · A advanced · X clear selected secret\nMultiline editor: Ctrl-Enter saves · Esc cancels\nCustom provider editor: ↑↓ field · Enter edit · Space toggle booleans · Ctrl-S save", TEXT),
     }
 }
 
@@ -1031,42 +1553,6 @@ fn render_edit_modal(
         Rect {
             x: inner.x,
             y: inner.bottom().saturating_sub(2),
-            width: inner.width,
-            height: 2,
-        },
-    );
-}
-
-fn render_simple_input(
-    frame: &mut Frame,
-    rect: Rect,
-    title: &str,
-    input: &crate::app::TextInput,
-    hint: &str,
-) {
-    let block = modal_block(title);
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    frame.render_widget(
-        Paragraph::new(input.value.clone())
-            .style(Style::default().fg(TEXT).bg(BG))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT)),
-            ),
-        Rect {
-            x: inner.x,
-            y: inner.y + 2,
-            width: inner.width,
-            height: 3,
-        },
-    );
-    frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(MUTED)),
-        Rect {
-            x: inner.x,
-            y: inner.y + 6,
             width: inner.width,
             height: 2,
         },
@@ -1436,6 +1922,24 @@ mod tests {
                 description: "Provider credential".to_string(),
                 ..ConfigField::default()
             },
+            ConfigField {
+                key: "LM_STUDIO_BASE_URL".to_string(),
+                label: "LM Studio URL".to_string(),
+                field_type: "text".to_string(),
+                value: "http://127.0.0.1:1234/v1".to_string(),
+                configured: true,
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "MODEL_CATALOG_MODE".to_string(),
+                value: "curated".to_string(),
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "MODEL_CATALOG_ALLOWLIST".to_string(),
+                value: "open_router/openrouter/free".to_string(),
+                ..ConfigField::default()
+            },
         ];
         app.config.provider_status = vec![ProviderStatus {
             provider_id: "open_router".to_string(),
@@ -1475,6 +1979,31 @@ mod tests {
             proxy_configured: true,
             model_ids: vec!["lab/model".to_string()],
         }];
+        app.local_status = vec![ProviderStatus {
+            provider_id: "lmstudio".to_string(),
+            status: "reachable".to_string(),
+            label: "Reachable".to_string(),
+            base_url: "http://127.0.0.1:1234/v1".to_string(),
+            ..ProviderStatus::default()
+        }];
+        app.usage = serde_json::json!({
+            "range_days": 30,
+            "totals": {"requests": 2, "input_tokens": 11, "output_tokens": 4},
+            "models": [{"model": "open_router/openrouter/free", "input_tokens": 11, "output_tokens": 4}],
+            "model_labels": {"open_router/openrouter/free": "OpenRouter · Free"}
+        });
+        app.diagnostic = serde_json::json!({
+            "network": "none",
+            "controller": {
+                "requested_model": "open_router/openrouter/free",
+                "provider": "open_router",
+                "model_ref": "open_router/openrouter/free",
+                "route_source": "MODEL"
+            },
+            "policy": {"mode": "strict"},
+            "capability_evidence": [{"capability": "native_tools", "state": "supported"}]
+        });
+        app.sync_model_browser();
 
         for page in Page::ALL {
             app.page = page;
@@ -1522,9 +2051,6 @@ mod tests {
                 selected: 3,
                 editing: Some(TextInput::new("replacement".to_string(), false, true)),
             },
-            Modal::SearchModels {
-                input: TextInput::new("free".to_string(), false, false),
-            },
             Modal::Confirm {
                 title: "Clear secret".to_string(),
                 body: "Clear OpenRouter API key?".to_string(),
@@ -1544,5 +2070,64 @@ mod tests {
                 terminal.draw(|frame| render(frame, &mut app)).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn models_page_pins_search_filters_and_list_detail_hitboxes() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.config.fields.push(ConfigField {
+            key: "MODEL".to_string(),
+            value: "open_router/openrouter/free".to_string(),
+            ..ConfigField::default()
+        });
+        app.models = ModelsResponse {
+            models: vec!["open_router/openrouter/free".to_string()],
+            catalog_models: vec![
+                "open_router/openrouter/free".to_string(),
+                "open_router/openrouter/paid".to_string(),
+            ],
+            catalog_model_labels: [
+                (
+                    "open_router/openrouter/free".to_string(),
+                    "Free row".to_string(),
+                ),
+                (
+                    "open_router/openrouter/paid".to_string(),
+                    "Paid row".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            catalog_model_evidence: [(
+                "open_router/openrouter/free".to_string(),
+                serde_json::json!({"is_free": true}),
+            )]
+            .into_iter()
+            .collect(),
+            ..ModelsResponse::default()
+        };
+        app.sync_model_browser();
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.geometry.top.height, 3);
+        assert_eq!(app.geometry.sidebar.width, 28);
+        assert_eq!(app.geometry.main.width, 132);
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::SearchModels)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::SetPriceFilter(_))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::SelectModel(0))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::AssignModel(_))));
     }
 }

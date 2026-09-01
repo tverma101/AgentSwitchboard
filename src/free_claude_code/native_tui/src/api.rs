@@ -256,6 +256,10 @@ impl AdminClient {
     pub fn apply_field(&self, key: &str, value: Value) -> Result<ApplyResponse> {
         let mut values = HashMap::new();
         values.insert(key.to_string(), value);
+        self.apply_fields(values)
+    }
+
+    pub fn apply_fields(&self, values: HashMap<String, Value>) -> Result<ApplyResponse> {
         let payload = json!({ "values": values });
         let validation: ApplyResponse = self.post("admin/api/config/validate", &payload)?;
         if !validation.valid {
@@ -428,6 +432,17 @@ mod tests {
         let value = serde_json::to_value(payload).unwrap();
         assert!(value.get("api_key").is_none());
         assert!(value.get("proxy").is_none());
+    }
+
+    #[test]
+    fn apply_fields_sends_a_batch_payload_shape() {
+        let values = HashMap::from([
+            ("MODEL".to_string(), json!("provider/free")),
+            ("MODEL_CATALOG_MODE".to_string(), json!("curated")),
+        ]);
+        let payload = json!({ "values": values });
+        assert_eq!(payload["values"]["MODEL"], "provider/free");
+        assert_eq!(payload["values"]["MODEL_CATALOG_MODE"], "curated");
     }
 
     #[test]

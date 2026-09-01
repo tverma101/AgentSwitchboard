@@ -32,9 +32,13 @@ Shift-Tab (or the sidebar with the mouse) to move between Dashboard, Providers,
 Models, Routing, Context, Local Setup, Settings, Usage, and Diagnostics. `R`
 refreshes the current server snapshot; `C` launches `fcc-claude`; `!` launches
 `fccdanger`; and `Q` exits. Providers support status, tests, connected-account
-actions, and custom-provider CRUD. Models show the complete catalog plus
-routable status; `/` filters and `D/F/O/S/H` assign the selected routable model
-to the default or Claude tier route. Settings and local/provider fields use
+actions, and custom-provider CRUD. Models is a catalog browser: `/` filters the
+loaded snapshot instantly, chips group/filter by provider, price, and
+enabled/blocked state, and `D` makes the selected model default (which also
+enables it). `E` toggles access, `F/O/S/H` assign Claude tier routes, and
+Ctrl-S saves catalog changes after Admin read-back of `MODEL`,
+`MODEL_CATALOG_MODE`, and `MODEL_CATALOG_ALLOWLIST`. Disabled discovered models
+stay visible. Settings and local/provider fields use
 the canonical Admin API, and blank configured secret/proxy edits preserve the
 existing value. If FCC is already healthy, the control center attaches without
 claiming its lifecycle. Use `fcc-tui` from another terminal to attach directly,
