@@ -24,9 +24,12 @@ are documented in [RUST_CONTROL_CENTER.md](RUST_CONTROL_CENTER.md).
 
 The Providers page shows the server's independent provider inventory and
 supports tests, connected-account login/disconnect, and custom-provider CRUD.
-The Models page shows the complete catalog and marks models as routable or
-cataloged-but-blocked; filtering is local to the loaded snapshot and assignment
-is accepted only for routable models. Settings, local setup, routing, context,
+The Models page is a live catalog browser: `/` filters the loaded snapshot
+instantly, chips group and filter by provider/price/enabled state, and the
+inspector shows ref, alias, capabilities, and pricing. Making a model default
+enables it; Save persists `MODEL` plus catalog mode/allowlist through the
+Admin API and read-back-verifies those fields. Disabled discovered models stay
+visible so they can be re-enabled. Settings, local setup, routing, context,
 usage, and diagnostics remain explicit Admin API operations.
 
 Repository selection is provided by `fcc-repos`, not by the server lifecycle

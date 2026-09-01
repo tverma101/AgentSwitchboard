@@ -38,7 +38,7 @@ presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.63.0`; examples below describe this checkout, not every feature proposed in
+`4.64.0`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -167,16 +167,18 @@ INFO:     FCC control endpoint: http://127.0.0.1:8082/admin (terminal-only; brow
 Use the port shown in your terminal if it differs from `8082`.
 
 The control center provides the normal client handoff, provider status, model
-catalog and routing, local setup, usage, diagnostics, settings, and explicit
-refresh actions. Provider and model controls use the canonical loopback Admin
-API; custom providers can be added, edited, tested, enabled or disabled, and
-removed there. API keys and proxy values are write-only: configured values are
-masked, blank edits preserve an existing value, and explicit clears require a
-separate confirmation. The full catalog remains searchable while only models
-currently admitted by FCC can be assigned. Repository selection is provided by
-`fcc-repos`; it shows existing checkout folders with configured GitHub remotes,
-does not require GitHub CLI login, and excludes linked worktrees. Use
-`fcc-repos --refresh --root ~/src` to rescan a specific project root.
+catalog browsing and routing, local setup, usage, diagnostics, settings, and
+explicit refresh actions. Provider and model controls use the canonical loopback
+Admin API; custom providers can be added, edited, tested, enabled or disabled,
+and removed there. API keys and proxy values are write-only: configured values
+are masked, blank edits preserve an existing value, and explicit clears require
+a separate confirmation. The Models page searches the full loaded catalog,
+keeps disabled-but-valid discoveries visible to re-enable, and Save
+read-back-verifies `MODEL` plus catalog mode/allowlist. Repository selection is
+provided by `fcc-repos`; it shows existing checkout folders with configured
+GitHub remotes, does not require GitHub CLI login, and excludes linked
+worktrees. Use `fcc-repos --refresh --root ~/src` to rescan a specific project
+root.
 FCC keeps two account surfaces independent. The FCC OpenAI/Codex provider uses
 `~/.fcc/auth/openai.json`; installed Codex, Computer Use, and Browser helpers
 use `$CODEX_HOME/auth.json` plus local snapshots under
@@ -235,10 +237,10 @@ gateway while receipts and provider dispatch retain the exact target ref. See
 Discovered models are enriched from one cached `models.dev` snapshot per TTL
 window. The metadata includes modalities, context/output limits, and pricing
 signals and is stored at `~/.fcc/model-metadata-catalog.json`; it never enables
-providers or changes model visibility. The terminal Models page can order free
-models first or show only models with explicit free evidence. Missing pricing
-stays unknown and is excluded from `Free only`; model names are never treated as
-proof of a free offer. Disable it with
+providers or changes model visibility. The terminal Models page can group by
+provider, order free models first, or show only models with explicit free
+evidence. Missing pricing stays unknown and is excluded from the Free price
+filter; model names are never treated as proof of a free offer. Disable it with
 `MODEL_METADATA_CATALOG_ENABLED=false` or tune
 `MODEL_METADATA_CATALOG_TTL_HOURS` in `~/.fcc/.env`.
 

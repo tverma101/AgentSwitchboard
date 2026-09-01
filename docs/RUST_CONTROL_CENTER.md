@@ -44,19 +44,44 @@ Custom providers follow the same rule more strongly: their public status exposes
 
 The Providers page consumes the server's provider inventory dynamically. Built-in provider configuration uses the field keys advertised by the canonical Admin manifest. The UI supports provider tests, connected-account login/disconnect, custom-provider CRUD, API keys, base URLs, proxies, and explicit model lists without maintaining a second provider registry.
 
-The Local Setup page exposes the existing FCC controls for LM Studio, llama.cpp, and Ollama. Reachability checks use `/admin/api/providers/local-status`; the Rust process never probes arbitrary network hosts itself.
+The Local Setup page exposes the existing FCC controls for LM Studio, llama.cpp, and Ollama. Reachability checks use `/admin/api/providers/local-status`; the Rust process never probes arbitrary network hosts itself. Usage and Diagnostics render the Admin `usage` and `diagnostics/route` payloads as list/detail panels rather than raw JSON dumps. `C` launches `fcc-claude` and `!` launches `fccdanger`; the frontend suspends while the child runs and returns with the exit result.
 
 ## Model routing
 
-The Models page uses FCC's cached/discovered model catalog and capability evidence. A selected model can be assigned to the existing routing fields:
+The Models page is a catalog browser over FCC's cached/discovered snapshot. It
+does not add a second model database. `/` focuses an inline search that filters
+the already-loaded rows instantly (provider, model id, display name, alias,
+capability tags, and free/paid/unknown pricing). Clickable chips filter by
+price, enabled/blocked/assigned access, and provider, and cycle grouping
+between provider groups, free-first, and name.
 
-- `MODEL`
+The dense list plus inspector shows the exact `provider/model` ref, alias if
+configured, capabilities (tools/vision/context/output), pricing signals,
+routable vs cataloged-but-blocked, and default status. Disabled-but-valid
+discovered models stay visible so they can be re-enabled. Explicit **Refresh**
+is the only action that queries providers; ordinary browsing stays local.
+
+Assignment is wired to the existing routing fields:
+
+- `MODEL` (pending until Save; making a model default also enables it)
 - `MODEL_FABLE`
 - `MODEL_OPUS`
 - `MODEL_SONNET`
 - `MODEL_HAIKU`
 
-The Routing page also exposes the server-owned controls for parent-model inheritance, model catalog mode/allowlist, stable model aliases, capability routing, allowed helpers, paid fallback, and root/per-tier reasoning. Direct `provider/model` references remain the canonical routing IDs.
+Enable/disable and default changes are pending until Save. Disabling the
+current default hands default status to another enabled model. A configured
+default that is missing from the current catalog is never silently replaced;
+the chrome and inspector surface **default unavailable**. After Save, the UI
+reads Admin config back and verifies `MODEL`, `MODEL_CATALOG_MODE`, and
+`MODEL_CATALOG_ALLOWLIST` (allowlist comparison ignores formatting and order)
+before reporting success. Catalog mode, allowlist, and aliases remain
+server-owned; the Routing page still edits those fields directly.
+
+The Routing page also exposes the server-owned controls for parent-model
+inheritance, model catalog mode/allowlist, stable model aliases, capability
+routing, allowed helpers, paid fallback, and root/per-tier reasoning. Direct
+`provider/model` references remain the canonical routing IDs.
 
 ## Claude Code context window
 

@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod models;
 mod ui;
 
 use anyhow::{bail, Context, Result};
