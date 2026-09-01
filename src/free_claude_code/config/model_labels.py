@@ -17,7 +17,13 @@ _KNOWN_LABELS = {
 
 
 def model_display_name(model_ref: str) -> str:
-    """Return a readable label while preserving ``model_ref`` for routing."""
+    """Return a readable label while preserving ``model_ref`` for routing.
+
+    Friendly labels intentionally omit nested routing namespaces. Callers that
+    render several models together must use :func:`model_display_names`, which
+    disambiguates collisions with the literal routable identity. This keeps the
+    primary name readable without ever allowing two visible routes to collapse.
+    """
     display_ref = model_ref.removeprefix("anthropic/")
     provider_id, separator, model_id = display_ref.partition("/")
     if not separator:
@@ -27,11 +33,28 @@ def model_display_name(model_ref: str) -> str:
     return f"{provider_label} · {_pretty_model_id(model_id)}"
 
 
+def disambiguate_model_labels(labels: dict[str, str]) -> dict[str, str]:
+    """Make display labels collision-free using literal routable identities."""
+    resolved = dict(labels)
+    collisions: dict[str, list[str]] = {}
+    for model_ref, label in labels.items():
+        collisions.setdefault(label.casefold(), []).append(model_ref)
+
+    for model_ref, label in labels.items():
+        if len(collisions[label.casefold()]) <= 1:
+            continue
+        resolved[model_ref] = f"{label} [{model_ref}]"
+    return resolved
+
+
 def model_display_names(
     model_refs: list[str] | tuple[str, ...] | set[str],
 ) -> dict[str, str]:
-    """Return labels keyed by the exact model ids used in config and requests."""
-    return {model_ref: model_display_name(model_ref) for model_ref in model_refs}
+    """Return readable, collision-free labels keyed by exact model refs."""
+    refs = tuple(dict.fromkeys(model_refs))
+    return disambiguate_model_labels(
+        {model_ref: model_display_name(model_ref) for model_ref in refs}
+    )
 
 
 def _pretty_model_id(model_id: str) -> str:

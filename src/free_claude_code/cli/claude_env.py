@@ -306,6 +306,10 @@ def build_claude_proxy_env(
     )
     env["ANTHROPIC_BASE_URL"] = proxy_root_url
     env["ANTHROPIC_AUTH_TOKEN"] = proxy_auth_token(auth_token)
+    # Claude 2.1.22x gates gateway /v1/models behind provider mode as well as
+    # the discovery flag. FCC owns both the base URL and static proxy token for
+    # this child, so mark the session as a gateway session explicitly.
+    env["CLAUDE_CODE_USE_GATEWAY"] = "1"
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
     # Claude owns the loop, but FCC owns retry/replay at the gateway boundary.
     # Do not let Claude independently replay a failed streaming request through

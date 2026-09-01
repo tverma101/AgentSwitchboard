@@ -10,7 +10,7 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.core.branding import PRODUCT_NAME
 
 from .control_tui import _format_launch_failure
-from .model_picker_tui import run_control_tui
+from .model_picker_readable_tui import run_control_tui
 from .terminal_control import _wait_for_proxy
 
 ControlClientLauncher = Callable[[bool, Sequence[str], Path | None], None]
