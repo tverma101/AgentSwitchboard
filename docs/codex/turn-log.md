@@ -43,3 +43,14 @@
 - `evidence`: implemented and locally targeted-tested; installed/live behavior, external account identity, GitHub Actions, and user visual confirmation remain separate evidence states.
 - `residual_gap`: pre-migration events remain account-unidentified because historical account identity is not reconstructed.
 - `next_action`: push this verified follow-up to PR #200 if publication is authorized; review/merge remains a separate maintainer action.
+
+## 2026-08-31 — PR #210 native control center completion
+
+- `scope`: PR #210 native Ratatui control center, loopback Admin API client, model catalog/routing display, provider secret/proxy editing, and GitHub-backed repository discovery; unrelated canonical-checkout work remains outside this branch.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Projects/AgentSwitchboard`; isolated task worktree `/private/tmp/agentswitchboard-pr210`; topic branch `refactor/posting-gui-shell`.
+- `status`: implementation complete and locally validated; exact-head publication/checks and protected-branch merge remain the next lifecycle steps.
+- `changed`: preserved the legacy launcher seam while routing to the native TUI; added a standalone `fcc-tui` script; made the native client tolerate the live Admin provider shape; exposed full catalog plus routable model state; preserved blank configured API keys/proxies; made repository discovery GitHub-only and exclude linked worktrees; added fail-closed discovery behavior, render coverage, release metadata, lockfile, and documentation.
+- `validation`: full `uv run --no-sync pytest -q` passed with 3851 passed and 152 skipped; repository safe CI passed with 3825 passed, 4 skipped, and 173 deselected; Ruff/ty/suppression/diff checks passed; pinned Rust 1.88 format, Clippy, 14 Rust tests, and release build passed; live loopback config/model/validate smoke and release `fcc-tui` PTY startup passed without exposing secrets.
+- `evidence`: implemented and locally tested; built release and live loopback behavior verified; installed-artifact and user visual confirmation remain separate evidence states; canonical `main` dirty changes were preserved.
+- `residual_gap`: remote PR checks and merge confirmation are not established until the exact pushed head is green; no GitHub Actions workflow mutation is part of this work.
+- `next_action`: stage only the confirmed PR paths, push `refactor/posting-gui-shell`, verify exact-head checks, then merge PR #210 and confirm the remote merge commit.

@@ -81,3 +81,16 @@ def test_native_runner_accepts_normal_exit(monkeypatch: pytest.MonkeyPatch) -> N
         rust_tui.run_native_control_center(_settings())
 
     run.assert_called_once_with(("native",), check=False)
+
+
+def test_standalone_tui_entrypoint_loads_server_settings() -> None:
+    from free_claude_code.cli import commands
+
+    settings = _settings()
+    with (
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch.object(rust_tui, "run_native_control_center") as run,
+    ):
+        assert rust_tui.main(()) == 0
+
+    run.assert_called_once_with(settings)

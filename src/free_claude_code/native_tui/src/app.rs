@@ -1,11 +1,13 @@
 use crate::api::{
-    AdminClient, ConfigField, ConfigOption, ConfigResponse, CustomProvider,
-    CustomProviderPayload, ModelsResponse, ProviderStatus, MASKED_SECRET,
+    AdminClient, ConfigField, ConfigOption, ConfigResponse, CustomProvider, CustomProviderPayload,
+    ModelsResponse, ProviderStatus, MASKED_SECRET,
 };
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub const CONTEXT_KEY: &str = "FCC_CLAUDE_CONTEXT_TOKENS";
 pub const CONTEXT_MIN: u32 = 32_000;
@@ -111,6 +113,7 @@ pub struct Hitbox {
     pub action: UiAction,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ChromeGeometry {
     pub top: Rect,
@@ -204,6 +207,7 @@ pub struct ProviderDraft {
     pub local: bool,
     pub enabled: bool,
     pub existing_has_key: bool,
+    pub existing_has_proxy: bool,
 }
 
 impl ProviderDraft {
@@ -218,6 +222,7 @@ impl ProviderDraft {
             local: false,
             enabled: true,
             existing_has_key: false,
+            existing_has_proxy: false,
         }
     }
 
@@ -232,6 +237,7 @@ impl ProviderDraft {
             local: provider.local,
             enabled: provider.enabled,
             existing_has_key: provider.api_key_configured,
+            existing_has_proxy: provider.proxy_configured,
         }
     }
 
@@ -263,7 +269,13 @@ impl ProviderDraft {
                     "••••••••".to_string()
                 }
             }
-            4 => self.proxy.clone(),
+            4 => {
+                if self.proxy.is_empty() && self.existing_has_proxy {
+                    "configured — blank preserves".to_string()
+                } else {
+                    self.proxy.clone()
+                }
+            }
             5 => self.models.clone(),
             6 => if self.local { "Yes" } else { "No" }.to_string(),
             7 => if self.enabled { "Yes" } else { "No" }.to_string(),
@@ -316,7 +328,11 @@ impl ProviderDraft {
             } else {
                 Some(self.api_key.trim().to_string())
             },
-            proxy: Some(self.proxy.trim().to_string()),
+            proxy: if editing_existing && self.proxy.trim().is_empty() && self.existing_has_proxy {
+                None
+            } else {
+                Some(self.proxy.trim().to_string())
+            },
             local: Some(self.local),
             models: Some(models),
             enabled: Some(self.enabled),
@@ -398,11 +414,42 @@ pub struct App {
 impl App {
     pub fn load(api: AdminClient, notice: Option<String>) -> Result<Self> {
         let config = api.config()?;
-        let status = api.status().unwrap_or(Value::Null);
-        let models = api.models().unwrap_or_default();
-        let custom_providers = api.custom_providers().unwrap_or_default().providers;
-        let local_status = api.local_provider_status().unwrap_or_default().providers;
-        let usage = api.usage(30).unwrap_or(Value::Null);
+        let mut load_error: Option<String> = None;
+        let status = match api.status() {
+            Ok(value) => value,
+            Err(error) => {
+                load_error = Some(error.to_string());
+                Value::Null
+            }
+        };
+        let models = match api.models() {
+            Ok(value) => value,
+            Err(error) => {
+                load_error.get_or_insert_with(|| error.to_string());
+                ModelsResponse::default()
+            }
+        };
+        let custom_providers = match api.custom_providers() {
+            Ok(value) => value.providers,
+            Err(error) => {
+                load_error.get_or_insert_with(|| error.to_string());
+                Vec::new()
+            }
+        };
+        let local_status = match api.local_provider_status() {
+            Ok(value) => value.providers,
+            Err(error) => {
+                load_error.get_or_insert_with(|| error.to_string());
+                Vec::new()
+            }
+        };
+        let usage = match api.usage(30) {
+            Ok(value) => value,
+            Err(error) => {
+                load_error.get_or_insert_with(|| error.to_string());
+                Value::Null
+            }
+        };
         Ok(Self {
             api,
             page: Page::Dashboard,
@@ -422,7 +469,7 @@ impl App {
             show_advanced: false,
             modal: None,
             notice,
-            error: None,
+            error: load_error,
             should_quit: false,
             hitboxes: Vec::new(),
             geometry: ChromeGeometry::default(),
@@ -449,6 +496,10 @@ impl App {
         }
         match self.api.local_provider_status() {
             Ok(value) => self.local_status = value.providers,
+            Err(error) => self.set_error(error.to_string()),
+        }
+        match self.api.usage(30) {
+            Ok(value) => self.usage = value,
             Err(error) => self.set_error(error.to_string()),
         }
         self.clamp_selections();
@@ -495,12 +546,27 @@ impl App {
                 });
             }
             KeyCode::Char('d') if self.page == Page::Models => self.assign_selected_model("MODEL"),
-            KeyCode::Char('f') if self.page == Page::Models => self.assign_selected_model("MODEL_FABLE"),
-            KeyCode::Char('o') if self.page == Page::Models => self.assign_selected_model("MODEL_OPUS"),
-            KeyCode::Char('s') if self.page == Page::Models => self.assign_selected_model("MODEL_SONNET"),
-            KeyCode::Char('h') if self.page == Page::Models => self.assign_selected_model("MODEL_HAIKU"),
-            KeyCode::Char('a') if self.page == Page::Settings => self.show_advanced = !self.show_advanced,
-            KeyCode::Char('x') if matches!(self.page, Page::Routing | Page::Context | Page::Local | Page::Settings) => {
+            KeyCode::Char('f') if self.page == Page::Models => {
+                self.assign_selected_model("MODEL_FABLE")
+            }
+            KeyCode::Char('o') if self.page == Page::Models => {
+                self.assign_selected_model("MODEL_OPUS")
+            }
+            KeyCode::Char('s') if self.page == Page::Models => {
+                self.assign_selected_model("MODEL_SONNET")
+            }
+            KeyCode::Char('h') if self.page == Page::Models => {
+                self.assign_selected_model("MODEL_HAIKU")
+            }
+            KeyCode::Char('a') if self.page == Page::Settings => {
+                self.show_advanced = !self.show_advanced
+            }
+            KeyCode::Char('x')
+                if matches!(
+                    self.page,
+                    Page::Routing | Page::Context | Page::Local | Page::Settings
+                ) =>
+            {
                 self.clear_selected_secret();
             }
             KeyCode::Char('!') => return Ok(Some(ExternalAction::LaunchClaude { danger: true })),
@@ -621,12 +687,20 @@ impl App {
     }
 
     fn move_selection(&mut self, delta: isize) {
-        let (selection, len) = match self.page {
-            Page::Providers => (&mut self.provider_selected, self.config.provider_status.len()),
-            Page::Models => (&mut self.model_selected, self.filtered_models().len()),
-            Page::Routing => (&mut self.routing_selected, self.routing_field_indices().len()),
-            Page::Local => (&mut self.local_selected, self.local_field_indices().len()),
-            Page::Settings => (&mut self.setting_selected, self.settings_field_indices().len()),
+        let len = match self.page {
+            Page::Providers => self.config.provider_status.len(),
+            Page::Models => self.filtered_models().len(),
+            Page::Routing => self.routing_field_indices().len(),
+            Page::Local => self.local_field_indices().len(),
+            Page::Settings => self.settings_field_indices().len(),
+            _ => return,
+        };
+        let selection = match self.page {
+            Page::Providers => &mut self.provider_selected,
+            Page::Models => &mut self.model_selected,
+            Page::Routing => &mut self.routing_selected,
+            Page::Local => &mut self.local_selected,
+            Page::Settings => &mut self.setting_selected,
             _ => return,
         };
         if len == 0 {
@@ -646,14 +720,13 @@ impl App {
 
     pub fn filtered_models(&self) -> Vec<String> {
         let query = self.model_query.trim().to_ascii_lowercase();
-        self.models
-            .models
+        self.model_inventory()
             .iter()
             .filter(|model| {
                 if query.is_empty() {
                     return true;
                 }
-                let label = self.models.model_labels.get(*model).map(String::as_str).unwrap_or("");
+                let label = self.model_label(model);
                 model.to_ascii_lowercase().contains(&query)
                     || label.to_ascii_lowercase().contains(&query)
             })
@@ -661,17 +734,66 @@ impl App {
             .collect()
     }
 
+    pub fn model_inventory(&self) -> Vec<String> {
+        let mut models = if self.models.catalog_models.is_empty() {
+            self.models.models.clone()
+        } else {
+            self.models.catalog_models.clone()
+        };
+        for model in &self.models.models {
+            if !models.iter().any(|candidate| candidate == model) {
+                models.push(model.clone());
+            }
+        }
+        models.sort_by_key(|model| model.to_ascii_lowercase());
+        models.dedup();
+        models
+    }
+
+    pub fn model_is_routable(&self, model: &str) -> bool {
+        self.models
+            .models
+            .iter()
+            .any(|candidate| candidate == model)
+    }
+
+    pub fn model_label(&self, model: &str) -> String {
+        self.models
+            .catalog_model_labels
+            .get(model)
+            .or_else(|| self.models.model_labels.get(model))
+            .cloned()
+            .unwrap_or_else(|| model.to_string())
+    }
+
+    pub fn model_evidence(&self, model: &str) -> Option<&Value> {
+        self.models
+            .catalog_model_evidence
+            .get(model)
+            .or_else(|| self.models.model_evidence.get(model))
+    }
+
     pub fn routing_field_indices(&self) -> Vec<usize> {
         ROUTING_KEYS
             .iter()
-            .filter_map(|key| self.config.fields.iter().position(|field| field.key == *key))
+            .filter_map(|key| {
+                self.config
+                    .fields
+                    .iter()
+                    .position(|field| field.key == *key)
+            })
             .collect()
     }
 
     pub fn local_field_indices(&self) -> Vec<usize> {
         LOCAL_KEYS
             .iter()
-            .filter_map(|key| self.config.fields.iter().position(|field| field.key == *key))
+            .filter_map(|key| {
+                self.config
+                    .fields
+                    .iter()
+                    .position(|field| field.key == *key)
+            })
             .collect()
     }
 
@@ -687,7 +809,10 @@ impl App {
     }
 
     pub fn context_field(&self) -> Option<&ConfigField> {
-        self.config.fields.iter().find(|field| field.key == CONTEXT_KEY)
+        self.config
+            .fields
+            .iter()
+            .find(|field| field.key == CONTEXT_KEY)
     }
 
     pub fn selected_provider(&self) -> Option<&ProviderStatus> {
@@ -700,10 +825,20 @@ impl App {
 
     pub fn selected_field_index(&self) -> Option<usize> {
         match self.page {
-            Page::Routing => self.routing_field_indices().get(self.routing_selected).copied(),
-            Page::Context => self.config.fields.iter().position(|field| field.key == CONTEXT_KEY),
+            Page::Routing => self
+                .routing_field_indices()
+                .get(self.routing_selected)
+                .copied(),
+            Page::Context => self
+                .config
+                .fields
+                .iter()
+                .position(|field| field.key == CONTEXT_KEY),
             Page::Local => self.local_field_indices().get(self.local_selected).copied(),
-            Page::Settings => self.settings_field_indices().get(self.setting_selected).copied(),
+            Page::Settings => self
+                .settings_field_indices()
+                .get(self.setting_selected)
+                .copied(),
             _ => None,
         }
     }
@@ -754,7 +889,12 @@ impl App {
         keys.sort();
         keys.dedup();
         keys.iter()
-            .filter_map(|key| self.config.fields.iter().position(|field| field.key == *key))
+            .filter_map(|key| {
+                self.config
+                    .fields
+                    .iter()
+                    .position(|field| field.key == *key)
+            })
             .collect()
     }
 
@@ -771,10 +911,20 @@ impl App {
                 key: field.key,
                 label: field.label,
                 options: vec![
-                    ConfigOption { value: "true".to_string(), label: "Enabled".to_string() },
-                    ConfigOption { value: "false".to_string(), label: "Disabled".to_string() },
+                    ConfigOption {
+                        value: "true".to_string(),
+                        label: "Enabled".to_string(),
+                    },
+                    ConfigOption {
+                        value: "false".to_string(),
+                        label: "Disabled".to_string(),
+                    },
                 ],
-                selected: if field.value.eq_ignore_ascii_case("false") { 1 } else { 0 },
+                selected: if field.value.eq_ignore_ascii_case("false") {
+                    1
+                } else {
+                    0
+                },
             });
             return;
         }
@@ -853,6 +1003,12 @@ impl App {
         let Some(model) = self.selected_model() else {
             return;
         };
+        if !self.model_is_routable(&model) {
+            self.set_error(format!(
+                "{model} is cataloged but not currently routable; update the model catalog policy first"
+            ));
+            return;
+        }
         self.apply_field_value(key, Value::String(model.clone()));
         if self.error.is_none() {
             self.set_notice(format!("{key} → {model}"));
@@ -864,10 +1020,12 @@ impl App {
             return;
         };
         match self.api.test_provider(&provider.provider_id) {
-            Ok(value) => self.modal = Some(Modal::Message {
-                title: format!("{} test", provider.display_name),
-                body: pretty(&value),
-            }),
+            Ok(value) => {
+                self.modal = Some(Modal::Message {
+                    title: format!("{} test", provider.display_name),
+                    body: pretty(&value),
+                })
+            }
             Err(error) => self.set_error(error.to_string()),
         }
     }
@@ -914,7 +1072,10 @@ impl App {
         }
         self.modal = Some(Modal::Confirm {
             title: "Delete custom provider".to_string(),
-            body: format!("Delete {} ({})?", provider.display_name, provider.provider_id),
+            body: format!(
+                "Delete {} ({})?",
+                provider.display_name, provider.provider_id
+            ),
             action: ConfirmAction::DeleteCustom(provider.provider_id.clone()),
         });
     }
@@ -926,11 +1087,16 @@ impl App {
         if provider.kind != "connected_account" {
             return;
         }
-        match self.api.connected_account_login(&provider.provider_id, mode) {
-            Ok(value) => self.modal = Some(Modal::Message {
-                title: format!("{} sign-in", provider.display_name),
-                body: pretty(&value),
-            }),
+        match self
+            .api
+            .connected_account_login(&provider.provider_id, mode)
+        {
+            Ok(value) => {
+                self.modal = Some(Modal::Message {
+                    title: format!("{} sign-in", provider.display_name),
+                    body: pretty(&value),
+                })
+            }
             Err(error) => self.set_error(error.to_string()),
         }
     }
@@ -997,11 +1163,20 @@ impl App {
                 }
                 InputOutcome::Continue => self.modal = Some(Modal::EditField { field, input }),
             },
-            Modal::Choice { key: field_key, label, options, mut selected } => {
+            Modal::Choice {
+                key: field_key,
+                label,
+                options,
+                mut selected,
+            } => {
                 match key.code {
                     KeyCode::Esc => {}
-                    KeyCode::Up | KeyCode::Char('k') => selected = wrap_index(selected, options.len(), -1),
-                    KeyCode::Down | KeyCode::Char('j') => selected = wrap_index(selected, options.len(), 1),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected = wrap_index(selected, options.len(), -1)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        selected = wrap_index(selected, options.len(), 1)
+                    }
                     KeyCode::Enter => {
                         if let Some(option) = options.get(selected) {
                             let value = if option.value == "true" {
@@ -1017,13 +1192,26 @@ impl App {
                     }
                     _ => {}
                 }
-                self.modal = Some(Modal::Choice { key: field_key, label, options, selected });
+                self.modal = Some(Modal::Choice {
+                    key: field_key,
+                    label,
+                    options,
+                    selected,
+                });
             }
-            Modal::FieldPicker { title, field_indices, mut selected } => {
+            Modal::FieldPicker {
+                title,
+                field_indices,
+                mut selected,
+            } => {
                 match key.code {
                     KeyCode::Esc => return Ok(()),
-                    KeyCode::Up | KeyCode::Char('k') => selected = wrap_index(selected, field_indices.len(), -1),
-                    KeyCode::Down | KeyCode::Char('j') => selected = wrap_index(selected, field_indices.len(), 1),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected = wrap_index(selected, field_indices.len(), -1)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        selected = wrap_index(selected, field_indices.len(), 1)
+                    }
                     KeyCode::Enter => {
                         if let Some(index) = field_indices.get(selected).copied() {
                             self.open_field_editor(index);
@@ -1032,24 +1220,42 @@ impl App {
                     }
                     _ => {}
                 }
-                self.modal = Some(Modal::FieldPicker { title, field_indices, selected });
+                self.modal = Some(Modal::FieldPicker {
+                    title,
+                    field_indices,
+                    selected,
+                });
             }
-            Modal::ProviderEditor { existing_id, mut draft, mut selected, mut editing } => {
+            Modal::ProviderEditor {
+                existing_id,
+                mut draft,
+                mut selected,
+                mut editing,
+            } => {
                 if let Some(mut input) = editing.take() {
                     match edit_input(&mut input, key) {
                         InputOutcome::Cancel => {}
                         InputOutcome::Submit => draft.set_value(selected, input.value),
                         InputOutcome::Continue => editing = Some(input),
                     }
-                    self.modal = Some(Modal::ProviderEditor { existing_id, draft, selected, editing });
+                    self.modal = Some(Modal::ProviderEditor {
+                        existing_id,
+                        draft,
+                        selected,
+                        editing,
+                    });
                     return Ok(());
                 }
                 match key.code {
                     KeyCode::Esc => return Ok(()),
                     KeyCode::Up | KeyCode::Char('k') => selected = wrap_index(selected, 8, -1),
                     KeyCode::Down | KeyCode::Char('j') => selected = wrap_index(selected, 8, 1),
-                    KeyCode::Char(' ') | KeyCode::Enter if selected == 6 => draft.local = !draft.local,
-                    KeyCode::Char(' ') | KeyCode::Enter if selected == 7 => draft.enabled = !draft.enabled,
+                    KeyCode::Char(' ') | KeyCode::Enter if selected == 6 => {
+                        draft.local = !draft.local
+                    }
+                    KeyCode::Char(' ') | KeyCode::Enter if selected == 7 => {
+                        draft.enabled = !draft.enabled
+                    }
                     KeyCode::Enter => {
                         if let Some((value, multiline, secret)) = draft.edit_value(selected) {
                             editing = Some(TextInput::new(value, multiline, secret));
@@ -1061,12 +1267,27 @@ impl App {
                     }
                     _ => {}
                 }
-                self.modal = Some(Modal::ProviderEditor { existing_id, draft, selected, editing });
+                self.modal = Some(Modal::ProviderEditor {
+                    existing_id,
+                    draft,
+                    selected,
+                    editing,
+                });
             }
-            Modal::Confirm { title, body, action } => match key.code {
+            Modal::Confirm {
+                title,
+                body,
+                action,
+            } => match key.code {
                 KeyCode::Esc | KeyCode::Char('n') => {}
                 KeyCode::Enter | KeyCode::Char('y') => self.execute_confirm(action),
-                _ => self.modal = Some(Modal::Confirm { title, body, action }),
+                _ => {
+                    self.modal = Some(Modal::Confirm {
+                        title,
+                        body,
+                        action,
+                    })
+                }
             },
         }
         Ok(())
@@ -1090,24 +1311,30 @@ impl App {
 
     fn execute_confirm(&mut self, action: ConfirmAction) {
         match action {
-            ConfirmAction::ClearField(key) => self.apply_field_value(&key, Value::String(String::new())),
-            ConfirmAction::DeleteCustom(provider_id) => match self.api.remove_custom_provider(&provider_id) {
-                Ok(_) => {
-                    self.refresh_all();
-                    self.set_notice(format!("Deleted {provider_id}"));
+            ConfirmAction::ClearField(key) => {
+                self.apply_field_value(&key, Value::String(String::new()))
+            }
+            ConfirmAction::DeleteCustom(provider_id) => {
+                match self.api.remove_custom_provider(&provider_id) {
+                    Ok(_) => {
+                        self.refresh_all();
+                        self.set_notice(format!("Deleted {provider_id}"));
+                    }
+                    Err(error) => self.set_error(error.to_string()),
                 }
-                Err(error) => self.set_error(error.to_string()),
-            },
-            ConfirmAction::DisconnectProvider(provider_id) => match self.api.connected_account_disconnect(&provider_id) {
-                Ok(value) => {
-                    self.refresh_all();
-                    self.modal = Some(Modal::Message {
-                        title: "Account disconnected".to_string(),
-                        body: pretty(&value),
-                    });
+            }
+            ConfirmAction::DisconnectProvider(provider_id) => {
+                match self.api.connected_account_disconnect(&provider_id) {
+                    Ok(value) => {
+                        self.refresh_all();
+                        self.modal = Some(Modal::Message {
+                            title: "Account disconnected".to_string(),
+                            body: pretty(&value),
+                        });
+                    }
+                    Err(error) => self.set_error(error.to_string()),
                 }
-                Err(error) => self.set_error(error.to_string()),
-            },
+            }
         }
     }
 
@@ -1137,8 +1364,16 @@ impl App {
     }
 
     pub fn status_text(&self) -> String {
-        let status = self.status.get("status").and_then(Value::as_str).unwrap_or("offline");
-        let host = self.status.get("host").and_then(Value::as_str).unwrap_or("127.0.0.1");
+        let status = self
+            .status
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("offline");
+        let host = self
+            .status
+            .get("host")
+            .and_then(Value::as_str)
+            .unwrap_or("127.0.0.1");
         let port = self.status.get("port").and_then(Value::as_u64).unwrap_or(0);
         format!("{status} · {host}:{port}")
     }
@@ -1161,6 +1396,8 @@ impl App {
 
     #[cfg(test)]
     pub fn fixture() -> Self {
+        use serde_json::json;
+
         let api = AdminClient::new("http://127.0.0.1:8082").unwrap();
         let context = ConfigField {
             key: CONTEXT_KEY.to_string(),
@@ -1175,7 +1412,10 @@ impl App {
         Self {
             api,
             page: Page::Dashboard,
-            config: ConfigResponse { fields: vec![context], ..ConfigResponse::default() },
+            config: ConfigResponse {
+                fields: vec![context],
+                ..ConfigResponse::default()
+            },
             status: json!({"status":"running","host":"127.0.0.1","port":8082,"model":"demo/model"}),
             models: ModelsResponse::default(),
             custom_providers: Vec::new(),
@@ -1210,7 +1450,9 @@ enum InputOutcome {
 fn edit_input(input: &mut TextInput, key: KeyEvent) -> InputOutcome {
     match key.code {
         KeyCode::Esc => InputOutcome::Cancel,
-        KeyCode::Enter if !input.multiline || key.modifiers.contains(KeyModifiers::CONTROL) => InputOutcome::Submit,
+        KeyCode::Enter if !input.multiline || key.modifiers.contains(KeyModifiers::CONTROL) => {
+            InputOutcome::Submit
+        }
         KeyCode::Enter => {
             input.insert_char('\n');
             InputOutcome::Continue
@@ -1268,7 +1510,11 @@ fn wrap_index(current: usize, len: usize, delta: isize) -> usize {
 }
 
 fn clamp(current: usize, len: usize) -> usize {
-    if len == 0 { 0 } else { current.min(len - 1) }
+    if len == 0 {
+        0
+    } else {
+        current.min(len - 1)
+    }
 }
 
 fn contains(rect: Rect, x: u16, y: u16) -> bool {
@@ -1321,5 +1567,112 @@ mod tests {
         let draft = ProviderDraft::from_existing(&provider);
         let payload = draft.payload(true);
         assert!(payload.api_key.is_none());
+    }
+
+    #[test]
+    fn editing_custom_provider_with_blank_proxy_preserves_proxy() {
+        let provider = CustomProvider {
+            provider_id: "lab".to_string(),
+            display_name: "Lab".to_string(),
+            base_url: "https://example.invalid/v1".to_string(),
+            enabled: true,
+            proxy_configured: true,
+            ..CustomProvider::default()
+        };
+        let draft = ProviderDraft::from_existing(&provider);
+        let payload = draft.payload(true);
+        assert!(payload.proxy.is_none());
+        assert_eq!(draft.field_value(4), "configured — blank preserves");
+    }
+
+    #[test]
+    fn model_selection_navigates_visible_and_catalog_rows() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/free".to_string()];
+        app.models.catalog_models = vec![
+            "provider/free".to_string(),
+            "provider/hidden-free".to_string(),
+        ];
+        app.models.catalog_model_labels.insert(
+            "provider/hidden-free".to_string(),
+            "Hidden Free".to_string(),
+        );
+
+        assert_eq!(
+            app.filtered_models(),
+            ["provider/free", "provider/hidden-free"]
+        );
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+            .unwrap();
+        assert_eq!(app.model_selected, 1);
+        assert_eq!(
+            app.selected_model().as_deref(),
+            Some("provider/hidden-free")
+        );
+        assert!(!app.model_is_routable("provider/hidden-free"));
+
+        app.model_query = "hidden".to_string();
+        app.clamp_selections();
+        assert_eq!(app.filtered_models(), ["provider/hidden-free"]);
+        assert_eq!(app.model_selected, 0);
+    }
+
+    #[test]
+    fn hidden_catalog_model_cannot_be_assigned_without_policy_change() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/routable".to_string()];
+        app.models.catalog_models = vec![
+            "provider/routable".to_string(),
+            "provider/hidden".to_string(),
+        ];
+        app.model_query = "hidden".to_string();
+
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('d'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("not currently routable")));
+    }
+
+    #[test]
+    fn model_rows_are_selectable_with_a_mouse_click() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/one".to_string(), "provider/two".to_string()];
+        app.models.catalog_models = app.models.models.clone();
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &mut app))
+            .unwrap();
+        let rect = app
+            .hitboxes
+            .iter()
+            .find_map(|hitbox| match &hitbox.action {
+                UiAction::SelectModel(1) => Some(hitbox.rect),
+                _ => None,
+            })
+            .expect("second model row should have a hitbox");
+
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+
+        assert_eq!(app.model_selected, 1);
+        assert_eq!(app.selected_model().as_deref(), Some("provider/two"));
     }
 }

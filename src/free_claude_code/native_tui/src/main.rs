@@ -7,7 +7,9 @@ use api::AdminClient;
 use app::{App, ExternalAction};
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::env;
@@ -69,38 +71,51 @@ fn setup_terminal() -> Result<NativeTerminal> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
         .context("could not enter alternate terminal screen")?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).context("could not create terminal backend")?;
-    terminal.clear().context("could not clear terminal")?;
-    Ok(terminal)
+    Terminal::new(backend).context("could not create terminal backend")
 }
 
 fn restore_terminal(terminal: &mut NativeTerminal) -> Result<()> {
     disable_raw_mode().context("could not disable terminal raw mode")?;
-    execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)
-        .context("could not leave alternate terminal screen")?;
-    terminal.show_cursor().context("could not restore terminal cursor")?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )
+    .context("could not leave alternate terminal screen")?;
+    terminal
+        .show_cursor()
+        .context("could not restore terminal cursor")?;
     Ok(())
 }
 
 fn suspend_terminal(terminal: &mut NativeTerminal) -> Result<()> {
     disable_raw_mode().context("could not suspend terminal raw mode")?;
-    execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)
-        .context("could not suspend control center")?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )
+    .context("could not suspend control center")?;
     terminal.show_cursor().context("could not restore cursor")?;
     Ok(())
 }
 
 fn resume_terminal(terminal: &mut NativeTerminal) -> Result<()> {
     enable_raw_mode().context("could not resume terminal raw mode")?;
-    execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)
-        .context("could not resume control center")?;
-    terminal.clear().context("could not redraw control center")?;
+    execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture
+    )
+    .context("could not resume control center")?;
     Ok(())
 }
 
 fn run_loop(terminal: &mut NativeTerminal, app: &mut App) -> Result<()> {
     loop {
-        terminal.draw(|frame| ui::render(frame, app)).context("terminal draw failed")?;
+        terminal
+            .draw(|frame| ui::render(frame, app))
+            .context("terminal draw failed")?;
         if app.should_quit {
             return Ok(());
         }

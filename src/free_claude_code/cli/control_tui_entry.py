@@ -16,6 +16,24 @@ ControlClientLauncher = Callable[[bool, Sequence[str], Path | None], None]
 TUI_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
+def run_control_tui(
+    settings: Settings,
+    *,
+    supervisor: ServerSupervisor | None,
+    launch_client: ControlClientLauncher,
+    startup_error: str | None = None,
+) -> None:
+    """Compatibility seam that now runs the native control center.
+
+    The old Textual entry point was public to launchers and downstream
+    integrations. Keep its call shape while making the Rust/Ratatui client
+    the only foreground implementation.
+    """
+
+    del supervisor, launch_client
+    run_native_control_center(settings, notice=startup_error)
+
+
 def run_owned_control_center(
     settings: Settings,
     *,
@@ -47,7 +65,12 @@ def run_owned_control_center(
                 startup_error = _format_launch_failure(exc)
             except Exception as exc:
                 startup_error = _format_launch_failure(exc)
-        run_native_control_center(settings, notice=startup_error)
+        run_control_tui(
+            settings,
+            supervisor=supervisor,
+            launch_client=launch_client,
+            startup_error=startup_error,
+        )
     finally:
         supervisor.request_stop()
         server_thread.join(TUI_SHUTDOWN_TIMEOUT_SECONDS)
@@ -66,5 +89,8 @@ def run_attached_control_center(
 ) -> None:
     """Attach the native control center to a server owned by another process."""
 
-    del launch_client
-    run_native_control_center(settings)
+    run_control_tui(
+        settings,
+        supervisor=None,
+        launch_client=launch_client,
+    )

@@ -17,6 +17,7 @@ pub struct AdminClient {
     http: Client,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigResponse {
     #[serde(default)]
@@ -29,6 +30,7 @@ pub struct ConfigResponse {
     pub paths: HashMap<String, Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigSection {
     #[serde(default)]
@@ -47,6 +49,7 @@ pub struct ConfigField {
     pub key: String,
     #[serde(default)]
     pub label: String,
+    #[allow(dead_code)]
     #[serde(default, rename = "section")]
     pub section_id: String,
     #[serde(default, rename = "type")]
@@ -100,9 +103,9 @@ pub struct ProviderStatus {
     #[serde(default)]
     pub custom: bool,
     #[serde(default)]
-    pub api_key_configured: bool,
+    pub api_key_configured: Option<bool>,
     #[serde(default)]
-    pub proxy_configured: bool,
+    pub proxy_configured: Option<bool>,
     #[serde(default)]
     pub model_ids: Vec<String>,
 }
@@ -159,6 +162,7 @@ pub struct CustomProviderPayload {
     pub enabled: Option<bool>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ModelsResponse {
     #[serde(default)]
@@ -179,6 +183,7 @@ pub struct ModelsResponse {
     pub catalog_model_evidence: HashMap<String, Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ApplyResponse {
     #[serde(default)]
@@ -202,11 +207,11 @@ impl AdminClient {
         if root.scheme() != "http" && root.scheme() != "https" {
             bail!("FCC Admin URL must use http or https");
         }
-        let host = root
-            .host_str()
-            .context("FCC Admin URL is missing a host")?;
+        let host = root.host_str().context("FCC Admin URL is missing a host")?;
         let loopback = host.eq_ignore_ascii_case("localhost")
-            || IpAddr::from_str(host).map(|ip| ip.is_loopback()).unwrap_or(false);
+            || IpAddr::from_str(host)
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
         if !loopback {
             bail!("FCC Admin client only connects to loopback hosts");
         }
@@ -252,8 +257,7 @@ impl AdminClient {
         let mut values = HashMap::new();
         values.insert(key.to_string(), value);
         let payload = json!({ "values": values });
-        let validation: ApplyResponse =
-            self.post("admin/api/config/validate", &payload)?;
+        let validation: ApplyResponse = self.post("admin/api/config/validate", &payload)?;
         if !validation.valid {
             return Ok(validation);
         }
@@ -291,6 +295,7 @@ impl AdminClient {
         )
     }
 
+    #[allow(dead_code)]
     pub fn connected_account_status(&self, provider_id: &str) -> Result<Value> {
         let id = safe_path_id(provider_id)?;
         self.get(&format!("admin/api/providers/{id}/auth"))
@@ -304,6 +309,7 @@ impl AdminClient {
         )
     }
 
+    #[allow(dead_code)]
     pub fn connected_account_cancel(&self, provider_id: &str) -> Result<Value> {
         let id = safe_path_id(provider_id)?;
         self.request(
@@ -421,5 +427,42 @@ mod tests {
         };
         let value = serde_json::to_value(payload).unwrap();
         assert!(value.get("api_key").is_none());
+        assert!(value.get("proxy").is_none());
+    }
+
+    #[test]
+    fn models_response_keeps_visible_and_full_catalog_metadata() {
+        let response: ModelsResponse = serde_json::from_value(json!({
+            "models": ["provider/free"],
+            "catalog_models": ["provider/free", "provider/hidden"],
+            "model_labels": {"provider/free": "Free"},
+            "catalog_model_labels": {"provider/hidden": "Hidden"},
+            "catalog_model_evidence": {
+                "provider/free": {"is_free": true},
+                "provider/hidden": {"is_free": true}
+            },
+            "failed_providers": ["provider-down"]
+        }))
+        .unwrap();
+
+        assert_eq!(response.models, vec!["provider/free"]);
+        assert_eq!(response.catalog_models.len(), 2);
+        assert_eq!(response.catalog_model_labels["provider/hidden"], "Hidden");
+        assert_eq!(response.failed_providers, vec!["provider-down"]);
+    }
+
+    #[test]
+    fn provider_status_accepts_server_inventory_without_secret_flags() {
+        let status: ProviderStatus = serde_json::from_value(json!({
+            "provider_id": "open_router",
+            "display_name": "OpenRouter",
+            "kind": "remote",
+            "status": "configured"
+        }))
+        .unwrap();
+
+        assert_eq!(status.provider_id, "open_router");
+        assert_eq!(status.api_key_configured, None);
+        assert_eq!(status.proxy_configured, None);
     }
 }

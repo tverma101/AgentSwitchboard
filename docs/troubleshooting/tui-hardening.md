@@ -2,9 +2,10 @@
 
 ## Scope
 
-This record covers the Textual control center, its line-oriented terminal fallback,
-the shared selection picker, and the local repository inventory used by both
-surfaces. The target behavior is a recoverable control surface: a failed backend
+This record covers the legacy Textual and line-oriented terminal compatibility
+surfaces, the native Ratatui control center, the shared selection picker, and
+the local repository inventory used by those surfaces. The target behavior is a
+recoverable control surface: a failed backend
 request must remain visible with a retry path, a refresh must not overwrite newer
 state, and selecting a repository must be durable for the next launch.
 
@@ -76,7 +77,8 @@ tests in this branch:
 31. cache writes use replace semantics and clean temporary files on failure;
 32. repository selection is persisted immediately, including authenticated-owner
     scope, and failure is reported separately from session-only selection;
-33. repository lookup/discovery/cache failures retain a usable fallback selection;
+33. repository lookup/discovery/cache failures fail closed instead of showing an
+    unvalidated path;
 34. the terminal repository menu uses the same owner-scoped discovery and cache
     semantics as the Textual picker;
 35. settings mutations refresh the in-memory snapshot before a subsequent launch,
@@ -92,9 +94,8 @@ The repository picker now marks recency only after canonical deduplication. A
 successful write is reported as the next-launch default; an `OSError` leaves the
 selection active for the current session but emits a warning that the cache could
 not be written. A failed scan does not replace a known inventory with an empty
-cache. An authenticated GitHub identity is treated as a scope when available;
-if the local CLI identity cannot be read, discovery fails open to ordinary local
-Git repositories and surfaces the identity problem.
+cache or reinsert an unvalidated selected path. Discovery is GitHub-only whether
+or not the local CLI identity can be read, and linked worktrees are excluded.
 
 Focused validation covers repository persistence/deduplication, terminal and
 Textual failure recovery, model filtering/editor state, polling, launch errors,
@@ -109,3 +110,22 @@ session is still required to confirm visual layout at every terminal size and
 the behavior of external GitHub authentication/remote probes. Distinct local
 clones of the same GitHub repository are intentionally retained because they are
 different launchable checkouts; they are not duplicate rows for the same path.
+
+## PR #210 native control center audit
+
+The native Ratatui client consumes the existing loopback Admin API for provider
+inventory, masked API-key state, model catalog/evidence, routing assignments,
+custom-provider CRUD, local-provider status, usage, and diagnostics. It keeps
+cataloged-but-not-routable models visible with an explicit policy status while
+allowing assignment only for models currently admitted by FCC. Blank configured
+API-key and proxy editors omit those fields on update so the backend preserves
+the existing credential; explicit secret clearing remains a separate confirmed
+action.
+
+The native frontend was also exercised across all pages and modal types at the
+160x50 reference viewport and an 80x24 compact viewport. The release binary was
+run against the real loopback server; the live model page showed the full catalog
+and a filtered `openrouter/free` row as routable/free, while the Providers page
+showed B.AI as a separate provider. A PTY-compatible startup path avoids a cursor
+position query during alternate-screen setup because some local terminal wrappers
+do not answer that query.

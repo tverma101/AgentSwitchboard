@@ -1,6 +1,6 @@
 # Native Rust control center
 
-AgentSwitchboard's interactive `fcc-server` control surface is being moved from a deep Textual inheritance stack to a separate Rust/Ratatui frontend. The Python/FastAPI server remains the canonical runtime, provider, routing, persistence, session, and authentication owner.
+AgentSwitchboard's interactive `fcc-server` control surface now uses a separate Rust/Ratatui frontend instead of the deep Textual inheritance stack. The Python/FastAPI server remains the canonical runtime, provider, routing, persistence, session, and authentication owner.
 
 ## Architecture donor
 
@@ -92,6 +92,10 @@ The Python launcher resolves the frontend in this order:
 1. `FCC_CONTROL_TUI_BINARY` when an explicit local build is supplied;
 2. `fcc-control-center` on `PATH`;
 3. source-backed `cargo run --release` using the packaged Cargo manifest.
+
+The standalone `fcc-tui` command attaches the native frontend to the configured
+loopback server. The interactive `fcc-server` and `fcc-claude` paths use the
+same launcher when they own or attach to the server.
 
 `fcc-server --headless` remains the explicit server-only escape hatch. The Rust source is intentionally kept inside the Python package tree so an editable AgentSwitchboard checkout can run the frontend directly against the same local server without copying configuration or provider code.
 

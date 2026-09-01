@@ -10,6 +10,7 @@ import free_claude_code.cli.repo_picker as repo_picker
 from free_claude_code.cli.repo_picker import (
     RepoEntry,
     _is_github_remote,
+    _is_linked_worktree,
     _remote_label,
     _remote_slug,
     cache_is_fresh,
@@ -20,6 +21,7 @@ from free_claude_code.cli.repo_picker import (
     github_authenticated_user,
     launch_repo,
     load_cached_repos,
+    repository_from_path,
     save_cached_repos,
 )
 
@@ -27,6 +29,17 @@ from free_claude_code.cli.repo_picker import (
 def _init_repo(path: Path, *remotes: tuple[str, str]) -> None:
     path.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "tests@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "Repo Picker Tests"],
+        check=True,
+    )
+    (path / "initial.txt").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "initial.txt"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "initial"], check=True)
     for name, url in remotes:
         subprocess.run(
             ["git", "-C", str(path), "remote", "add", name, url],
@@ -121,24 +134,60 @@ def test_repo_identity_uses_remote_name_not_checkout_directory() -> None:
     )
 
 
-def test_discovery_includes_local_repositories_without_github_authentication(
+def test_discovery_requires_a_github_remote_without_authentication(
     tmp_path: Path,
 ) -> None:
     local_only = tmp_path / "local-only"
     gitlab_repo = tmp_path / "gitlab-checkout"
+    github_repo = tmp_path / "github-checkout"
     _init_repo(local_only)
     _init_repo(gitlab_repo, ("origin", "https://gitlab.com/acme/service.git"))
+    _init_repo(github_repo, ("origin", "https://github.com/acme/service.git"))
 
     repos = discover_repos((tmp_path,))
 
-    assert {repo.path for repo in repos} == {
-        str(local_only.resolve()),
-        str(gitlab_repo.resolve()),
-    }
-    assert {repo.identity for repo in repos} == {
-        "local-only",
-        "gitlab.com/acme/service",
-    }
+    assert [repo.path for repo in repos] == [str(github_repo.resolve())]
+    assert [repo.identity for repo in repos] == ["acme/service"]
+
+
+def test_discovery_excludes_linked_worktrees_and_cache_entries(
+    tmp_path: Path,
+) -> None:
+    primary = tmp_path / "primary"
+    linked = tmp_path / "linked-worktree"
+    _init_repo(primary, ("origin", "https://github.com/acme/service.git"))
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(primary),
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/test",
+            str(linked),
+        ],
+        check=True,
+    )
+
+    assert _is_linked_worktree(linked)
+    assert repository_from_path(linked, github_user="acme") is None
+    assert discover_repos((tmp_path,), github_user="acme") == [
+        repository_from_path(primary, github_user="acme")
+    ]
+
+    cache = tmp_path / "repos.json"
+    save_cached_repos(
+        [
+            RepoEntry("primary", str(primary), "main", "acme/service"),
+            RepoEntry("linked", str(linked), "feature/test", "acme/service"),
+        ],
+        cache,
+    )
+    assert [repo.path for repo in load_cached_repos(cache, github_user="acme")] == [
+        str(primary.resolve())
+    ]
 
 
 def test_discovery_includes_repo_containing_a_scan_root(tmp_path: Path) -> None:
@@ -488,7 +537,11 @@ def test_main_persists_selected_repository_recency(
     monkeypatch.setattr(repo_picker, "github_authenticated_user", lambda: None)
     monkeypatch.setattr(repo_picker, "default_roots", lambda: (tmp_path,))
     monkeypatch.setattr(repo_picker, "cache_is_fresh", lambda _path: False)
-    monkeypatch.setattr(repo_picker, "discover_repos", lambda _roots: [repository])
+    monkeypatch.setattr(
+        repo_picker,
+        "discover_repos",
+        lambda _roots, **_kwargs: [repository],
+    )
     monkeypatch.setattr(
         repo_picker,
         "repository_from_path",

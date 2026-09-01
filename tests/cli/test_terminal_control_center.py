@@ -119,7 +119,9 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
             launch_client=launch,
         )
 
-    launch.assert_called_once_with(False, (), Path.cwd())
+    # The test runs from a linked worktree, which the repository picker
+    # intentionally excludes as a duplicate checkout.
+    launch.assert_called_once_with(False, ())
 
 
 def test_home_redraw_uses_passed_settings_without_admin_io(
