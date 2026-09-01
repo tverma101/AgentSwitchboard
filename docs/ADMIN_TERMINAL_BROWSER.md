@@ -15,52 +15,30 @@ control center exits. If an unrelated process owns the port, FCC reports that
 conflict without emitting a Uvicorn bind traceback. Use `--headless` or a
 non-TTY invocation for the prior blocking server-only behavior.
 
-The control center is a Textual application with a persistent sidebar and a
-main pane. Navigate with the arrow keys, mouse, or Enter. The Claude and Danger
-buttons launch the selected next-launch profile and repository; the application
-returns to the control center when that child exits or reports a launch error.
-Launch failures remain in a persistent red error card with the actionable
-diagnostic and exit status. When the FCC Claude compatibility firewall blocks a
-version, the launcher automatically tries an exact known-good executable from
-the configured path, PATH, or FCC's private npm offline cache; it never enables
-uncertified mode or substitutes an unverified older binary. The error screen
-also exposes visible `Repair & start` buttons, so a missing fallback can be
-repaired and retried without quitting `fcc-server`.
-If `fcc-claude` starts its own server owner, it launches the original Claude
-arguments after the server is ready and then returns to this same control
-center.
+The control center is a native Rust/Ratatui application with a persistent
+sidebar and a main pane. Navigate with the arrow keys, mouse, or Enter. `C`
+launches `fcc-claude` and `!` launches `fccdanger`; the frontend suspends while
+the child runs, then returns with the exit result visible. `R` refreshes the
+current server snapshot and `Q` exits. The full interaction and API contract
+are documented in [RUST_CONTROL_CENTER.md](RUST_CONTROL_CENTER.md).
 
-Each page exposes explicit buttons for its actions. Profiles can be created and
-selected without nested shell prompts. Models use full-width rows: Space or a
-click toggles a pending selection, while `Enable selected`, `Disable selected`,
-and `Disable all` are separate actions. `Disable all` clears the curated
-allowlist but retains the discovered inventory so it can be searched and
-re-enabled. The Models page provides provider, search, and `Free first`/
-`Free only`/`All prices` filters; filters never enable a model implicitly.
-The discovery response is reused while filtering or searching, so typing does
-not issue a provider request for every key. Use `Refresh` to explicitly fetch a
-new discovery snapshot. The provider filter also includes configured/usable
-providers that do not have a cached model row yet; selecting one shows an
-explicit message telling the user to refresh that provider.
+The Providers page shows the server's independent provider inventory and
+supports tests, connected-account login/disconnect, and custom-provider CRUD.
+The Models page shows the complete catalog and marks models as routable or
+cataloged-but-blocked; filtering is local to the loaded snapshot and assignment
+is accepted only for routable models. Settings, local setup, routing, context,
+usage, and diagnostics remain explicit Admin API operations.
 
-The Repositories page pairs each remote identity with its local checkout folder;
-branch and home-relative path details are available in the same table. The first
-load uses the fresh local repository cache when available, while `Refresh` forces
-a live scan of the configured roots. Remote metadata is shown when available, but
-a GitHub CLI login is not required. The current working directory is selected by
-default, the selected folder is marked and restored after refresh, and `Open path`
-adds a checkout outside the standard scan roots.
-Repository and profile selection is local-only: it applies to the next child
-launch and does not change a live server/session namespace. Locked Admin fields
-remain read-only. Provider,
-account, usage, diagnostics, policy, logs, and settings actions report failures
-in the page summary and an error notification instead of silently flashing away.
-The command palette's theme selection is persisted in
-`~/.fcc/control-center.json`.
+Repository selection is provided by `fcc-repos`, not by the server lifecycle
+screen. The picker rebuilds metadata from live Git state and shows only existing
+checkout folders with a GitHub remote. Linked Git worktrees, local-only clones,
+and non-GitHub remotes are excluded. A GitHub CLI login is optional; when an
+identity is available it scopes the remote owner. Use `fcc-repos --refresh
+--root ~/src` to force a bounded rescan.
 
-The home screen is deliberately local-only: it uses the startup settings
-snapshot and supervisor state and does not request Admin/provider data on every
-redraw. Network or provider work happens only after an explicit action.
+The native frontend loads one Admin snapshot at startup and does not request
+provider data on every redraw. `R`, model refresh, field edits, provider tests,
+and diagnostics are explicit loopback Admin API actions.
 
 `fcc-server --terminal` and `fcc-server --no-browser` are accepted as explicit
 terminal-only compatibility flags. Browser-opening flags and the old
@@ -73,10 +51,9 @@ work stays in the terminal through `fcc-claude`, `fccdanger`, `fcc-codex`, or
 `fcc-pi`. `fccdanger` is the personal-fork convenience alias that adds
 `--dangerously-skip-permissions` while retaining FCC routing.
 
-The terminal control-center home redraw uses the already-loaded local settings
-object and does not make an Admin request. Explicit settings edits still use
-the local Admin API; after a successful edit, the terminal invalidates its
-settings cache before the next redraw.
+The native terminal redraw uses already-loaded state and does not make an Admin
+request. Explicit settings edits still use the local Admin API; the Rust client
+refreshes its snapshot after a successful mutation.
 
 FCC's provider account and Codex Tool Accounts are separate. The FCC provider
 uses `~/.fcc/auth/openai.json`; `fcc accounts` uses `$CODEX_HOME/auth.json` and
@@ -84,6 +61,7 @@ uses `~/.fcc/auth/openai.json`; `fcc accounts` uses `$CODEX_HOME/auth.json` and
 and forgets private local Codex auth snapshots without logging out an upstream
 account; selections apply only to new Codex/helper sessions.
 
-The Accounts and Providers pages are separate sidebar destinations. FCC account
-login/switching never changes the Codex Tool Account store, and Codex account
-switching never changes FCC provider authentication.
+FCC account login/switching never changes the Codex Tool Account store, and
+Codex account switching never changes FCC provider authentication. Use `fcc
+accounts` for the separate Codex Tool Account store; the native Providers page
+only operates on FCC provider state.

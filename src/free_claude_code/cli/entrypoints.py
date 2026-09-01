@@ -114,7 +114,7 @@ def _parse_server_options(args: Sequence[str]) -> bool | None:
         print(
             "Start the local CodeSwitchyard proxy.\n\n"
             f"Usage: {_SERVER_USAGE}\n\n"
-            "Interactive terminals open the CodeSwitchyard Textual control center.\n"
+            "Interactive terminals open the CodeSwitchyard native Ratatui control center.\n"
             "--headless keeps the blocking server-only behavior.\n"
             "--terminal and --no-browser remain explicit no-op compatibility flags.\n"
             "Authentication browsers open only after an explicit login action."

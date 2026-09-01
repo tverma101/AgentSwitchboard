@@ -1,4 +1,4 @@
-"""Server ownership wrappers for the Harlequin-derived Textual control center."""
+"""Server ownership wrappers for the native Rust/Ratatui control center."""
 
 import sys
 import threading
@@ -9,11 +9,29 @@ from free_claude_code.cli.commands import ServerSupervisor
 from free_claude_code.config.settings import Settings
 
 from .control_tui import _format_launch_failure
-from .model_picker_readable_tui import run_control_tui
+from .rust_tui import run_native_control_center
 from .terminal_control import _wait_for_proxy
 
 ControlClientLauncher = Callable[[bool, Sequence[str], Path | None], None]
 TUI_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+
+
+def run_control_tui(
+    settings: Settings,
+    *,
+    supervisor: ServerSupervisor | None,
+    launch_client: ControlClientLauncher,
+    startup_error: str | None = None,
+) -> None:
+    """Compatibility seam that now runs the native control center.
+
+    The old Textual entry point was public to launchers and downstream
+    integrations. Keep its call shape while making the Rust/Ratatui client
+    the only foreground implementation.
+    """
+
+    del supervisor, launch_client
+    run_native_control_center(settings, notice=startup_error)
 
 
 def run_owned_control_center(
@@ -22,7 +40,7 @@ def run_owned_control_center(
     launch_client: ControlClientLauncher,
     initial_argv: Sequence[str] | None = None,
 ) -> None:
-    """Own the server worker while the Textual application is foreground."""
+    """Own the server worker while the native control center is foreground."""
 
     supervisor = ServerSupervisor(console_logging=False)
     if not supervisor.schedule_run():
@@ -69,7 +87,7 @@ def run_attached_control_center(
     *,
     launch_client: ControlClientLauncher,
 ) -> None:
-    """Attach the Textual application to a server owned by another process."""
+    """Attach the native control center to a server owned by another process."""
 
     run_control_tui(
         settings,

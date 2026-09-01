@@ -27,24 +27,27 @@ Start the server in a terminal:
 fcc-server
 ```
 
-The command opens the terminal control center. In the Textual control center,
-choose **Repositories** in the sidebar; the current working directory is
-selected by default, and **Open path** adds any local Git checkout. Press
-Enter/C for `fcc-claude`, D for `fccdanger`, O in the legacy line-oriented menu
-to select a local repository, or F to select/manage the profile used by the
-next launch. F also exposes explicit selective bundle
-preview/export/import. P opens provider status and FCC account actions; its custom-provider
-path supports add, edit, test, enable/disable, and remove through the
-canonical Admin API. M shows models and opens a shared filterable picker for
-an explicit model change, U shows local usage, N runs route diagnostics, X
-explains the independent Codex Tool Account surface, S edits the supported Model and Reasoning Policy fields, L
-previews/filters the structured server log, R restarts only a server owned by
-this terminal, and Q exits. If FCC is already healthy, the control center
-attaches without claiming its lifecycle. Use `fcc-server --headless` for a
-blocking server-only process.
+The command opens the native Rust/Ratatui control center. Use Tab or
+Shift-Tab (or the sidebar with the mouse) to move between Dashboard, Providers,
+Models, Routing, Context, Local Setup, Settings, Usage, and Diagnostics. `R`
+refreshes the current server snapshot; `C` launches `fcc-claude`; `!` launches
+`fccdanger`; and `Q` exits. Providers support status, tests, connected-account
+actions, and custom-provider CRUD. Models show the complete catalog plus
+routable status; `/` filters and `D/F/O/S/H` assign the selected routable model
+to the default or Claude tier route. Settings and local/provider fields use
+the canonical Admin API, and blank configured secret/proxy edits preserve the
+existing value. If FCC is already healthy, the control center attaches without
+claiming its lifecycle. Use `fcc-tui` from another terminal to attach directly,
+or `fcc-server --headless` for a blocking server-only process.
 
-The home redraw is local-only. Admin, provider, model, usage, and diagnostic
-requests happen only after selecting their explicit action.
+Repository selection is a separate `fcc-repos` picker. It shows existing local
+checkout folders only when their live Git metadata has a configured GitHub
+remote, excludes linked worktrees, and does not require GitHub CLI login. Use
+`fcc-repos --refresh --root ~/src` to rescan a specific root.
+
+The native shell loads one server snapshot at startup and does not re-query on
+every redraw. Press `R` when an updated provider/model/usage/diagnostic snapshot
+is needed; mutations and diagnostics remain explicit Admin API actions.
 
 You can also run the terminal client from another terminal:
 

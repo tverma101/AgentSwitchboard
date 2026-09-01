@@ -321,10 +321,10 @@ async def test_repositories_page_uses_live_local_inventory() -> None:
                 "main",
                 repo.display_path,
             ]
-            assert "Local Git repositories (1 found)" in str(
+            assert "GitHub repositories (1 found)" in str(
                 app.query_one("#summary", Static).content
             )
-            discover.assert_called_once_with(())
+            discover.assert_called_once_with((), github_user=None)
 
 
 @pytest.mark.asyncio
@@ -357,10 +357,10 @@ async def test_repositories_page_uses_fresh_cache_without_scanning() -> None:
 
 
 @pytest.mark.asyncio
-async def test_repositories_page_accepts_local_checkout_without_github_authentication() -> (
-    None
-):
-    repo = RepoEntry("local-checkout", "/tmp/local-checkout", "main", "")
+async def test_repositories_page_keeps_github_checkout_without_authentication() -> None:
+    repo = RepoEntry(
+        "local-checkout", "/tmp/local-checkout", "main", "acme/local-checkout"
+    )
     app = ControlCenterApp(_settings(), supervisor=None, selected_repo=repo)
     with (
         patch(
@@ -390,7 +390,7 @@ async def test_repositories_page_accepts_local_checkout_without_github_authentic
             table = app.query_one("#table", DataTable)
             canonical_path = str(Path(repo.path).resolve())
             assert table.get_row(canonical_path) == [
-                "local-checkout",
+                "acme/local-checkout",
                 "● local-checkout",
                 "main",
                 canonical_path,
@@ -398,7 +398,7 @@ async def test_repositories_page_accepts_local_checkout_without_github_authentic
             assert app.selected_repo is not None
             assert app.selected_repo.path == canonical_path
 
-    discover.assert_called_once_with(())
+    discover.assert_called_once_with((), github_user=None)
     save.assert_called_once()
 
 
@@ -1118,6 +1118,27 @@ async def test_repository_lookup_failure_keeps_existing_selection(
             await pilot.pause()
 
     assert app.selected_repo == existing
+
+
+@pytest.mark.asyncio
+async def test_repository_discovery_failure_does_not_show_unvalidated_selection(
+    tmp_path: Path,
+) -> None:
+    existing = RepoEntry(
+        "existing", str(tmp_path / "existing"), "main", "acme/existing"
+    )
+    app = ControlCenterApp(_settings(), supervisor=None, selected_repo=existing)
+    with patch(
+        "free_claude_code.cli.control_tui.ControlCenterApp._load_repo_inventory",
+        side_effect=RuntimeError("scan failed"),
+    ):
+        async with app.run_test() as pilot:
+            await app._show_page("repos")
+            await pilot.pause()
+
+            table = app.query_one("#table", DataTable)
+            assert table.row_count == 0
+            assert app.selected_repo is None
 
 
 @pytest.mark.asyncio

@@ -80,3 +80,39 @@ jobs:
 
       - name: Run
         run: ${{ matrix.run }}
+
+  rust-tui:
+    name: rust-tui
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          fetch-depth: 1
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
+
+      - name: Format native control center in CI workspace
+        run: cargo +1.88.0 fmt --manifest-path src/free_claude_code/native_tui/Cargo.toml
+
+      - name: Preserve rustfmt output for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rustfmt-source
+          path: src/free_claude_code/native_tui
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Lint native control center
+        run: cargo +1.88.0 clippy --manifest-path src/free_claude_code/native_tui/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test native control center
+        run: cargo +1.88.0 test --manifest-path src/free_claude_code/native_tui/Cargo.toml --all-targets
+
+      - name: Enforce committed rustfmt output
+        run: git diff --exit-code -- src/free_claude_code/native_tui
