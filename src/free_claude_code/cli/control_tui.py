@@ -1262,8 +1262,8 @@ class ControlCenterApp(HarlequinAppBase):
                         github_authenticated_user
                     )
                 except Exception as exc:
-                    # GitHub CLI identity is an optional filter. A broken or
-                    # expired local login must not hide ordinary local repos.
+                    # GitHub CLI identity only scopes the GitHub remote owner.
+                    # Discovery remains GitHub-only when identity is absent.
                     self._github_user = None
                     self._notify_action_error("GitHub identity unavailable", exc)
                 self._github_identity_loaded = True
@@ -1278,12 +1278,9 @@ class ControlCenterApp(HarlequinAppBase):
                     repos = []
             if not repos:
                 roots = default_roots()
-                if self._github_user:
-                    repos = await asyncio.to_thread(
-                        discover_repos, roots, github_user=self._github_user
-                    )
-                else:
-                    repos = await asyncio.to_thread(discover_repos, roots)
+                repos = await asyncio.to_thread(
+                    discover_repos, roots, github_user=self._github_user
+                )
                 repos = deduplicate_repos(repos)
                 try:
                     await asyncio.to_thread(
@@ -1305,8 +1302,6 @@ class ControlCenterApp(HarlequinAppBase):
         except Exception as exc:
             self._notify_action_error("Repository discovery failed", exc)
             repos = []
-            if self.selected_repo is not None:
-                repos.append(self.selected_repo)
         selected_path = None
         if self.selected_repo is not None:
             try:
@@ -1328,7 +1323,7 @@ class ControlCenterApp(HarlequinAppBase):
                 )
             except Exception as exc:
                 self._notify_action_error("Selected repository lookup failed", exc)
-                selected = self.selected_repo
+                selected = None
             if selected is not None:
                 repos.append(selected)
                 repos = deduplicate_repos(repos)
@@ -1350,7 +1345,7 @@ class ControlCenterApp(HarlequinAppBase):
         self.selected_repo = selected
         self._repos = tuple(repos)
         self.query_one("#summary", Static).update(
-            f"Local Git repositories ({len(repos)} found). "
+            f"GitHub repositories ({len(repos)} found). "
             "GitHub / remote is paired with the local folder; "
             "the marked folder is the default for the next launch. "
             "Use Refresh to rescan."

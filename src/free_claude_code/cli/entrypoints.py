@@ -115,7 +115,7 @@ def _parse_server_options(args: Sequence[str]) -> bool | None:
         print(
             f"Start the local {PRODUCT_NAME} proxy.\n\n"
             f"Usage: {_SERVER_USAGE}\n\n"
-            f"Interactive terminals open the {PRODUCT_NAME} Textual control center.\n"
+            f"Interactive terminals open the {PRODUCT_NAME} native Ratatui control center.\n"
             "--headless keeps the blocking server-only behavior.\n"
             "--terminal and --no-browser remain explicit no-op compatibility flags.\n"
             "Authentication browsers open only after an explicit login action."

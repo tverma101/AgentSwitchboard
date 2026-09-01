@@ -1,4 +1,4 @@
-"""Terminal repository inventory and picker for launching ``fccdanger`` locally."""
+"""GitHub-backed repository inventory and picker for launching ``fccdanger``."""
 
 import argparse
 import json
@@ -56,7 +56,7 @@ def _canonical_repo_path(value: str | Path) -> str:
 
 @dataclass(frozen=True, slots=True)
 class RepoEntry:
-    """One local Git repository shown by the picker."""
+    """One local GitHub checkout shown by the picker."""
 
     name: str
     path: str
@@ -232,19 +232,9 @@ def _remote_label(url: str) -> str:
 
 
 def _repository_remote(path: Path, *, github_user: str | None = None) -> str:
-    """Return the preferred remote identity, optionally scoped to a GitHub user."""
+    """Return a configured GitHub remote, optionally scoped to an owner."""
 
-    if github_user is not None:
-        return _github_remote(path, github_user=github_user)
-    remotes = _remote_urls(path)
-    for name, url in remotes:
-        label = _remote_label(url)
-        if name == "origin" and label:
-            return label
-    return next(
-        (label for _name, url in remotes if (label := _remote_label(url))),
-        "",
-    )
+    return _github_remote(path, github_user=github_user)
 
 
 def _github_remote(path: Path, *, github_user: str | None = None) -> str:
@@ -325,6 +315,34 @@ def _has_git_metadata(path: Path) -> bool:
     return marker.is_dir() or marker.is_file()
 
 
+def _is_linked_worktree(path: Path) -> bool:
+    """Return whether ``path`` is a linked Git worktree checkout.
+
+    A linked worktree has a ``.git`` file pointing into the primary
+    repository's ``.git/worktrees`` directory.  It is a real checkout for Git
+    operations, but it is not an independent project folder and must not
+    appear as a second repository in the picker.
+    """
+
+    marker = path / ".git"
+    if not marker.is_file():
+        return False
+    try:
+        line = marker.read_text(encoding="utf-8").splitlines()[0].strip()
+    except OSError, IndexError, UnicodeError:
+        return False
+    prefix, separator, raw_gitdir = line.partition(":")
+    if prefix.casefold() != "gitdir" or not separator or not raw_gitdir.strip():
+        return False
+    gitdir = Path(raw_gitdir.strip())
+    if not gitdir.is_absolute():
+        gitdir = marker.parent / gitdir
+    try:
+        return gitdir.resolve().parent.name.casefold() == "worktrees"
+    except OSError, RuntimeError:
+        return False
+
+
 def repository_from_path(
     path: Path,
     *,
@@ -336,8 +354,10 @@ def repository_from_path(
     root = _git_root(path)
     if root is None:
         return None
+    if _is_linked_worktree(root):
+        return None
     remote = _repository_remote(root, github_user=github_user)
-    if github_user is not None and not remote:
+    if not remote:
         return None
     return RepoEntry(
         name=root.name,
@@ -409,7 +429,13 @@ def _normalized_scan_roots(roots: Iterable[Path]) -> tuple[Path, ...]:
 def discover_repos(
     roots: tuple[Path, ...], *, github_user: str | None = None
 ) -> list[RepoEntry]:
-    """Discover local Git repositories, optionally scoped to a GitHub account."""
+    """Discover real GitHub checkouts, optionally scoped to an account.
+
+    Local-only and non-GitHub repositories are intentionally excluded even
+    when GitHub CLI authentication is unavailable.  That keeps the picker
+    aligned with the repositories it can identify and avoids presenting
+    linked worktrees as separate projects.
+    """
 
     discovered: dict[str, RepoEntry] = {}
     for root in _normalized_scan_roots(roots):
@@ -615,7 +641,7 @@ def launch_repo(repo: RepoEntry) -> NoReturn:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Pick a local Git repository and launch fccdanger"
+        description="Pick a local GitHub checkout and launch fccdanger"
     )
     parser.add_argument("query", nargs="?", default="", help="initial fuzzy filter")
     parser.add_argument(
@@ -648,11 +674,7 @@ def main(argv: list[str] | None = None) -> None:
         current = None
 
     if explicit_roots:
-        repos = (
-            discover_repos(roots, github_user=github_user)
-            if github_user
-            else discover_repos(roots)
-        )
+        repos = discover_repos(roots, github_user=github_user)
     else:
         repos = (
             [] if args.refresh else load_cached_repos(cache, github_user=github_user)
@@ -668,11 +690,7 @@ def main(argv: list[str] | None = None) -> None:
                         _canonical_repo_path(repo.path), 0.0
                     ),
                 )
-                for repo in (
-                    discover_repos(roots, github_user=github_user)
-                    if github_user
-                    else discover_repos(roots)
-                )
+                for repo in discover_repos(roots, github_user=github_user)
             ]
             try:
                 save_cached_repos(repos, cache, github_user=github_user)
@@ -686,7 +704,7 @@ def main(argv: list[str] | None = None) -> None:
             repos = deduplicate_repos(repos)
 
     if not repos:
-        print("No local Git repositories found.", file=sys.stderr)
+        print("No local GitHub checkouts found.", file=sys.stderr)
         print("Try: fcc-repos --refresh --root ~/src", file=sys.stderr)
         raise SystemExit(1)
 

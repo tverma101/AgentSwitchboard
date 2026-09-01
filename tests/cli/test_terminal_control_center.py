@@ -120,7 +120,15 @@ def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
             launch_client=launch,
         )
 
-    launch.assert_called_once_with(False, (), Path.cwd())
+    # Linked task worktrees are intentionally excluded; a normal GitHub
+    # checkout remains the selected launch directory. Keep the assertion valid
+    # in both local worktree and hosted-checkout test environments.
+    expected = (
+        (False, (), Path.cwd())
+        if terminal_control.repository_from_path(Path.cwd())
+        else (False, ())
+    )
+    launch.assert_called_once_with(*expected)
 
 
 def test_home_redraw_uses_passed_settings_without_admin_io(

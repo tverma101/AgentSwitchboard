@@ -10,7 +10,7 @@ def test_ci_workflow_uses_hosted_runner_for_normal_ci() -> None:
         encoding="utf-8"
     )
 
-    assert workflow.count("runs-on: ubuntu-latest") == 2
+    assert workflow.count("runs-on: ubuntu-latest") == 3
     assert "workflow_dispatch:" in workflow
     assert "runner_label" not in workflow
     assert "vars.HARNESS_RUNNER" not in workflow

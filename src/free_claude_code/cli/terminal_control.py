@@ -681,9 +681,7 @@ def _run_repo_menu(current: RepoEntry | None) -> RepoEntry | None:
 
     def discover() -> list[RepoEntry]:
         roots = default_roots()
-        if github_user:
-            return discover_repos(roots, github_user=github_user)
-        return discover_repos(roots)
+        return discover_repos(roots, github_user=github_user)
 
     discovery_succeeded = True
     try:
