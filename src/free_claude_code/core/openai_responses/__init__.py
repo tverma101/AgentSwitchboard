@@ -1,6 +1,32 @@
 """OpenAI Responses protocol adapter."""
 
 from .adapter import OpenAIResponsesAdapter
+from .codex_lite import (
+    CODEX_BASE_INSTRUCTIONS,
+    CODEX_FUNCTIONS_NAMESPACE,
+    CODEX_INSTALLATION_ID_HEADER,
+    CODEX_INSTALLATION_ID_KEY,
+    CODEX_MODEL_PROFILES,
+    CODEX_PARENT_THREAD_ID_HEADER,
+    CODEX_RESPONSES_LITE_HEADER,
+    CODEX_SESSION_ID_HEADER,
+    CODEX_SESSION_ID_KEY,
+    CODEX_SUBAGENT_HEADER,
+    CODEX_THREAD_ID_HEADER,
+    CODEX_THREAD_ID_KEY,
+    CODEX_TURN_ID_KEY,
+    CODEX_TURN_METADATA_KEY,
+    CODEX_TURN_STATE_HEADER,
+    CODEX_WINDOW_ID_KEY,
+    CodexModelProfile,
+    codex_client_metadata,
+    codex_compatibility_headers,
+    codex_model_profile,
+    codex_session_headers,
+    lite_item_id,
+    load_or_create_installation_id,
+    responses_lite_tools,
+)
 from .errors import (
     ResponsesConversionError,
     openai_error_payload,
@@ -8,17 +34,45 @@ from .errors import (
     openai_failure_payload,
 )
 from .models import OpenAIResponsesRequest
-from .provider_input import build_responses_provider_request
+from .provider_input import (
+    build_responses_lite_provider_request,
+    build_responses_provider_request,
+)
 from .strict_provider_stream import ResponsesProviderStream, ResponsesStreamFailure
 
 __all__ = [
+    "CODEX_BASE_INSTRUCTIONS",
+    "CODEX_FUNCTIONS_NAMESPACE",
+    "CODEX_INSTALLATION_ID_HEADER",
+    "CODEX_INSTALLATION_ID_KEY",
+    "CODEX_MODEL_PROFILES",
+    "CODEX_PARENT_THREAD_ID_HEADER",
+    "CODEX_RESPONSES_LITE_HEADER",
+    "CODEX_SESSION_ID_HEADER",
+    "CODEX_SESSION_ID_KEY",
+    "CODEX_SUBAGENT_HEADER",
+    "CODEX_THREAD_ID_HEADER",
+    "CODEX_THREAD_ID_KEY",
+    "CODEX_TURN_ID_KEY",
+    "CODEX_TURN_METADATA_KEY",
+    "CODEX_TURN_STATE_HEADER",
+    "CODEX_WINDOW_ID_KEY",
+    "CodexModelProfile",
     "OpenAIResponsesAdapter",
     "OpenAIResponsesRequest",
     "ResponsesConversionError",
     "ResponsesProviderStream",
     "ResponsesStreamFailure",
+    "build_responses_lite_provider_request",
     "build_responses_provider_request",
+    "codex_client_metadata",
+    "codex_compatibility_headers",
+    "codex_model_profile",
+    "codex_session_headers",
+    "lite_item_id",
+    "load_or_create_installation_id",
     "openai_error_payload",
     "openai_error_type_for_failure",
     "openai_failure_payload",
+    "responses_lite_tools",
 ]

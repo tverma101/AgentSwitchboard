@@ -27,6 +27,7 @@ from free_claude_code.core.visual_attachments import (
 )
 
 from .cache_identity import select_prompt_cache_key
+from .codex_lite import CodexModelProfile, lite_item_id, responses_lite_tools
 from .errors import ResponsesConversionError
 
 _REASONING_SUMMARIES = frozenset({"auto", "concise", "detailed"})
@@ -131,6 +132,107 @@ def build_responses_provider_request(
     ):
         body["reasoning"] = reasoning_config
     return body
+
+
+def build_responses_lite_provider_request(
+    request: MessagesRequest,
+    *,
+    reasoning: ReasoningPolicy,
+    profile: CodexModelProfile,
+    prompt_cache_key: str | None = None,
+    thread_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the model-scoped Codex Responses-Lite request shape.
+
+    The generic builder remains the source of truth for history, media,
+    reasoning, tool-name aliases, and validation.  This adapter only changes
+    the dialect-specific envelope: tools become a namespaced
+    ``additional_tools`` input item, instructions become developer input
+    messages, and Lite's turn-wide reasoning/tool flags are made explicit.
+
+    ``thread_id`` namespaces prompt-only item IDs exactly like native
+    ``Uuid::new_v5`` under the session thread, so retries and resumed
+    sessions preserve identity without colliding across threads.
+    """
+
+    if not profile.responses_lite:
+        raise ResponsesConversionError(
+            f"Model profile {profile.model_id!r} is not Responses-Lite."
+        )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=reasoning,
+        prompt_cache_key=prompt_cache_key,
+        explicit_prompt_cache_breakpoint=False,
+    )
+    instructions = body.pop("instructions", None)
+    provider_tools = body.pop("tools", [])
+    input_items = body.get("input")
+    if not isinstance(input_items, list):
+        raise ResponsesConversionError(
+            "Codex Responses-Lite conversion requires input items."
+        )
+
+    thread_scope = thread_id or request.claude_session_id or ""
+    prefix: list[dict[str, Any]] = [
+        {
+            "id": lite_item_id("at", provider_tools, thread_scope),
+            "type": "additional_tools",
+            "role": "developer",
+            "tools": responses_lite_tools(provider_tools),
+        }
+    ]
+    if profile.base_instructions:
+        prefix.append(
+            _responses_lite_developer_message(
+                profile.base_instructions,
+                content_item_kind="model.base_instructions",
+                thread_id=thread_scope,
+            )
+        )
+    if isinstance(instructions, str) and instructions:
+        # Preserve the complete client-provided Claude context.  We do not
+        # attempt to parse or delete model-personality sections from a
+        # proprietary/version-changing prompt in this compatibility path.
+        prefix.append(
+            _responses_lite_developer_message(instructions, thread_id=thread_scope)
+        )
+
+    body["input"] = [*prefix, *input_items]
+    body["tool_choice"] = body.get("tool_choice") or "auto"
+    body["parallel_tool_calls"] = False
+    reasoning_config = body.get("reasoning")
+    if not isinstance(reasoning_config, dict):
+        reasoning_config = {}
+    body["reasoning"] = {**reasoning_config, "context": "all_turns"}
+    return body
+
+
+def _responses_lite_developer_message(
+    text: str,
+    *,
+    content_item_kind: str | None = None,
+    thread_id: str = "",
+) -> dict[str, Any]:
+    """Serialize a Codex Responses-Lite developer message item."""
+
+    message: dict[str, Any] = {
+        "id": lite_item_id("msg", text, thread_id),
+        "type": "message",
+        **_developer_message(text, prompt_cache_breakpoint=False),
+    }
+    if content_item_kind is not None:
+        message["internal_chat_message_metadata_passthrough"] = {
+            "content_item_kinds": [content_item_kind],
+        }
+    return message
+
+
+def _stable_lite_item_id(prefix: str, value: Any, thread_id: str = "") -> str:
+    """Return a stable thread-scoped ID for a prompt-only Lite item."""
+
+    return lite_item_id(prefix, value, thread_id)
 
 
 def _select_prompt_cache_key(
