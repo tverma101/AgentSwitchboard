@@ -14,7 +14,9 @@ $FccCommands = @(
     # Include retired entry points so older installations are fully stopped and removed.
     "fcc-desktop",
     "fcc-server",
+    "t-fcc-server",
     "fcc-claude",
+    "fcc-cline",
     "fccdanger",
     "fcc-codex",
     "fcc-pi",

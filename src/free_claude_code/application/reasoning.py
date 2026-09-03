@@ -22,12 +22,18 @@ def resolve_reasoning_policy(
         raise ValueError("Reasoning preference must be resolved before application.")
     if preference is ReasoningPreference.OFF:
         return ReasoningPolicy.off()
+    if preference is ReasoningPreference.ULTRACODE:
+        # Ultracode is an FCC-facing alias. Keep the provider-neutral enum
+        # unchanged and send the strongest audited FCC effort.
+        return ReasoningPolicy.on(effort=ReasoningEffort.XHIGH)
     if preference is not ReasoningPreference.CLIENT:
         return ReasoningPolicy.on(effort=ReasoningEffort(preference.value))
     return client_reasoning_policy(request)
 
 
-def client_reasoning_policy(request: MessagesRequest) -> ReasoningPolicy:
+def client_reasoning_policy(
+    request: MessagesRequest,
+) -> ReasoningPolicy:
     """Return the lossless reasoning intent expressed by one client request."""
 
     budget_tokens = _positive_budget(request.thinking)
@@ -35,7 +41,9 @@ def client_reasoning_policy(request: MessagesRequest) -> ReasoningPolicy:
         request.thinking,
         budget_tokens=budget_tokens,
     )
-    effort, effort_disables = _output_effort(request.output_config)
+    effort, effort_disables = _output_effort(
+        request.output_config,
+    )
 
     if effort_disables:
         return ReasoningPolicy.off()
@@ -75,7 +83,9 @@ def _thinking_control(
     return ReasoningControl.DEFAULT
 
 
-def _output_effort(value: Any) -> tuple[ReasoningEffort | None, bool]:
+def _output_effort(
+    value: Any,
+) -> tuple[ReasoningEffort | None, bool]:
     if not isinstance(value, Mapping):
         return None, False
     raw = value.get("effort")
@@ -84,6 +94,10 @@ def _output_effort(value: Any) -> tuple[ReasoningEffort | None, bool]:
     normalized = raw.strip().lower()
     if normalized == "none":
         return None, True
+    if normalized in {"ultra", ReasoningPreference.ULTRACODE.value}:
+        # FCC-facing aliases. Keep the provider-neutral enum unchanged and
+        # send the strongest audited FCC effort.
+        return ReasoningEffort.XHIGH, False
     try:
         return ReasoningEffort(normalized), False
     except ValueError:

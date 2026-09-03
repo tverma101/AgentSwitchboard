@@ -51,6 +51,46 @@ def test_named_effort_preserves_intent_without_exact_client_budget() -> None:
     assert policy.requests_reasoning is True
 
 
+def test_ultracode_alias_maps_to_xhigh_in_local_fcc() -> None:
+    request = _request(output_config={"effort": "ultracode"})
+
+    assert client_reasoning_policy(request) == ReasoningPolicy(
+        control=ReasoningControl.DEFAULT,
+        effort=ReasoningEffort.XHIGH,
+    )
+
+
+@pytest.mark.parametrize("effort", ["ultra", "ULTRA", " Ultra "])
+def test_ultra_alias_maps_to_xhigh_in_local_fcc(effort: str) -> None:
+    request = _request(output_config={"effort": effort})
+
+    assert client_reasoning_policy(request) == ReasoningPolicy(
+        control=ReasoningControl.DEFAULT,
+        effort=ReasoningEffort.XHIGH,
+    )
+
+
+def test_ultra_alias_preserves_exact_client_budget() -> None:
+    policy = client_reasoning_policy(
+        _request(
+            thinking={"type": "enabled", "budget_tokens": 31999},
+            output_config={"effort": "ultra"},
+        )
+    )
+
+    assert policy == ReasoningPolicy.on(
+        effort=ReasoningEffort.XHIGH,
+        budget_tokens=31999,
+    )
+
+
+def test_fixed_ultracode_maps_to_xhigh_in_local_fcc() -> None:
+    assert resolve_reasoning_policy(
+        _request(),
+        ReasoningPreference.ULTRACODE,
+    ) == ReasoningPolicy.on(effort=ReasoningEffort.XHIGH)
+
+
 def test_invalid_budget_does_not_implicitly_enable_reasoning() -> None:
     policy = client_reasoning_policy(_request(thinking={"budget_tokens": 0}))
 

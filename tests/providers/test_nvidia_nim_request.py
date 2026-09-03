@@ -163,6 +163,22 @@ class TestBuildRequestBody:
         body = build_request_body(req, nim, reasoning=REASONING_ON)
         assert body["max_tokens"] == 4096
 
+    def test_kimi_k3_forces_nvidia_immutable_top_p(self, req):
+        req.model = "moonshotai/kimi-k3"
+        req.top_p = 0.2
+
+        body = build_request_body(req, NimSettings(top_p=1.0), reasoning=REASONING_ON)
+
+        assert body["top_p"] == 0.95
+
+    def test_other_nim_models_keep_configured_top_p(self, req):
+        req.model = "moonshotai/kimi-k2.6"
+        nim = NimSettings(top_p=0.8)
+
+        body = build_request_body(req, nim, reasoning=REASONING_ON)
+
+        assert body["top_p"] == 0.8
+
     def test_presence_penalty_included_when_nonzero(self, req):
         nim = NimSettings(presence_penalty=0.5)
         body = build_request_body(req, nim, reasoning=REASONING_ON)

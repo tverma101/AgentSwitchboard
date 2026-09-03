@@ -221,6 +221,7 @@ class MessagesHandler:
                         request_id=request_id,
                         fallback_input_tokens=input_tokens,
                         verbose_client_errors=self._settings.log_api_error_tracebacks,
+                        use_local_a3s=self._settings.enable_local_a3s_search,
                     )
                 )
             if result is None:
@@ -448,6 +449,7 @@ class MessagesHandler:
                 web_fetch_egress=egress,
                 response_model=routed.resolved.original_model,
                 verbose_client_errors=self._settings.log_api_error_tracebacks,
+                use_local_a3s=self._settings.enable_local_a3s_search,
             ),
         )
 

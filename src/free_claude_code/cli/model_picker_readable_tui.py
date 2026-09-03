@@ -3,7 +3,7 @@
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Static
 
 from free_claude_code.cli.commands import ServerSupervisor
 from free_claude_code.config.settings import Settings
@@ -50,8 +50,8 @@ class ReadableModelControlCenterApp(ProviderManagementControlCenterApp):
         + """
 
     #model-browser {
-        width: 44%;
-        min-width: 38;
+        width: 58%;
+        min-width: 0;
     }
 
     #model-list .model-list-row {
@@ -62,8 +62,8 @@ class ReadableModelControlCenterApp(ProviderManagementControlCenterApp):
     }
 
     #model-inspector {
-        width: 56%;
-        min-width: 48;
+        width: 42%;
+        min-width: 0;
         padding: 1 2;
     }
 
@@ -90,18 +90,6 @@ class ReadableModelControlCenterApp(ProviderManagementControlCenterApp):
     }
     """
     )
-
-    async def _after_page_render(self, page: str, *, focus_target: str | None) -> None:
-        await super()._after_page_render(page, focus_target=focus_target)
-        models_page = page == "models"
-
-        # The model picker is a focused task. Hide dashboard chrome, not the
-        # action bar: Save / Discard / Refresh must remain immediately visible.
-        self.query_one("#sidebar").display = not models_page
-        self.query_one("#summary").display = not models_page
-        self.query_one("#window-titlebar").display = not models_page
-        self.query_one(Header).display = not models_page
-        self.query_one(Footer).display = not models_page
 
     def _refresh_model_editor_widgets(self) -> None:
         super()._refresh_model_editor_widgets()

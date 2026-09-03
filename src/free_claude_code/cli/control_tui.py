@@ -1,14 +1,13 @@
-"""Textual control center backed by CodeSwitchyard's existing admin/actions.
+"""Textual control center backed by AgentSwitchboard's existing admin/actions.
 
 UI shell/layout/focus/modal patterns are adapted from Harlequin at
 fcfaa6c524a6cd47e17701d931eac0243c8c85b6 (MIT, Ted Conbeer).
-See THIRD_PARTY_NOTICES.md. The CodeSwitchyard-specific code in this module is
+See THIRD_PARTY_NOTICES.md. The AgentSwitchboard-specific code in this module is
 limited to feeding existing local actions/state into that shell.
 """
 
 import asyncio
 import json
-import os
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -42,7 +41,6 @@ from free_claude_code.application.model_metadata import (
     normalize_model_pricing,
     pricing_is_free,
 )
-from free_claude_code.cli.claude_env import context_cap_tokens
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.local_admin import (
     LocalAdminError,
@@ -66,6 +64,7 @@ from free_claude_code.config.model_catalog import (
 from free_claude_code.config.paths import server_log_path
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG, ProviderAuthKind
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.branding import PRODUCT_NAME
 from free_claude_code.core.diagnostics import format_user_error_preview
 from free_claude_code.learning.config import (
     LearningProfileError,
@@ -132,7 +131,7 @@ def _clip_tui_line(value: str, *, limit: int = 2_000) -> str:
 
 
 class ConfirmModal(ModalScreen[bool]):
-    """Harlequin confirm-modal interaction, adapted for CodeSwitchyard."""
+    """Harlequin confirm-modal interaction, adapted for AgentSwitchboard."""
 
     def __init__(self, prompt: str) -> None:
         super().__init__()
@@ -262,11 +261,44 @@ def _model_refs(raw: Any) -> set[str]:
 
 
 def _catalog_model_refs(result: Mapping[str, Any]) -> tuple[set[str], set[str]]:
-    """Return visible and catalog model refs from one provider response."""
+    """Return visible and registered catalog model refs from one response.
+
+    Cached model discovery can outlive a provider configuration change.  Keep
+    unprefixed compatibility models, but discard prefixed rows whose provider
+    is no longer registered before they reach any picker action.
+    """
 
     visible_refs = _model_refs(result.get("models"))
     catalog_refs = _model_refs(result.get("catalog_models")) or set(visible_refs)
-    return visible_refs, catalog_refs
+    registered = _registered_provider_ids(result)
+    if registered is None:
+        return visible_refs, catalog_refs
+    return (
+        _filter_registered_model_refs(visible_refs, registered),
+        _filter_registered_model_refs(catalog_refs, registered),
+    )
+
+
+def _registered_provider_ids(result: Mapping[str, Any]) -> set[str] | None:
+    """Return known provider ids, or ``None`` for legacy response shapes."""
+
+    if "provider_status" not in result:
+        return None
+    statuses = _model_provider_statuses(result)
+    return set(PROVIDER_CATALOG) | set(statuses)
+
+
+def _filter_registered_model_refs(
+    model_refs: set[str], registered_provider_ids: set[str]
+) -> set[str]:
+    """Remove stale model refs that cannot be resolved by the provider registry."""
+
+    registered = {provider.casefold() for provider in registered_provider_ids}
+    return {
+        model
+        for model in model_refs
+        if "/" not in model or model.split("/", 1)[0].casefold() in registered
+    }
 
 
 def _model_rows(model_list: VerticalScroll) -> tuple[Any, ...]:
@@ -292,7 +324,18 @@ def _model_provider_id(model: str) -> str:
 
 
 _REGISTERED_PROVIDER_STATUSES = frozenset(
-    {"configured", "unknown", "connected", "ready", "available", "not_checked"}
+    {
+        "configured",
+        "missing_key",
+        "missing_config",
+        "missing_url",
+        "disconnected",
+        "unknown",
+        "connected",
+        "ready",
+        "available",
+        "not_checked",
+    }
 )
 
 
@@ -518,7 +561,7 @@ def _model_catalog_effective_models(
 class ControlCenterApp(HarlequinAppBase):
     """Persistent GUI-like terminal shell over the existing control actions."""
 
-    TITLE = "CodeSwitchyard"
+    TITLE = PRODUCT_NAME
     SUB_TITLE = "Control Center"
     MODEL_FILTER_DEBOUNCE_SECONDS = 0.08
 
@@ -826,7 +869,7 @@ class ControlCenterApp(HarlequinAppBase):
         yield Header(show_clock=True)
         with Horizontal(id="shell"):
             with Vertical(id="sidebar"):
-                yield Static("CodeSwitchyard", id="sidebar-title")
+                yield Static(self.TITLE, id="sidebar-title")
                 yield OptionList(
                     *(Option(label, id=page) for page, label in self.NAV),
                     id="nav",
@@ -1113,7 +1156,7 @@ class ControlCenterApp(HarlequinAppBase):
             f"FCC Learning profile  {self.next_profile} (next launch)\n"
             f"OpenAI / ChatGPT  {account_summary}\n"
             f"Codex Tools  {codex}\n"
-            f"Context      {context_cap_tokens(os.environ):,} tokens"
+            "Context policy FCC-owned intervention disabled"
         )
         if self.startup_error:
             compatibility_block = (

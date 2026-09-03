@@ -68,7 +68,7 @@ from free_claude_code.providers.openai_chat import (
 from free_claude_code.providers.stream_recovery import RecoveryController
 
 _GO_DOCS_SOURCE = "https://dev.opencode.ai/docs/go/"
-_GO_DOCS_DATE = "2026-08-23"
+_GO_DOCS_DATE = "2026-09-02"
 _ERROR_BODY_LIMIT = 65_536
 _MUSE_MODEL = "muse-spark-1.2-contributor"
 

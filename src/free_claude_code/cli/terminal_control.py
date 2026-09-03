@@ -12,7 +12,6 @@ from typing import Any, Protocol, TextIO
 
 from free_claude_code.application.account_identity import fcc_provider_account_summary
 from free_claude_code.application.connected_accounts import ConnectedAccountLoginMode
-from free_claude_code.cli.claude_env import context_cap_tokens
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.local_admin import (
@@ -38,7 +37,9 @@ from free_claude_code.config.provider_catalog import (
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.branding import PRODUCT_NAME
 from free_claude_code.core.diagnostics import format_user_error_preview
+from free_claude_code.core.server_identity import server_mode
 from free_claude_code.learning.bundle import (
     BundleError,
     export_from_store,
@@ -120,6 +121,7 @@ def run_owned_control_center(
     *,
     launch_client: ControlClientLauncher,
     initial_argv: Sequence[str] | None = None,
+    initial_danger: bool = False,
 ) -> None:
     """Own one FCC server worker while the terminal menu stays in foreground."""
 
@@ -130,12 +132,17 @@ def run_owned_control_center(
     server_thread = threading.Thread(target=supervisor.run, name="fcc-terminal-server")
     server_thread.start()
     try:
-        error = _wait_for_proxy(settings, server_thread)
+        error = _wait_for_proxy(
+            settings,
+            server_thread,
+            supervisor=supervisor,
+            expected_mode=server_mode(),
+        )
         if error is not None:
             print(f"FCC server failed to become ready: {error}", file=sys.stderr)
             raise SystemExit(1)
         if initial_argv is not None:
-            _call_launcher(launch_client, False, initial_argv)
+            _call_launcher(launch_client, initial_danger, initial_argv)
         run_control_menu(
             settings,
             supervisor=supervisor,
@@ -285,15 +292,16 @@ def _print_home(
     except Exception:
         codex_account = "needs attention"
     print()
-    print("FCC Harness")
-    print("-----------")
+    heading = f"{PRODUCT_NAME} (FCC)"
+    print(heading)
+    print("-" * len(heading))
     print(f"Server    {status} ({owner})")
     print(f"Repo      {displayed_repo}")
     print(f"Model     {displayed_model}")
     print(f"FCC Learning profile  {displayed_profile} (next launch)")
     print(f"FCC Account  {fcc_account}")
     print(f"Codex Tools  {codex_account}")
-    print(f"Context   {context_cap_tokens(os.environ):,} tokens")
+    print("Context   FCC-owned intervention disabled")
     print()
     print("[Enter/C] Claude   [D] Danger   [A] Accounts [O] Repos")
     print("[F] Profiles       [P] Providers [M] Models   [U] Usage")
@@ -933,7 +941,7 @@ def _run_settings_menu(settings: Settings) -> str | None:
             f"{_field_value(reasoning, settings.reasoning_policy.value)}"
         )
         print(f"FCC Learning profile  {configured_profile()}")
-        print(f"Context         {context_cap_tokens(os.environ):,} tokens")
+        print("Context         FCC-owned intervention disabled")
         print()
         print("[M] Model   [R] Reasoning   [B] Back")
         try:
@@ -1878,6 +1886,8 @@ def _wait_for_proxy(
     server_thread: threading.Thread,
     *,
     timeout: float = CONTROL_STARTUP_TIMEOUT_SECONDS,
+    supervisor: ServerSupervisor | None = None,
+    expected_mode: str | None = None,
 ) -> str | None:
     if timeout <= 0:
         return "health check timed out (timeout must be positive)"
@@ -1885,11 +1895,14 @@ def _wait_for_proxy(
     deadline = time.monotonic() + timeout
     last_error = "server did not report healthy"
     while time.monotonic() < deadline:
-        error = preflight_proxy(proxy_root_url)
+        error = preflight_proxy(proxy_root_url, expected_mode=expected_mode)
         if error is None:
             return None
         last_error = error
         if not server_thread.is_alive():
+            worker_error = supervisor.last_error if supervisor is not None else None
+            if worker_error:
+                return f"server worker failed before health succeeded ({worker_error})"
             return f"server worker exited before health succeeded ({last_error})"
         time.sleep(0.1)
     return f"health check timed out ({last_error})"

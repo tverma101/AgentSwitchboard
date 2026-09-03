@@ -1,9 +1,11 @@
 """Measure context-leash behavior through a local literal-Claude loopback."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -142,8 +144,14 @@ def _run_scenario(
     (workspace / "synthetic-fixture.txt").write_text(workload, encoding="utf-8")
 
     if install_policy:
-        assert install_context_policy(config_dir)
-    policy_status = context_policy_status(config_dir)
+        # This receipt exercises the retained historical policy writer only
+        # under its explicit experiment gate; normal FCC launches cannot write
+        # model-facing Claude instructions.
+        with patch.dict(os.environ, {"FCC_CONTEXT_GOVERNOR_ENABLED": "1"}):
+            assert install_context_policy(config_dir)
+            policy_status = context_policy_status(config_dir)
+    else:
+        policy_status = context_policy_status(config_dir)
 
     with SyntheticAnthropicGateway(
         SyntheticThinkingFixture.CONTEXT_GOVERNOR

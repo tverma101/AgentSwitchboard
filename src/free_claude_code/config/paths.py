@@ -1,8 +1,10 @@
 """Shared filesystem paths for Free Claude Code configuration."""
 
+import os
 from pathlib import Path
 
 FCC_CONFIG_DIRNAME = ".fcc"
+FCC_CONFIG_DIR_ENV = "FCC_CONFIG_DIR"
 FCC_ENV_FILENAME = ".env"
 LEGACY_REPO_DIRNAME = "free-claude-code"
 LEGACY_XDG_CONFIG_DIRNAME = ".config"
@@ -19,8 +21,11 @@ OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
 
 
 def config_dir_path() -> Path:
-    """Return the default user config directory."""
+    """Return the user config directory, honoring FCC_CONFIG_DIR overrides."""
 
+    override = os.environ.get(FCC_CONFIG_DIR_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
     return Path.home() / FCC_CONFIG_DIRNAME
 
 

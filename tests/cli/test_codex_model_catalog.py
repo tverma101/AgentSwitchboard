@@ -9,9 +9,24 @@ from typing import Any, cast
 import pytest
 
 from free_claude_code.cli.launchers.codex_model_catalog import (
+    SUPPORTED_REASONING_LEVELS,
     build_codex_model_catalog,
     write_codex_model_catalog,
 )
+from free_claude_code.core.openai_responses.codex_lite import CODEX_MODEL_PROFILES
+
+
+def test_codex_catalog_levels_match_lite_model_profiles() -> None:
+    """Keep fcc-codex levels in sync with the Codex Lite model profiles.
+
+    A level missing here is unselectable in Codex even though the gateway
+    can route it; an extra level advertises effort the gateway rejects.
+    """
+
+    catalog_efforts = [entry["effort"] for entry in SUPPORTED_REASONING_LEVELS]
+    assert catalog_efforts == ["low", "medium", "high", "xhigh", "max"]
+    for profile in CODEX_MODEL_PROFILES.values():
+        assert list(profile.supported_reasoning_levels) == catalog_efforts
 
 
 def _models_payload(*model_ids: str) -> dict[str, Any]:
@@ -73,6 +88,16 @@ def test_codex_catalog_converts_configured_and_cached_models_to_direct_slugs() -
         "additional_speed_tiers",
         "service_tiers",
     } <= set(model)
+
+
+def test_codex_catalog_routes_ultra_variant_as_thinking_candidate() -> None:
+    catalog = build_codex_model_catalog(
+        _models_payload("claude-3-freecc-ultra/opencode_go/kimi-k2.6")
+    )
+
+    models = _catalog_models(catalog)
+    assert _slugs(catalog) == ["claude-3-freecc-ultra/opencode_go/kimi-k2.6"]
+    assert models[0]["supported_reasoning_levels"] == SUPPORTED_REASONING_LEVELS
 
 
 def test_codex_catalog_excludes_claude_compatibility_model_ids() -> None:

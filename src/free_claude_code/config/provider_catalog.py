@@ -165,6 +165,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_url="https://platform.deepseek.com/api_keys",
         credential_attr="deepseek_api_key",
         default_base_url=DEEPSEEK_DEFAULT_BASE,
+        proxy_attr="deepseek_proxy",
     ),
     "mistral": ProviderDescriptor(
         provider_id="mistral",
@@ -384,6 +385,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         static_credential="ollama",
         default_base_url=OLLAMA_DEFAULT_BASE,
         base_url_attr="ollama_base_url",
+        proxy_attr="ollama_proxy",
         local=True,
     ),
 }

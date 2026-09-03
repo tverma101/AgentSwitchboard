@@ -43,6 +43,7 @@ async def stream_web_server_tool_response(
     web_fetch_egress: WebFetchEgressPolicy,
     response_model: str | None = None,
     verbose_client_errors: bool = False,
+    use_local_a3s: bool = False,
 ) -> AsyncIterator[str]:
     """Stream the existing forced `web_search` / `web_fetch` local fallback."""
     tool_name = forced_server_tool_name(request)
@@ -62,6 +63,7 @@ async def stream_web_server_tool_response(
         web_fetch_egress=web_fetch_egress,
         response_model=request.model if response_model is None else response_model,
         verbose_client_errors=verbose_client_errors,
+        use_local_a3s=use_local_a3s,
     ):
         yield frame
 
@@ -74,6 +76,7 @@ async def stream_selected_web_search_response(
     provider_usage: Mapping[str, object],
     result_filter: SearchResultFilter,
     verbose_client_errors: bool = False,
+    use_local_a3s: bool = False,
 ) -> AsyncIterator[str]:
     """Stream the existing local result shape for one provider-selected query."""
     async for frame in _stream_local_web_tool_response(
@@ -83,6 +86,7 @@ async def stream_selected_web_search_response(
         web_fetch_egress=None,
         response_model=response_model,
         verbose_client_errors=verbose_client_errors,
+        use_local_a3s=use_local_a3s,
         provider_usage=provider_usage,
         search_result_filter=result_filter,
     ):
@@ -97,6 +101,7 @@ async def _stream_local_web_tool_response(
     web_fetch_egress: WebFetchEgressPolicy | None,
     response_model: str,
     verbose_client_errors: bool,
+    use_local_a3s: bool = False,
     provider_usage: Mapping[str, object] | None = None,
     search_result_filter: SearchResultFilter | None = None,
 ) -> AsyncIterator[str]:
@@ -150,7 +155,10 @@ async def _stream_local_web_tool_response(
     try:
         if tool_name == "web_search":
             query = tool_input["query"]
-            results = await outbound._run_web_search(query)
+            if use_local_a3s:
+                results = await outbound._run_web_search(query, use_local_a3s=True)
+            else:
+                results = await outbound._run_web_search(query)
             if search_result_filter is not None:
                 results = search_result_filter(results)
             result_content: Any = [

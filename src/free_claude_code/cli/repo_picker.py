@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlsplit
 
+from free_claude_code.core.branding import PRODUCT_NAME
+
 from .selection import SelectionItem, choose_item
 from .selection import fuzzy_match as match_items
 
@@ -552,6 +554,72 @@ def cache_is_fresh(path: Path | None = None) -> bool:
         return False
 
 
+def load_repository_inventory(
+    *, refresh: bool = False
+) -> tuple[list[RepoEntry], str | None]:
+    """Load the safe local GitHub checkout inventory and its suggested selection.
+
+    This is the shared boundary for terminal surfaces.  The cache stores only
+    paths and recency; every returned row is rebuilt from live Git metadata so
+    stale folders, non-Git directories, and linked worktrees cannot become
+    display entries merely because they appeared in an old cache file.
+    """
+
+    github_user = github_authenticated_user()
+    cache = cache_path()
+    repos: list[RepoEntry] = []
+    if not refresh and cache_is_fresh(cache):
+        repos = load_cached_repos(cache, github_user=github_user)
+    if not repos:
+        repos = discover_repos(default_roots(), github_user=github_user)
+        with suppress(OSError):
+            save_cached_repos(repos, cache, github_user=github_user)
+
+    try:
+        current = repository_from_path(Path.cwd(), github_user=github_user)
+    except OSError, RuntimeError:
+        current = None
+    if current is not None and current.path not in {repo.path for repo in repos}:
+        repos.append(current)
+    repos = deduplicate_repos(repos)
+
+    selected_path: str | None = None
+    if current is not None and any(repo.path == current.path for repo in repos):
+        selected_path = current.path
+    else:
+        recently_used = [repo for repo in repos if repo.last_used > 0]
+        if recently_used:
+            selected_path = max(recently_used, key=lambda repo: repo.last_used).path
+    return repos, selected_path
+
+
+def select_repository(path: str) -> tuple[RepoEntry, bool]:
+    """Validate, mark, and cache one local GitHub checkout selection."""
+
+    github_user = github_authenticated_user()
+    repo = repository_from_path(Path(path).expanduser(), github_user=github_user)
+    if repo is None:
+        raise ValueError(
+            "That path is not inside a readable local GitHub repository "
+            "or is a linked worktree."
+        )
+
+    try:
+        repos, _selected_path = load_repository_inventory()
+    except OSError, RuntimeError:
+        repos = []
+    marked = mark_repo_used((*repos, repo), repo)
+    selected = next(
+        (candidate for candidate in marked if candidate.path == repo.path),
+        repo,
+    )
+    try:
+        save_cached_repos(marked, cache_path(), github_user=github_user)
+    except OSError:
+        return selected, False
+    return selected, True
+
+
 def fuzzy_match(repos: list[RepoEntry], query: str) -> list[RepoEntry]:
     """Return repositories ranked by the shared terminal picker matcher."""
 
@@ -591,7 +659,7 @@ def choose_repo(
             )
             for repo in repos
         ],
-        title="AgentSwitchboard repositories",
+        title=f"{PRODUCT_NAME} repositories",
         initial_query=initial_query,
         default_item_id=selected_path,
         footer="type filter · ↑↓ move · enter launch · esc cancel · * default",
@@ -624,12 +692,12 @@ def mark_repo_used(repos: Iterable[RepoEntry], selected: RepoEntry) -> list[Repo
 
 
 def launch_repo(repo: RepoEntry) -> NoReturn:
-    """Replace the picker with canonical ``fccdanger`` in the selected cwd."""
+    """Replace the picker with normal ``fcc-claude`` in the selected cwd."""
 
     previous = Path.cwd()
     os.chdir(repo.path)
     try:
-        os.execvp("fccdanger", ["fccdanger"])
+        os.execvp("fcc-claude", ["fcc-claude"])
     finally:
         # ``execvp`` normally never returns, but restoring the parent process
         # cwd keeps tests, embedders, and a mocked launcher safe.
@@ -639,7 +707,7 @@ def launch_repo(repo: RepoEntry) -> NoReturn:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Pick a local GitHub checkout and launch fccdanger"
+        description="Pick a local GitHub checkout and launch fcc-claude"
     )
     parser.add_argument("query", nargs="?", default="", help="initial fuzzy filter")
     parser.add_argument(

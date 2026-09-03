@@ -158,7 +158,7 @@ This is intentional: a one-time tool failure must not become permanent behavior.
 fcc-learning status
 fcc-learning install
 fcc-learning uninstall
-fcc-learning context-policy install
+fcc-learning context-policy install  # disabled unless explicitly experimenting
 fcc-learning context-policy status
 fcc-learning context-policy uninstall
 fcc-learning memory list
@@ -218,9 +218,11 @@ post-turn context cannot remain active accidentally. Set
 will then install or repair the hooks automatically. Manual `install` is
 usually unnecessary.
 
-`context-policy` is a separate explicit operation. It manages only FCC's
-delimited global context-discipline block and does not install hooks or change
-the rest of the user's `CLAUDE.md`.
+`context-policy` is a retained compatibility-experiment surface. Its `install`
+operation is disabled by default and does not write model-facing instructions;
+only an isolated process with `FCC_CONTEXT_GOVERNOR_ENABLED=true` can exercise
+the old writer. `uninstall` remains available to remove an old FCC-delimited
+block, and neither operation changes the rest of the user's `CLAUDE.md`.
 
 Memory replacement/removal is ID-based and scope-checked. The learner may only replace a project memory with a project memory, and only explicit user evidence can remove one. The CLI's `remove` command is an explicit user action and records a tombstone rather than silently deleting history.
 

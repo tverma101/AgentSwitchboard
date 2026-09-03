@@ -62,7 +62,7 @@ def test_inspector_puts_exact_model_ref_on_its_own_line() -> None:
 
 
 @pytest.mark.asyncio
-async def test_models_page_hides_chrome_and_keeps_exact_identity_visible() -> None:
+async def test_models_page_keeps_navigation_chrome_and_exact_identity_visible() -> None:
     settings = Settings.model_construct(
         host="0.0.0.0",
         port=8082,
@@ -95,9 +95,10 @@ async def test_models_page_hides_chrome_and_keeps_exact_identity_visible() -> No
 
             assert MODEL_REF in str(row.label)
             assert MODEL_REF in str(inspector.content)
-            assert not app.query_one("#sidebar").display
-            assert not app.query_one("#summary").display
-            assert not app.query_one("#window-titlebar").display
-            assert not app.query_one(Header).display
-            assert not app.query_one(Footer).display
+            assert app.query_one("#sidebar").display
+            assert app.query_one("#summary").display
+            assert app.query_one("#window-titlebar").display
+            assert not app.query("#window-controls")
+            assert app.query_one(Header).display
+            assert app.query_one(Footer).display
             assert app.query_one("#actions").display

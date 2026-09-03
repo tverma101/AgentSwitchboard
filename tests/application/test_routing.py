@@ -63,6 +63,32 @@ def test_model_router_applies_opus_override(settings):
     assert request.model == "claude-opus-4-20250514"
 
 
+def test_model_router_accepts_ultracode_in_local_fcc(settings):
+    settings.reasoning_policy = ReasoningPreference.ULTRACODE
+    request = MessagesRequest(
+        model="claude-sonnet-4-20250514",
+        max_tokens=100,
+        messages=[Message(role="user", content="hello")],
+    )
+
+    routed = ModelRouter(settings).resolve_messages_request(request)
+
+    assert routed.reasoning.effort is ReasoningEffort.XHIGH
+    assert routed.reasoning.control is ReasoningControl.ON
+
+
+def test_model_router_maps_client_ultracode_in_local_fcc(settings):
+    request = MessagesRequest(
+        model="claude-sonnet-4-20250514",
+        max_tokens=100,
+        messages=[Message(role="user", content="hello")],
+        output_config={"effort": "ultracode"},
+    )
+
+    routed = ModelRouter(settings).resolve_messages_request(request)
+    assert routed.reasoning.effort is ReasoningEffort.XHIGH
+
+
 def test_model_router_applies_fable_override(settings):
     settings.model_fable = "open_router/anthropic/claude-fable-5"
 
@@ -203,6 +229,66 @@ def test_model_router_strips_virtual_context_suffix_before_provider_dispatch(set
     assert routed.resolved.virtual_context_window == 1_000_000
 
 
+def test_model_router_applies_manual_context_window_without_suffix(settings):
+    settings = settings.model_copy(
+        update={"model_context_windows": '{"nvidia_nim/fallback-model": 1000000}'}
+    )
+
+    resolved = ModelRouter(settings).resolve("claude-2.1")
+
+    assert resolved.virtual_context_window == 1_000_000
+
+
+def test_model_router_explicit_suffix_wins_over_manual_context_window(settings):
+    settings = settings.model_copy(
+        update={"model_context_windows": '{"nvidia_nim/fallback-model": 500000}'}
+    )
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-fable-5[1m]",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.resolved.virtual_context_window == 1_000_000
+
+
+def test_model_router_applies_manual_window_to_direct_provider_model(settings):
+    settings = settings.model_copy(
+        update={"model_context_windows": '{"deepseek/deepseek-chat": 500000}'}
+    )
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="deepseek/deepseek-chat",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.resolved.virtual_context_window == 500_000
+
+
+def test_model_router_keeps_parent_window_over_manual_child_window() -> None:
+    settings = Settings().model_copy(
+        update={
+            "model": "opencode_go/parent-model",
+            "model_haiku": "opencode_zen/stale-child-model",
+            "subagent_model_inherit": True,
+            "model_context_windows": '{"opencode_zen/stale-child-model": 1000000}',
+        }
+    )
+    router = ModelRouter(settings)
+    parent = router.resolve("openai/gpt-5.6-luna")
+
+    child = router.resolve("claude-3-haiku-20240307", parent_route=parent)
+
+    assert child.route_source == "parent_inherited"
+    assert child.virtual_context_window == parent.virtual_context_window
+
+
 def test_model_router_normalizes_alias_target_virtual_context_suffix(settings):
     settings.model_aliases = "deep=opencode_go/minimax-m2.7[200k]"
 
@@ -302,6 +388,50 @@ def test_model_router_routes_no_thinking_gateway_model_directly(settings):
     assert routed.resolved.provider_id == "nvidia_nim"
     assert routed.resolved.provider_model == "deepseek-ai/deepseek-v4-pro"
     assert routed.reasoning.control is ReasoningControl.OFF
+
+
+def test_model_router_routes_ultra_gateway_model_with_ultracode_effort(settings):
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-3-freecc-ultra/nvidia_nim/deepseek-ai/deepseek-v4-pro",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.request.model == "deepseek-ai/deepseek-v4-pro"
+    assert (
+        routed.resolved.original_model
+        == "claude-3-freecc-ultra/nvidia_nim/deepseek-ai/deepseek-v4-pro"
+    )
+    assert routed.resolved.provider_id == "nvidia_nim"
+    assert routed.resolved.provider_model == "deepseek-ai/deepseek-v4-pro"
+    assert (
+        routed.resolved.provider_model_ref
+        == "claude-3-freecc-ultra/nvidia_nim/deepseek-ai/deepseek-v4-pro"
+    )
+    assert routed.resolved.reasoning_preference is ReasoningPreference.ULTRACODE
+    assert routed.reasoning.control is ReasoningControl.ON
+    assert routed.reasoning.effort is ReasoningEffort.XHIGH
+
+
+def test_ultra_gateway_model_id_round_trips_provider_ref():
+    from free_claude_code.core.gateway_model_ids import (
+        decode_gateway_model_id,
+        ultra_gateway_model_id,
+    )
+
+    model_id = ultra_gateway_model_id("openai/gpt-5.6-luna")
+
+    assert model_id == "claude-3-freecc-ultra/openai/gpt-5.6-luna"
+    # Gateway protocol: discovery keeps ids containing "claude"/"anthropic".
+    assert "claude" in model_id.lower() or "anthropic" in model_id.lower()
+    decoded = decode_gateway_model_id(model_id)
+    assert decoded is not None
+    assert decoded.provider_id == "openai"
+    assert decoded.provider_model == "gpt-5.6-luna"
+    assert decoded.force_ultracode is True
+    assert decoded.force_reasoning_off is False
 
 
 def test_direct_provider_model_uses_root_policy_without_model_name_guessing(settings):

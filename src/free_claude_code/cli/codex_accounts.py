@@ -29,6 +29,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
+from free_claude_code.core.branding import PRODUCT_NAME
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 from .local_http import open_local_request
@@ -817,7 +818,7 @@ def _choose_account(accounts: Sequence[CodexAccount]) -> CodexAccount | None:
 def _restart_notice() -> None:
     print(
         "Selection applies to new Codex/helper sessions. Restart FCC or start a "
-        "fresh Harness session before using the selected subscription."
+        f"fresh {PRODUCT_NAME} session before using the selected subscription."
     )
 
 

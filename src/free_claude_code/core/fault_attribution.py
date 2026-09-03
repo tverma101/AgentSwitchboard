@@ -50,7 +50,7 @@ def request_shape_hash(body: dict[str, Any]) -> str:
     ``prompt_cache_key`` partitions provider cache state but is not part of the
     prompt or request shape.  Arbitrary ``metadata`` is likewise excluded so
     request correlation, timestamps, and other client bookkeeping cannot make
-    comparable native/Harness receipts look like different envelopes.
+    comparable native/AgentSwitchboard receipts look like different envelopes.
     """
 
     shape = {
@@ -188,7 +188,7 @@ def classify_failure(
     A generic transport signal proves only that the request failed around the
     network boundary; it does not prove whether FCC, DNS/TLS, the network, or
     the upstream edge owned the failure. ``harness_transport`` is reserved for
-    failures whose local Harness ownership was established independently.
+    failures whose local AgentSwitchboard ownership was established independently.
     """
 
     def codes_with_output(codes: list[str]) -> list[str]:

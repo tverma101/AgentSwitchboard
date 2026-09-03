@@ -130,6 +130,28 @@ def test_bai_minimal_model_listing_does_not_guess_price_or_vision() -> None:
     assert info.supports_vision is None
 
 
+def test_cline_free_model_suffix_is_scoped_to_the_cline_provider() -> None:
+    infos = extract_openai_model_infos(
+        {
+            "data": [
+                {"id": "z-ai/glm-5.2:free"},
+                {"id": "z-ai/glm-5.3-flash"},
+            ]
+        },
+        provider_name="CUSTOM_PROVIDER:cline",
+    )
+    by_id = {info.model_id: info for info in infos}
+
+    assert by_id["z-ai/glm-5.2:free"].is_free is True
+    assert by_id["z-ai/glm-5.3-flash"].is_free is None
+
+    other_infos = extract_openai_model_infos(
+        {"data": [{"id": "z-ai/glm-5.2:free"}]},
+        provider_name="CUSTOM_PROVIDER:other",
+    )
+    assert next(iter(other_infos)).is_free is None
+
+
 @pytest.mark.parametrize(
     "metadata",
     [

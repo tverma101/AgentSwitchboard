@@ -18,6 +18,7 @@ from .env_files import (
 )
 from .model_aliases import parse_model_aliases
 from .model_catalog import ModelCatalogMode
+from .model_refs import parse_model_context_windows
 from .nim import NimSettings
 from .provider_catalog import (
     BAI_DEFAULT_BASE,
@@ -185,6 +186,12 @@ class Settings(BaseSettings):
         default="", validation_alias="MODEL_CATALOG_ALLOWLIST"
     )
     model_aliases: str = Field(default="", validation_alias="MODEL_ALIASES")
+    # Manual per-model context windows as JSON, e.g.
+    # {"opencode_go/muse-spark-1.2-contributor": 1000000}. Applies when a
+    # request carries no explicit [size] suffix; suffixes win.
+    model_context_windows: str = Field(
+        default="", validation_alias="MODEL_CONTEXT_WINDOWS"
+    )
     # The public catalog supplies metadata only; it never authorizes a provider
     # or makes a hidden model visible to clients.
     model_metadata_catalog_enabled: bool = Field(
@@ -251,7 +258,11 @@ class Settings(BaseSettings):
 
     # ==================== Context-pressure governor ====================
     context_governor_enabled: bool = Field(
-        default=True, validation_alias="FCC_CONTEXT_GOVERNOR_ENABLED"
+        # Disabled until the FCC context policy has a certified Claude Code
+        # compatibility receipt. The core governor remains available for an
+        # explicit future opt-in without changing this runtime default.
+        default=False,
+        validation_alias="FCC_CONTEXT_GOVERNOR_ENABLED",
     )
     context_governor_preserve_media: bool = Field(
         default=True, validation_alias="FCC_CONTEXT_GOVERNOR_PRESERVE_MEDIA"
@@ -284,6 +295,7 @@ class Settings(BaseSettings):
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
     bai_proxy: str = Field(default="", validation_alias="BAI_PROXY")
+    deepseek_proxy: str = Field(default="", validation_alias="DEEPSEEK_PROXY")
     mistral_proxy: str = Field(default="", validation_alias="MISTRAL_PROXY")
     codestral_proxy: str = Field(default="", validation_alias="CODESTRAL_PROXY")
     lmstudio_proxy: str = Field(default="", validation_alias="LMSTUDIO_PROXY")
@@ -311,6 +323,7 @@ class Settings(BaseSettings):
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
     ollama_cloud_proxy: str = Field(default="", validation_alias="OLLAMA_CLOUD_PROXY")
+    ollama_proxy: str = Field(default="", validation_alias="OLLAMA_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -366,6 +379,10 @@ class Settings(BaseSettings):
     # Off by default: these tools perform outbound HTTP from the proxy (SSRF risk).
     enable_web_server_tools: bool = Field(
         default=False, validation_alias="ENABLE_WEB_SERVER_TOOLS"
+    )
+    # Experimental local A3S search is enabled by the sandbox, not live servers.
+    enable_local_a3s_search: bool = Field(
+        default=False, validation_alias="ENABLE_LOCAL_A3S_SEARCH"
     )
     # Comma-separated URL schemes allowed for web_fetch (default: http,https).
     web_fetch_allowed_schemes: str = Field(
@@ -440,7 +457,8 @@ class Settings(BaseSettings):
     )
 
     # ==================== Server ====================
-    host: str = "0.0.0.0"
+    # Keep the live and sandbox servers local unless exposure is explicit.
+    host: str = "127.0.0.1"
     port: int = 8082
     # Optional proxy bearer token protecting public API endpoints.
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
@@ -545,6 +563,14 @@ class Settings(BaseSettings):
         """Reject malformed alias entries before a runtime can start."""
 
         parse_model_aliases(value)
+        return value
+
+    @field_validator("model_context_windows")
+    @classmethod
+    def validate_model_context_windows(cls, value: str) -> str:
+        """Reject a malformed context-window map before a runtime can start."""
+
+        parse_model_context_windows(value)
         return value
 
     @field_validator("reasoning_policy")

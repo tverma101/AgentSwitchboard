@@ -19,6 +19,13 @@ NIM_REQUEST_POLICY = OpenAIChatRequestPolicy(
     reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
 )
 
+# NVIDIA exposes a small number of hosted models whose sampling parameters are
+# fixed by the deployment.  Keep these corrections at the NIM request boundary
+# so every Claude-compatible caller gets the same valid wire request.
+_IMMUTABLE_TOP_P_BY_MODEL = {
+    "moonshotai/kimi-k3": 0.95,
+}
+
 
 def build_nim_request_body(
     request_data: MessagesRequest, nim: NimSettings, *, reasoning: ReasoningPolicy
@@ -60,6 +67,13 @@ def apply_nim_request_options(
         body["temperature"] = nim.temperature
     if body.get("top_p") is None and nim.top_p is not None:
         body["top_p"] = nim.top_p
+    model = body.get("model")
+    if isinstance(model, str):
+        immutable_top_p = _IMMUTABLE_TOP_P_BY_MODEL.get(model.strip().casefold())
+        if immutable_top_p is not None:
+            # Kimi K3 rejects any other value, including an explicit Claude
+            # client value.  The provider's immutable contract wins.
+            body["top_p"] = immutable_top_p
 
     if "stop" not in body and nim.stop:
         body["stop"] = nim.stop

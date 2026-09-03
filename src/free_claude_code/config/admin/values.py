@@ -11,6 +11,7 @@ from .manifest import (
     SECTIONS,
     ConfigFieldSpec,
     ConfigOptionSpec,
+    visible_options,
 )
 from .sources import (
     configured_env_files,
@@ -100,7 +101,7 @@ def load_config_response() -> dict[str, Any]:
                         if isinstance(option, ConfigOptionSpec)
                         else {"value": option, "label": option}
                     )
-                    for option in field.options
+                    for option in visible_options(field.options)
                 ],
                 "description": field.description,
             }

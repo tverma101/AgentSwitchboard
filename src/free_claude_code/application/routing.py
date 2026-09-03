@@ -11,6 +11,7 @@ from free_claude_code.application.errors import UnknownProviderError
 from free_claude_code.config.model_aliases import parse_model_aliases
 from free_claude_code.config.model_refs import (
     normalize_model_ref,
+    parse_model_context_windows,
     parse_model_name,
     parse_provider_type,
 )
@@ -247,6 +248,9 @@ class ModelRouter:
         self._model_aliases = parse_model_aliases(
             getattr(settings, "model_aliases", "")
         )
+        self._model_context_windows = parse_model_context_windows(
+            getattr(settings, "model_context_windows", "")
+        )
 
     def resolve(
         self,
@@ -272,13 +276,17 @@ class ModelRouter:
             direct_provider_id,
             direct_provider_model,
             force_reasoning_off,
+            force_ultracode,
         ) = self._direct_provider_model(requested_model)
         if direct_provider_id is not None and direct_provider_model is not None:
-            reasoning_preference = (
-                ReasoningPreference.OFF
-                if force_reasoning_off
-                else self._settings.reasoning_policy
-            )
+            if force_ultracode:
+                reasoning_preference = ReasoningPreference.ULTRACODE
+            else:
+                reasoning_preference = (
+                    ReasoningPreference.OFF
+                    if force_reasoning_off
+                    else self._settings.reasoning_policy
+                )
             route_source = "model_alias" if alias_applied else "request_model"
             logger.debug(
                 "MODEL DIRECT: '{}' -> provider='{}' model='{}' reasoning={} source={}",
@@ -288,6 +296,10 @@ class ModelRouter:
                 reasoning_preference.value,
                 route_source,
             )
+            if virtual_context_window is None:
+                virtual_context_window = self._model_context_windows.get(
+                    requested_model
+                )
             return ResolvedModel(
                 original_model=claude_model_name,
                 provider_id=direct_provider_id,
@@ -323,6 +335,8 @@ class ModelRouter:
         provider_model_ref = configured_model.model_ref
         if virtual_context_window is None:
             virtual_context_window = configured_model.virtual_context_window
+        if virtual_context_window is None:
+            virtual_context_window = self._model_context_windows.get(provider_model_ref)
         reasoning_preference = self._resolve_reasoning_preference(
             claude_model_name,
             use_route_override=(
@@ -384,25 +398,26 @@ class ModelRouter:
 
     def _direct_provider_model(
         self, model_name: str
-    ) -> tuple[str | None, str | None, bool]:
+    ) -> tuple[str | None, str | None, bool, bool]:
         decoded = decode_gateway_model_id(model_name)
         if decoded is not None:
             if decoded.provider_id not in SUPPORTED_PROVIDER_IDS:
-                return None, None, False
+                return None, None, False, False
             return (
                 decoded.provider_id,
                 decoded.provider_model,
                 decoded.force_reasoning_off,
+                decoded.force_ultracode,
             )
 
         provider_id, separator, provider_model = model_name.partition("/")
         if not separator:
-            return None, None, False
+            return None, None, False, False
         if provider_id not in SUPPORTED_PROVIDER_IDS:
-            return None, None, False
+            return None, None, False, False
         if not provider_model:
-            return None, None, False
-        return provider_id, provider_model, False
+            return None, None, False, False
+        return provider_id, provider_model, False, False
 
     def _resolve_model_ref(self, claude_model_name: str) -> str:
         """Resolve a Claude model name to the configured provider/model ref."""

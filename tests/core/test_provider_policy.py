@@ -62,6 +62,41 @@ def test_primary_provider_may_use_an_explicit_local_fixture_endpoint() -> None:
     assert guard.receipt()["counts"] == {"opencode_go": 1}
 
 
+def test_explicitly_registered_provider_family_is_allowed_in_strict_mode() -> None:
+    guard = ProviderEgressGuard(
+        ProviderPolicy(
+            "bai",
+            "model",
+            allowed_provider_families=frozenset({"cline"}),
+        )
+    )
+
+    guard.authorize_url(
+        "https://api.cline.bot/api/v1",
+        provider_family="cline",
+    )
+
+    assert guard.receipt()["counts"] == {"cline": 1}
+    assert guard.receipt()["allowed_provider_families"] == ["cline"]
+
+
+def test_explicitly_registered_local_provider_may_use_loopback_endpoint() -> None:
+    guard = ProviderEgressGuard(
+        ProviderPolicy(
+            "bai",
+            "model",
+            allowed_provider_families=frozenset({"local_lab"}),
+        )
+    )
+
+    guard.authorize_url(
+        "http://127.0.0.1:1234/v1",
+        provider_family="local_lab",
+    )
+
+    assert guard.receipt()["counts"] == {"local_lab": 1}
+
+
 def test_configured_provider_family_can_use_an_explicit_proxy_host() -> None:
     guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
 

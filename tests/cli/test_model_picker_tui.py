@@ -8,6 +8,7 @@ import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
+from free_claude_code.cli.control_tui import _catalog_model_refs
 from free_claude_code.cli.model_picker_tui import (
     ModelListButton,
     TuiuiControlCenterApp,
@@ -15,6 +16,7 @@ from free_claude_code.cli.model_picker_tui import (
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.branding import PRODUCT_NAME
 
 MODEL_A = "open_router/provider/alpha"
 MODEL_B = "open_router/provider/beta"
@@ -47,6 +49,21 @@ def _catalog() -> dict[str, object]:
     }
 
 
+def test_catalog_removes_stale_models_from_unregistered_providers() -> None:
+    visible, catalog = _catalog_model_refs(
+        {
+            "models": [MODEL_A, "retired_gateway/model"],
+            "catalog_models": [MODEL_A, "retired_gateway/model"],
+            "provider_status": [
+                {"provider_id": "open_router", "status": "configured"},
+            ],
+        }
+    )
+
+    assert visible == {MODEL_A}
+    assert catalog == {MODEL_A}
+
+
 def _row(app: TuiuiControlCenterApp, model: str) -> ModelListButton:
     return next(row for row in app.query(ModelListButton) if row.model_ref == model)
 
@@ -72,6 +89,7 @@ async def test_model_picker_uses_compact_browser_and_inspector() -> None:
             await pilot.pause()
 
             assert app.query_one("#model-workspace", Horizontal).display
+            assert str(app.query_one("#sidebar-title", Static).content) == PRODUCT_NAME
             assert len(app.query(ModelListButton)) == 2
             assert _row(app, MODEL_A).has_class("model-row-default")
             assert _row(app, MODEL_A).has_class("model-row-enabled")

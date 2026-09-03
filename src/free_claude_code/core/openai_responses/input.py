@@ -20,6 +20,7 @@ from .reasoning import (
     responses_reasoning_to_output_config,
 )
 from .tools import (
+    additional_tools_from_input,
     call_id_from_item,
     convert_tool_choice,
     convert_tools,
@@ -64,7 +65,10 @@ def convert_request_to_anthropic_payload(
     messages: list[dict[str, Any]] = []
     pending_reasoning = _PendingReasoning()
     quarantined_function_call_ids: set[str] = set()
+    additional_tool_definitions = additional_tools_from_input(request.input)
     for item in _iter_input_items(request.input):
+        if _is_additional_tools_item(item):
+            continue
         _append_input_item(
             item,
             messages=messages,
@@ -99,7 +103,10 @@ def convert_request_to_anthropic_payload(
         payload["output_config"] = output_config
 
     raw_tool_choice = request.tool_choice
-    tools = convert_tools(request.tools)
+    request_tools = request.tools
+    if additional_tool_definitions:
+        request_tools = [*(request_tools or ()), *additional_tool_definitions]
+    tools = convert_tools(request_tools)
     if tools and raw_tool_choice != "none":
         payload["tools"] = tools
     tool_choice = convert_tool_choice(raw_tool_choice)
@@ -107,6 +114,10 @@ def convert_request_to_anthropic_payload(
         payload["tool_choice"] = tool_choice
 
     return payload
+
+
+def _is_additional_tools_item(item: Any) -> bool:
+    return isinstance(item, dict) and item.get("type") == "additional_tools"
 
 
 def _append_input_item(

@@ -30,9 +30,10 @@ def settings_from_values(
         kwargs[input_key] = values.get(field.key, "")
 
     try:
-        return Settings(**kwargs), []
+        settings = Settings(**kwargs)
     except ValidationError as exc:
         return None, format_validation_errors(exc)
+    return settings, []
 
 
 def format_validation_errors(exc: ValidationError) -> list[str]:

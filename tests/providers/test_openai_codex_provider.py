@@ -1,11 +1,13 @@
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
+from unittest.mock import patch
 
 import httpx
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -14,6 +16,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.diagnostics import ERROR_DETAIL_DISPLAY_CAP_BYTES
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.openai_responses import CODEX_RESPONSES_LITE_HEADER
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -95,6 +98,27 @@ def _client_control_request() -> MessagesRequest:
     )
 
 
+def _codex_lite_request() -> MessagesRequest:
+    return MessagesRequest.model_validate(
+        {
+            "model": "gpt-5.6-luna",
+            "system": "Claude harness context",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                    },
+                }
+            ],
+            "stream": True,
+        }
+    )
+
+
 def _sse(*events: tuple[str, dict[str, Any]]) -> str:
     return "".join(
         f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
@@ -123,6 +147,30 @@ def _complete_stream(text: str) -> str:
             },
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_enabled"),
+    [("sandbox", True), ("standard", True)],
+)
+def test_composition_root_enables_codex_lite_in_local_modes(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    expected_enabled: bool,
+) -> None:
+    monkeypatch.setenv("FCC_SERVER_MODE", mode)
+
+    from free_claude_code.runtime import bootstrap
+
+    with patch.object(bootstrap, "OpenAICodexProvider") as constructor:
+        bootstrap._create_openai_provider(
+            _config(),
+            cast(Settings, object()),
+            _admission(),
+            auth=_FakeAuth(),
+        )
+
+    assert constructor.call_args.kwargs["responses_lite_enabled"] is expected_enabled
 
 
 async def _collect(stream: AsyncIterator[str]) -> str:
@@ -187,12 +235,115 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
     assert response_request.headers["originator"] == "codex_cli_rs"
     assert response_request.headers["accept"] == "text/event-stream"
     assert response_request.headers["session_id"]
+    assert CODEX_RESPONSES_LITE_HEADER not in response_request.headers
     payload = json.loads(response_request.content)
     assert payload["model"] == "gpt-test"
     assert payload["store"] is False
+    assert "client_metadata" not in payload
     events = parse_sse_text(body)
     assert_anthropic_stream_contract(events)
     assert text_content(events) == "hello"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_codex_lite_uses_native_input_tool_and_metadata_shape() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=_complete_stream("hello"),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=_FakeAuth(),
+        admission=_admission(),
+        client=client,
+        responses_lite_enabled=True,
+    )
+
+    body = await _collect(
+        provider.stream_response(
+            _codex_lite_request(),
+            request_id="turn_1",
+            response_model="claude-opus-4",
+            reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        )
+    )
+
+    upstream = requests[0]
+    payload = json.loads(upstream.content)
+    assert "instructions" not in payload
+    assert "tools" not in payload
+    assert payload["tool_choice"] == "auto"
+    assert payload["parallel_tool_calls"] is False
+    assert payload["reasoning"]["context"] == "all_turns"
+    assert payload["input"][0]["type"] == "additional_tools"
+    assert payload["input"][0]["role"] == "developer"
+    assert payload["input"][0]["id"].startswith("at_")
+    assert payload["input"][0]["tools"] == [
+        {
+            "type": "namespace",
+            "name": "functions",
+            "description": "",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "Read",
+                    "description": "Read a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                    },
+                    "strict": False,
+                }
+            ],
+        }
+    ]
+    assert payload["input"][1]["role"] == "developer"
+    assert payload["input"][1]["id"].startswith("msg_")
+    assert payload["input"][1]["internal_chat_message_metadata_passthrough"] == {
+        "content_item_kinds": ["model.base_instructions"]
+    }
+    assert "You are Codex" in payload["input"][1]["content"][0]["text"]
+    assert payload["input"][2]["type"] == "message"
+    assert payload["input"][2]["role"] == "developer"
+    assert payload["input"][2]["id"].startswith("msg_")
+    assert payload["input"][2]["content"] == [
+        {"type": "input_text", "text": "Claude harness context"}
+    ]
+    assert payload["input"][3] == {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "hello"}],
+    }
+
+    client_metadata = payload["client_metadata"]
+    turn_metadata = json.loads(client_metadata["x-codex-turn-metadata"])
+    assert turn_metadata == {
+        "installation_id": client_metadata["x-codex-installation-id"],
+        "session_id": client_metadata["session_id"],
+        "thread_id": client_metadata["thread_id"],
+        "turn_id": "turn_1",
+        "window_id": client_metadata["x-codex-window-id"],
+        "request_kind": "turn",
+    }
+    assert upstream.headers[CODEX_RESPONSES_LITE_HEADER] == "true"
+    assert upstream.headers["x-codex-window-id"] == client_metadata["x-codex-window-id"]
+    assert (
+        upstream.headers["x-codex-turn-metadata"]
+        == client_metadata["x-codex-turn-metadata"]
+    )
+    assert_anthropic_stream_contract(parse_sse_text(body))
     await client.aclose()
 
 
