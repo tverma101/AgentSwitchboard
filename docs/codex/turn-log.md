@@ -54,3 +54,13 @@
 - `evidence`: implemented and locally tested; built release and live loopback behavior verified; installed-artifact and user visual confirmation remain separate evidence states; canonical `main` dirty changes were preserved.
 - `residual_gap`: remote PR checks and merge confirmation are not established until the exact pushed head is green; no GitHub Actions workflow mutation is part of this work.
 - `next_action`: stage only the confirmed PR paths, push `refactor/posting-gui-shell`, verify exact-head checks, then merge PR #210 and confirm the remote merge commit.
+
+## 2026-09-03 — OpenAI backend preservation audit
+
+- `scope`: current `feat/tui-tode-transplant` checkout; OpenAI/ChatGPT Codex provider, connected-account auth, Responses conversion/streaming, FCC API routes, and runtime composition only.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Projects/AgentSwitchboard`; HEAD `edcf45e1`; PR #210 commit `1487f11c`.
+- `status`: backend source is present and wired; no OpenAI source changes were made by this audit. The working tree contains separate in-progress TUI transplant edits, which were preserved.
+- `validation`: 396 focused OpenAI/provider/API/runtime tests passed; the full suite reported 3849 passed, 152 skipped, and 3 unrelated failures (Cline manifest inventory, documentation scan of ignored/untracked worktree files, and project-versus-installed version metadata).
+- `evidence`: source and mocked/local contract behavior are verified; PR #210's file set does not remove the OpenAI provider. This does not establish a successful authenticated live ChatGPT upstream request.
+- `residual_gap`: the previously observed live ChatGPT Codex path returned upstream HTTP 404, and the installed CLI metadata is `4.64.0` while the checkout declares `4.63.0`; live upstream and installed-artifact parity remain separate checks.
+- `next_action`: if requested, repair the live ChatGPT endpoint/account failure and refresh the installed editable artifact after the TUI branch settles; do not merge or overwrite the in-progress TUI edits as part of this audit.
