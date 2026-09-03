@@ -105,6 +105,9 @@ pub enum UiAction {
     SearchModels,
     RunDiagnostic,
     LaunchClaude(bool),
+    OpenPalette,
+    ShowHelp,
+    Quit,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +128,34 @@ pub struct ChromeGeometry {
 #[derive(Debug)]
 pub enum ExternalAction {
     LaunchClaude { danger: bool },
+}
+
+/// One command-palette row. The transplant keeps terminal-code's palette idea
+/// (fuzzy command list over every surface) but every entry maps to an existing
+/// native Admin-backed action; there is no browser or pixel presentation here.
+#[derive(Debug, Clone)]
+pub struct PaletteEntry {
+    pub title: String,
+    pub hint: String,
+    pub action: UiAction,
+}
+
+/// Case-insensitive substring filter over palette titles and hints. Returns
+/// indices into `entries` in stable inventory order.
+pub fn match_palette(query: &str, entries: &[PaletteEntry]) -> Vec<usize> {
+    let needle = query.trim().to_ascii_lowercase();
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            if needle.is_empty() {
+                return true;
+            }
+            entry.title.to_ascii_lowercase().contains(&needle)
+                || entry.hint.to_ascii_lowercase().contains(&needle)
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -373,6 +404,10 @@ pub enum Modal {
     SearchModels {
         input: TextInput,
     },
+    Palette {
+        input: TextInput,
+        selected: usize,
+    },
     Confirm {
         title: String,
         body: String,
@@ -514,9 +549,22 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ExternalAction>> {
-        if self.modal.is_some() {
-            self.handle_modal_key(key)?;
+        let palette_open = matches!(self.modal, Some(Modal::Palette { .. }));
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K'))
+        {
+            self.open_palette();
             return Ok(None);
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
+            && !palette_open
+        {
+            self.open_palette();
+            return Ok(None);
+        }
+        if self.modal.is_some() {
+            return self.handle_modal_key(key);
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -629,6 +677,9 @@ impl App {
             UiAction::LaunchClaude(danger) => {
                 return Ok(Some(ExternalAction::LaunchClaude { danger }));
             }
+            UiAction::OpenPalette => self.open_palette(),
+            UiAction::ShowHelp => self.modal = Some(Modal::Help),
+            UiAction::Quit => self.should_quit = true,
         }
         Ok(None)
     }
@@ -1129,9 +1180,151 @@ impl App {
         }
     }
 
-    fn handle_modal_key(&mut self, key: KeyEvent) -> Result<()> {
+    fn open_palette(&mut self) {
+        self.modal = Some(Modal::Palette {
+            input: TextInput::new(String::new(), false, false),
+            selected: 0,
+        });
+    }
+
+    /// Every palette row available from the current page. Page navigation and
+    /// global actions are always present so all functionality stays reachable
+    /// from the keyboard; page-contextual rows mirror the visible action bar.
+    pub fn palette_inventory(&self) -> Vec<PaletteEntry> {
+        let mut entries = Vec::new();
+        for page in Page::ALL {
+            entries.push(PaletteEntry {
+                title: format!("Go to {}", page.label()),
+                hint: "page".to_string(),
+                action: UiAction::Navigate(page),
+            });
+        }
+        let mut push = |title: &str, hint: &str, action: UiAction| {
+            entries.push(PaletteEntry {
+                title: title.to_string(),
+                hint: hint.to_string(),
+                action,
+            })
+        };
+        push("Refresh current view", "reload snapshot", UiAction::Refresh);
+        push(
+            "Launch Claude",
+            "suspend TUI and run fcc-claude",
+            UiAction::LaunchClaude(false),
+        );
+        push(
+            "Launch Claude with danger permissions",
+            "suspend TUI and run fccdanger",
+            UiAction::LaunchClaude(true),
+        );
+        push(
+            "Open command palette",
+            "keyboard Ctrl-K Ctrl-P",
+            UiAction::OpenPalette,
+        );
+        push(
+            "Keyboard shortcuts and help",
+            "keybindings mouse",
+            UiAction::ShowHelp,
+        );
+        push("Quit control center", "exit", UiAction::Quit);
+        match self.page {
+            Page::Providers => {
+                push(
+                    "Configure selected provider",
+                    "providers edit fields",
+                    UiAction::ConfigureProvider,
+                );
+                push(
+                    "Test selected provider",
+                    "providers connectivity",
+                    UiAction::TestProvider,
+                );
+                push(
+                    "Add custom provider",
+                    "providers new OpenAI compatible",
+                    UiAction::NewCustomProvider,
+                );
+                push(
+                    "Edit custom provider",
+                    "providers",
+                    UiAction::EditCustomProvider,
+                );
+                push(
+                    "Delete custom provider",
+                    "providers remove",
+                    UiAction::DeleteCustomProvider,
+                );
+                push(
+                    "Sign in connected account",
+                    "providers OAuth login",
+                    UiAction::LoginProvider,
+                );
+                push(
+                    "Disconnect connected account",
+                    "providers sign out",
+                    UiAction::DisconnectProvider,
+                );
+            }
+            Page::Models => {
+                push("Search models", "models filter", UiAction::SearchModels);
+                for (label, key) in [
+                    ("default", "MODEL"),
+                    ("Fable", "MODEL_FABLE"),
+                    ("Opus", "MODEL_OPUS"),
+                    ("Sonnet", "MODEL_SONNET"),
+                    ("Haiku", "MODEL_HAIKU"),
+                ] {
+                    push(
+                        &format!("Assign selected model to {label}"),
+                        "models routing",
+                        UiAction::AssignModel(key.to_string()),
+                    );
+                }
+            }
+            Page::Routing | Page::Context | Page::Local | Page::Settings => {
+                push("Edit selected field", "settings value", UiAction::EditField);
+            }
+            Page::Diagnostics => {
+                push(
+                    "Run route diagnostic",
+                    "synthetic no network",
+                    UiAction::RunDiagnostic,
+                );
+            }
+            Page::Dashboard | Page::Usage => {}
+        }
+        if self.page == Page::Settings {
+            push(
+                "Toggle advanced fields",
+                "settings show hide",
+                UiAction::ToggleAdvanced,
+            );
+        }
+        entries
+    }
+
+    fn execute_palette_index(&mut self, display_index: usize) -> Result<Option<ExternalAction>> {
+        let inventory = self.palette_inventory();
+        let query = match &self.modal {
+            Some(Modal::Palette { input, .. }) => input.value.clone(),
+            _ => return Ok(None),
+        };
+        let visible = match_palette(&query, &inventory);
+        let Some(entry) = visible
+            .get(display_index)
+            .and_then(|index| inventory.get(*index))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        self.modal = None;
+        self.invoke_ui_action(entry.action)
+    }
+
+    fn handle_modal_key(&mut self, key: KeyEvent) -> Result<Option<ExternalAction>> {
         let Some(modal) = self.modal.take() else {
-            return Ok(());
+            return Ok(None);
         };
         match modal {
             Modal::Message { title, body } => {
@@ -1152,6 +1345,52 @@ impl App {
                 }
                 InputOutcome::Continue => self.modal = Some(Modal::SearchModels { input }),
             },
+            Modal::Palette {
+                mut input,
+                mut selected,
+            } => {
+                let control = key.modifiers.contains(KeyModifiers::CONTROL);
+                match key.code {
+                    KeyCode::Esc => return Ok(None),
+                    KeyCode::Up => {
+                        selected = selected.saturating_sub(1);
+                        self.modal = Some(Modal::Palette { input, selected });
+                        return Ok(None);
+                    }
+                    KeyCode::Down => {
+                        selected = selected.saturating_add(1);
+                        self.modal = Some(Modal::Palette { input, selected });
+                        return Ok(None);
+                    }
+                    KeyCode::Char('p') | KeyCode::Char('P') if control => {
+                        selected = selected.saturating_sub(1);
+                        self.modal = Some(Modal::Palette { input, selected });
+                        return Ok(None);
+                    }
+                    KeyCode::Char('n') | KeyCode::Char('N') if control => {
+                        selected = selected.saturating_add(1);
+                        self.modal = Some(Modal::Palette { input, selected });
+                        return Ok(None);
+                    }
+                    KeyCode::Enter => {
+                        self.modal = Some(Modal::Palette { input, selected });
+                        let action = self.execute_palette_index(selected)?;
+                        return Ok(action);
+                    }
+                    _ => {}
+                }
+                match edit_input(&mut input, key) {
+                    InputOutcome::Cancel => {}
+                    InputOutcome::Submit => {
+                        self.modal = Some(Modal::Palette { input, selected });
+                        let action = self.execute_palette_index(selected)?;
+                        return Ok(action);
+                    }
+                    InputOutcome::Continue => {
+                        self.modal = Some(Modal::Palette { input, selected: 0 })
+                    }
+                }
+            }
             Modal::EditField { field, mut input } => match edit_input(&mut input, key) {
                 InputOutcome::Cancel => {}
                 InputOutcome::Submit => {
@@ -1187,7 +1426,7 @@ impl App {
                                 Value::String(option.value.clone())
                             };
                             self.apply_field_value(&field_key, value);
-                            return Ok(());
+                            return Ok(None);
                         }
                     }
                     _ => {}
@@ -1205,7 +1444,7 @@ impl App {
                 mut selected,
             } => {
                 match key.code {
-                    KeyCode::Esc => return Ok(()),
+                    KeyCode::Esc => return Ok(None),
                     KeyCode::Up | KeyCode::Char('k') => {
                         selected = wrap_index(selected, field_indices.len(), -1)
                     }
@@ -1215,7 +1454,7 @@ impl App {
                     KeyCode::Enter => {
                         if let Some(index) = field_indices.get(selected).copied() {
                             self.open_field_editor(index);
-                            return Ok(());
+                            return Ok(None);
                         }
                     }
                     _ => {}
@@ -1244,10 +1483,10 @@ impl App {
                         selected,
                         editing,
                     });
-                    return Ok(());
+                    return Ok(None);
                 }
                 match key.code {
-                    KeyCode::Esc => return Ok(()),
+                    KeyCode::Esc => return Ok(None),
                     KeyCode::Up | KeyCode::Char('k') => selected = wrap_index(selected, 8, -1),
                     KeyCode::Down | KeyCode::Char('j') => selected = wrap_index(selected, 8, 1),
                     KeyCode::Char(' ') | KeyCode::Enter if selected == 6 => {
@@ -1263,7 +1502,7 @@ impl App {
                     }
                     KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         self.save_provider(existing_id, draft);
-                        return Ok(());
+                        return Ok(None);
                     }
                     _ => {}
                 }
@@ -1290,7 +1529,7 @@ impl App {
                 }
             },
         }
-        Ok(())
+        Ok(None)
     }
 
     fn save_provider(&mut self, existing_id: Option<String>, draft: ProviderDraft) {
@@ -1674,5 +1913,131 @@ mod tests {
 
         assert_eq!(app.model_selected, 1);
         assert_eq!(app.selected_model().as_deref(), Some("provider/two"));
+    }
+
+    #[test]
+    fn palette_inventory_reaches_every_page() {
+        let app = App::fixture();
+        let inventory = app.palette_inventory();
+        for page in Page::ALL {
+            assert!(
+                inventory.iter().any(|entry| matches!(
+                    &entry.action,
+                    UiAction::Navigate(target) if *target == page
+                )),
+                "palette must reach {}",
+                page.label()
+            );
+        }
+    }
+
+    #[test]
+    fn palette_filter_matches_titles_and_hints_case_insensitively() {
+        let app = App::fixture();
+        let inventory = app.palette_inventory();
+        let by_title = match_palette("diagnostic", &inventory);
+        assert!(!by_title.is_empty());
+        assert!(by_title.iter().all(|index| inventory[*index]
+            .title
+            .to_ascii_lowercase()
+            .contains("diagnostic")
+            || inventory[*index]
+                .hint
+                .to_ascii_lowercase()
+                .contains("diagnostic")));
+        let upper = match_palette("DIAGNOSTIC", &inventory);
+        assert_eq!(by_title, upper);
+        assert_eq!(match_palette("", &inventory).len(), inventory.len());
+        assert!(match_palette("no-such-command-xyz", &inventory).is_empty());
+        assert!(!match_palette("  launch  ", &inventory).is_empty());
+    }
+
+    #[test]
+    fn control_k_opens_palette_and_enter_navigates() {
+        let mut app = App::fixture();
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        assert!(matches!(app.modal, Some(Modal::Palette { .. })));
+
+        for character in "dashboard".chars() {
+            app.handle_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        }
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert_eq!(app.page, Page::Dashboard);
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn palette_escape_keeps_current_page() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('p'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        assert!(matches!(app.modal, Some(Modal::Palette { .. })));
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        assert!(app.modal.is_none());
+        assert_eq!(app.page, Page::Models);
+    }
+
+    #[test]
+    fn palette_quit_entry_exits() {
+        let mut app = App::fixture();
+        app.open_palette();
+        for character in "quit control".chars() {
+            app.handle_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        }
+        let inventory = app.palette_inventory();
+        let visible = match_palette("quit control", &inventory);
+        assert_eq!(visible.len(), 1);
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn palette_out_of_range_selection_is_a_noop() {
+        let mut app = App::fixture();
+        app.open_palette();
+        // Filter down to one row, then move the cursor past the end.
+        for character in "quit control".chars() {
+            app.handle_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        }
+        for _ in 0..5 {
+            app.handle_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+                .unwrap();
+        }
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert!(!app.should_quit);
+        assert!(matches!(app.modal, Some(Modal::Palette { .. })));
     }
 }

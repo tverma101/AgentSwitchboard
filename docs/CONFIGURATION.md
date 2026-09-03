@@ -38,7 +38,13 @@ to the default or Claude tier route. Settings and local/provider fields use
 the canonical Admin API, and blank configured secret/proxy edits preserve the
 existing value. If FCC is already healthy, the control center attaches without
 claiming its lifecycle. Use `fcc-tui` from another terminal to attach directly,
-or `fcc-server --headless` for a blocking server-only process.
+or `fcc-server --headless` for a blocking server-only process. `fcc-tui`
+accepts a `tode`-style workspace surface (`[path]`, `--goto <file:line:col>`,
+`--diff <a> <b>`, `--review`, `--split`, `--theme`, `--timing`,
+`--shortcut-setup`, `--list-commands`); workspace selections arrive as a local
+notice and every verb stays inside the native UI and loopback Admin API. See
+[terminal-code transplant](TERMINAL_CODE_TRANSPLANT.md) for the verb mapping
+and the fail-closed `--ssh`/extension guidance.
 
 Repository selection is a separate `fcc-repos` picker. It shows existing local
 checkout folders only when their live Git metadata has a configured GitHub

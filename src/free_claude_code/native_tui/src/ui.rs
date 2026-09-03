@@ -1,6 +1,7 @@
 use crate::api::{ConfigField, ProviderStatus};
 use crate::app::{
-    pretty, App, ChromeGeometry, Hitbox, Modal, Page, UiAction, CONTEXT_MAX, CONTEXT_MIN,
+    match_palette, pretty, App, ChromeGeometry, Hitbox, Modal, Page, UiAction, CONTEXT_MAX,
+    CONTEXT_MIN,
 };
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -911,7 +912,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new("Mouse · ↑↓ Navigate · Enter Open · R Refresh · C Claude · ? Help · Q Quit")
+        Paragraph::new("Mouse · ↑↓ Navigate · Enter Open · ^K Palette · R Refresh · C Claude · ? Help · Q Quit")
             .alignment(ratatui::layout::Alignment::Right)
             .style(Style::default().fg(MUTED).bg(PANEL))
             .block(top_border()),
@@ -970,6 +971,7 @@ fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
         match modal {
             Modal::ProviderEditor { .. } => 24,
             Modal::Help => 22,
+            Modal::Palette { .. } => 20,
             Modal::FieldPicker { field_indices, .. } => (field_indices.len() as u16 + 6).min(24),
             Modal::Choice { options, .. } => (options.len() as u16 + 6).min(22),
             _ => 14,
@@ -983,9 +985,10 @@ fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
         Modal::FieldPicker { title, field_indices, selected } => render_field_picker(frame, app, rect, title, field_indices, *selected),
         Modal::ProviderEditor { existing_id, draft, selected, editing } => render_provider_editor(frame, rect, existing_id.as_deref(), draft, *selected, editing.as_ref()),
         Modal::SearchModels { input } => render_simple_input(frame, rect, "Search models", input, "Enter filters · Esc cancels"),
+        Modal::Palette { input, selected } => render_palette(frame, app, rect, &input.value, *selected),
         Modal::Confirm { title, body, .. } => render_message_box(frame, rect, title, &format!("{body}\n\nEnter/Y confirms · Esc/N cancels"), WARN),
         Modal::Message { title, body } => render_message_box(frame, rect, title, body, TEXT),
-        Modal::Help => render_message_box(frame, rect, "Keyboard + mouse", "Click sidebar rows, list rows, and action buttons.\n\nGlobal: Tab/Shift-Tab pages · R refresh · C launch Claude · ! danger launcher · Q quit\nProviders: Enter configure · T test · N new custom · E edit custom · X delete · L browser login · Shift-L device login · Shift-D disconnect\nModels: / search · D/F/O/S/H assign default/Fable/Opus/Sonnet/Haiku\nSettings: Enter edit · A advanced · X clear selected secret\nMultiline editor: Ctrl-Enter saves · Esc cancels\nCustom provider editor: ↑↓ field · Enter edit · Space toggle booleans · Ctrl-S save", TEXT),
+        Modal::Help => render_message_box(frame, rect, "Keyboard + mouse", "Click sidebar rows, list rows, and action buttons.\n\nGlobal: Tab/Shift-Tab pages · Ctrl-K/Ctrl-P palette · R refresh · C launch Claude · ! danger launcher · Q quit\nProviders: Enter configure · T test · N new custom · E edit custom · X delete · L browser login · Shift-L device login · Shift-D disconnect\nModels: / search · D/F/O/S/H assign default/Fable/Opus/Sonnet/Haiku\nSettings: Enter edit · A advanced · X clear selected secret\nPalette: type to filter · ↑↓ or Ctrl-P/Ctrl-N move · Enter runs · Esc closes\nMultiline editor: Ctrl-Enter saves · Esc cancels\nCustom provider editor: ↑↓ field · Enter edit · Space toggle booleans · Ctrl-S save", TEXT),
     }
 }
 
@@ -1069,6 +1072,101 @@ fn render_simple_input(
             y: inner.y + 6,
             width: inner.width,
             height: 2,
+        },
+    );
+}
+
+fn render_palette(frame: &mut Frame, app: &App, rect: Rect, query: &str, selected: usize) {
+    let block = modal_block("Command palette");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.height < 4 || inner.width < 8 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(format!("❯ {query}"))
+            .style(Style::default().fg(TEXT).bg(BG))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(ACCENT)),
+            ),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 3,
+        },
+    );
+    let inventory = app.palette_inventory();
+    let visible = match_palette(query, &inventory);
+    let rows = (inner.height.saturating_sub(5)) as usize;
+    if visible.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No matching command").style(Style::default().fg(MUTED)),
+            Rect {
+                x: inner.x,
+                y: inner.y + 4,
+                width: inner.width,
+                height: 1,
+            },
+        );
+    }
+    let offset = if rows == 0 || visible.len() <= rows {
+        0
+    } else {
+        selected
+            .min(visible.len() - 1)
+            .saturating_sub(rows / 2)
+            .min(visible.len().saturating_sub(rows))
+    };
+    for (row, entry_index) in visible.iter().skip(offset).take(rows).enumerate() {
+        let display = offset + row;
+        let Some(entry) = inventory.get(*entry_index) else {
+            continue;
+        };
+        let y = inner.y + 4 + row as u16;
+        let area = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        let style = if display == selected.min(visible.len().saturating_sub(1)) {
+            Style::default()
+                .fg(TEXT)
+                .bg(ACCENT_DIM)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TEXT)
+        };
+        let marker = if display == selected.min(visible.len().saturating_sub(1)) {
+            "▌ "
+        } else {
+            "  "
+        };
+        let hint_width = (inner.width as usize / 3).max(10);
+        let title_width = inner.width.saturating_sub(hint_width as u16 + 4) as usize;
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{}{:title_width$}  {}",
+                marker,
+                trim_to(&entry.title, title_width),
+                trim_to(&entry.hint, hint_width),
+                title_width = title_width
+            ))
+            .style(style),
+            area,
+        );
+    }
+    frame.render_widget(
+        Paragraph::new("Type to filter · ↑↓ move · Enter runs · Esc closes")
+            .style(Style::default().fg(MUTED)),
+        Rect {
+            x: inner.x,
+            y: inner.bottom().saturating_sub(1),
+            width: inner.width,
+            height: 1,
         },
     );
 }
@@ -1525,6 +1623,10 @@ mod tests {
             Modal::SearchModels {
                 input: TextInput::new("free".to_string(), false, false),
             },
+            Modal::Palette {
+                input: TextInput::new("model".to_string(), false, false),
+                selected: 1,
+            },
             Modal::Confirm {
                 title: "Clear secret".to_string(),
                 body: "Clear OpenRouter API key?".to_string(),
@@ -1544,5 +1646,21 @@ mod tests {
                 terminal.draw(|frame| render(frame, &mut app)).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn palette_keeps_cell_exact_chrome_at_reference_viewport() {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.modal = Some(Modal::Palette {
+            input: TextInput::new("provider".to_string(), false, false),
+            selected: 0,
+        });
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.geometry.top.height, 3);
+        assert_eq!(app.geometry.sidebar.width, 28);
+        assert_eq!(app.geometry.footer.height, 2);
+        assert_eq!(app.geometry.main.width, 132);
     }
 }

@@ -97,6 +97,19 @@ The standalone `fcc-tui` command attaches the native frontend to the configured
 loopback server. The interactive `fcc-server` and `fcc-claude` paths use the
 same launcher when they own or attach to the server.
 
+## Command palette
+
+`Ctrl+K` (or `Ctrl+P`) opens a command palette over the current page. Typing
+filters every page plus the page-contextual actions (provider configure/test,
+custom-provider CRUD, model search/assign, field edit, route diagnostic);
+`↑↓` (or `Ctrl+P`/`Ctrl+N`) moves, `Enter` runs, and `Esc` closes. The palette
+is the keyboard transplant of terminal-code's command palette idea; every entry
+maps to an existing Admin-backed action and the cell-exact geometry contract
+below is unchanged while it is open. `fcc-tui --list-commands` prints the same
+inventory for shell workflows. See
+[terminal-code transplant](TERMINAL_CODE_TRANSPLANT.md) for the full mapping
+and the explicitly rejected pixel/SSH/extension verbs.
+
 `fcc-server --headless` remains the explicit server-only escape hatch. The Rust source is intentionally kept inside the Python package tree so an editable AgentSwitchboard checkout can run the frontend directly against the same local server without copying configuration or provider code.
 
 Hosted CI installs Rust `1.88.0` and runs `rustfmt`, Clippy with warnings denied, and the Rust test suite on the exact PR head. The ordinary Python Ruff/ty/pytest gates remain unchanged.

@@ -75,6 +75,22 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## terminal-code / terminal-browser interaction reference
+
+The `fcc-tui` workspace verbs and the native command palette adapt interaction
+ideas (command palette, workspace open, goto/diff/review/split/theme/shortcut
+helpers) from **zenbu-labs/terminal-code** and
+**zenbu-labs/terminal-browser** as behavioral reference only:
+
+- Sources: `https://github.com/zenbu-labs/terminal-code`,
+  `https://github.com/zenbu-labs/terminal-browser`
+- Licenses: MIT (both)
+- Use in AgentSwitchboard: terminal-verb and palette-interaction reference
+  only; no upstream source, binary, or pixel/chromium runtime is distributed.
+  All actions are reimplemented against the loopback Admin API. See
+  [terminal-code transplant](docs/TERMINAL_CODE_TRANSPLANT.md) for the verified
+  source pins and the verb-by-verb mapping.
+
 ## Attribution rule for future ports
 
 Any future copied or adapted implementation must record its source repository,
