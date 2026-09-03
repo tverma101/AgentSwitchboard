@@ -11,8 +11,12 @@ from free_claude_code.config.provider_catalog import SUPPORTED_PROVIDER_IDS
 from free_claude_code.core.gateway_model_ids import (
     GATEWAY_MODEL_ID_PREFIX,
     NO_THINKING_GATEWAY_MODEL_ID_PREFIX,
+    ULTRACODE_GATEWAY_MODEL_ID_PREFIX,
 )
 
+# Keep in sync with CodexModelProfile.supported_reasoning_levels in
+# core/openai_responses/codex_lite.py so fcc-codex advertises every effort
+# the gateway can actually route.
 SUPPORTED_REASONING_LEVELS = [
     {"effort": "low", "description": "Fast responses with lighter reasoning"},
     {
@@ -23,6 +27,10 @@ SUPPORTED_REASONING_LEVELS = [
     {
         "effort": "xhigh",
         "description": "Extra high reasoning depth for complex problems",
+    },
+    {
+        "effort": "max",
+        "description": "Maximum reasoning depth for the hardest problems",
     },
 ]
 
@@ -143,6 +151,17 @@ def _candidate_from_model_id(
             provider_model_ref=remainder,
             display_name=display_name,
             force_no_thinking=True,
+            **_catalog_metadata_fields(catalog_metadata),
+        )
+
+    if prefix == ULTRACODE_GATEWAY_MODEL_ID_PREFIX:
+        if not _is_provider_model_ref(remainder):
+            return None
+        return _CatalogCandidate(
+            slug=model_id,
+            provider_model_ref=remainder,
+            display_name=display_name,
+            force_no_thinking=False,
             **_catalog_metadata_fields(catalog_metadata),
         )
 

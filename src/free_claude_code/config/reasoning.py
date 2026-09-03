@@ -14,6 +14,9 @@ class ReasoningPreference(StrEnum):
     HIGH = "high"
     XHIGH = "xhigh"
     MAX = "max"
+    # FCC-facing alias. It maps to provider-neutral xhigh; it is not a claim
+    # that every upstream provider accepts a literal "ultra" value.
+    ULTRACODE = "ultracode"
 
 
 ROOT_REASONING_PREFERENCES = tuple(

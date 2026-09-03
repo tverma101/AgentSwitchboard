@@ -1,22 +1,28 @@
 # Context pressure leash
 
-> **Status: implementation mostly shipped; effectiveness study remains.** Current
-> `main` has both layers described here: an idempotent managed global Claude
-> policy and a hard artifact-backed text-tool-result governor with bounded
-> visible excerpts, fail-closed structured/media handling, and secret-safe
-> redaction. The remaining important gap is a controlled OFF-vs-ON black-box
-> receipt showing materially lower context growth/compaction without semantic
-> loss. The earlier issue references are historical traceability; the efficacy
-> receipt remains a separate acceptance gate rather than an open-backlog claim.
+> **Status: implementation retained but disabled pending certification.** The
+> repository contains the former managed global Claude policy and a hard
+> artifact-backed text-tool-result governor. Standard FCC leaves both client
+> context intervention and ingress governance off; the sandbox intentionally
+> restores only the bounded 256K Claude context/auto-compact pair. The policy
+> writer is also a no-op unless an explicitly isolated experiment exports
+> `FCC_CONTEXT_GOVERNOR_ENABLED=true`. A future bounded experiment must
+> produce fresh Claude compatibility evidence before the broader intervention
+> is enabled.
+> Earlier receipts are historical evidence, not a current behavior or
+> certification claim.
 
 AgentSwitchboard should treat compaction as a safety valve rather than the normal result
-of accidental megadumps.
+of accidental megadumps. FCC does not install model-facing context guidance in
+the normal runtime.
 
 ## Layer 1: managed global Claude policy
 
-AgentSwitchboard may install a clearly delimited managed block into the global Claude
-instruction surface. It must preserve unrelated user content outside the block,
-be idempotent, create a recovery copy before first mutation, and uninstall only
+The retained experiment code may install a clearly delimited managed block into
+the global Claude instruction surface. The normal `install` command is disabled
+and does not write the file. If an isolated experiment explicitly enables the
+writer, it must preserve unrelated user content outside the block, be
+idempotent, create a recovery copy before first mutation, and uninstall only
 its managed block.
 
 The policy tells Claude to inspect size before broad reads, prefer bounded
@@ -27,7 +33,7 @@ checkpoint/compact before broad new exploration at critical pressure.
 
 This layer is advisory and is never the sole enforcement mechanism.
 
-## Layer 2: hard context governor
+## Layer 2: hard context governor (currently disabled)
 
 Oversized text-only tool results may be redirected to a private local artifact
 and replaced with a truthful bounded locator/excerpt. Complete media blocks are
@@ -35,13 +41,17 @@ preserved for a routed vision-capable model by default; exact structured/media
 state is never silently truncated. Structured values that cannot be safely
 transformed still fail explicitly.
 
+This FCC intervention is currently disabled by default because it is not yet
+certified against the active Claude Code client. Set
+`FCC_CONTEXT_GOVERNOR_ENABLED=true` only for a separately bounded experiment;
+the default `false` path passes client tool results through unchanged.
+
 ### Claude Code MCP boundary
 
-`fcc-claude` also gives the launched Claude process a bounded MCP result
-budget: it sets Claude Code's public `MAX_MCP_OUTPUT_TOKENS` to `12000` when
-the user has not already set that variable. An explicit user value is
-preserved. This protects the shared Claude conversation from a verbose local
-or remote MCP result without flattening FCC Computer Use screenshots.
+FCC does not set Claude Code's `MAX_MCP_OUTPUT_TOKENS` or other client context
+settings in standard mode while this intervention is uncertified. The sandbox
+exception sets only its bounded 256K context and auto-compact pair; user-owned
+MCP/tool-search settings remain untouched.
 
 The FCC Computer Use server has a separate fail-closed `16 KiB` maximum for
 its deterministic `tools/list` schema. A schema change that exceeds that
@@ -51,16 +61,10 @@ servers remain registered under their existing Claude scopes, while the
 launched Claude process applies the result budget to their returned MCP
 content as well.
 
-`fcc-claude` also enables Claude Code's deferred MCP tool presentation with
-`ENABLE_TOOL_SEARCH=true` unless the user has already set that variable. This
-keeps the ordinary named tools available while keeping their full definitions
-out of the client's initial rendered context. Claude's search controller is an
-Anthropic-host feature, not an OpenAI-compatible provider function, so FCC
-filters its `tool_search_*` definitions and `tool_reference` history blocks at
-the provider boundary instead of forwarding them as fake tools or JSON text.
-The provider still receives the ordinary MCP definitions needed for direct
-tool calls; this is a client registration/context optimization, not a claim
-that every upstream provider implements Anthropic server-side tool search.
+FCC does not enable Claude Code's deferred MCP tool presentation. Claude's
+search controller remains a client-owned feature. Any provider-boundary
+translation required for protocol compatibility remains separate from this
+disabled client policy.
 
 Preferred action order:
 
@@ -106,11 +110,12 @@ bytes/lines/token estimates, total context growth, compaction count, follow-up
 slice count, task success, and semantic loss.
 
 The leash is successful only when context growth/compaction frequency fall
-materially without reducing correctness.
+materially without reducing correctness. That effectiveness claim is not made
+for the current disabled runtime.
 
-The checked-in
+The checked-in historical
 [literal-Claude loopback A/B receipt](../smoke/receipts/context-leash-ab-2026-08-26.json)
-proves the local FCC governor's redirection boundary with the installed Claude
+proves the former local FCC governor's redirection boundary with the installed Claude
 2.1.228 client: policy-only and ungoverned runs remain materially equivalent,
 while policy plus governor reduces the visible tool result and preserves the
 synthetic completion marker. Claude's Bash tool capped the 2.3 MB fixture to
@@ -119,8 +124,11 @@ or large-result model effectiveness; those remain separate acceptance gates.
 
 ## Relationship to compaction
 
-The leash does not replace auto-compaction. It reduces avoidable pressure and
-should be tested alongside the compaction conformance suite.
+The leash does not replace auto-compaction. Standard launches delegate
+compaction entirely to Claude Code; the sandbox supplies only its bounded
+window values for controlled testing. If the broader governor is explicitly
+enabled in a bounded experiment, it should be tested alongside the compaction
+conformance suite.
 
 The implementation is validated alongside the compaction conformance suite. The
 controlled OFF-vs-ON efficacy receipt remains a separate acceptance gate; issue

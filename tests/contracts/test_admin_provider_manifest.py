@@ -107,7 +107,11 @@ def test_provider_catalog_display_names_are_admin_status_source() -> None:
         for entry in provider_config_status(load_value_state())
     }
 
-    assert set(status_by_provider) == set(PROVIDER_CATALOG)
+    # The live admin status also includes explicitly registered custom
+    # providers (for example, the user's Cline lane).  The catalog is the
+    # source of truth for built-in display metadata, but it must not reject
+    # additional user-owned provider registrations.
+    assert set(PROVIDER_CATALOG).issubset(status_by_provider)
     for provider_id, desc in PROVIDER_CATALOG.items():
         assert status_by_provider[provider_id]["display_name"] == desc.display_name
         expected_kind = (

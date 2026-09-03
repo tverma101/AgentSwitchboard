@@ -147,6 +147,18 @@ requests retain the exact provider/model reference. `MODEL_CATALOG_MODE=all`
 exposes discovered models; `curated` applies the exact references and wildcard
 rules in [model_visibility.py](../src/free_claude_code/config/model_visibility.py).
 
+Manual per-model context windows use `MODEL_CONTEXT_WINDOWS` as JSON mapping
+exact refs to tokens:
+
+```dotenv
+MODEL_CONTEXT_WINDOWS={"opencode_go/muse-spark-1.2-contributor": 1000000}
+```
+
+It applies when a request carries no explicit `[size]` suffix (for example
+`MODEL=opencode_go/model[1m]`); an explicit suffix always wins, and inherited
+subagent routes keep the parent window. The resolved window is surfaced in
+routing diagnostics. Malformed JSON fails settings validation at startup.
+
 The loopback Admin model picker keeps the full cached discovery inventory
 separate from the client-visible list. It never treats every discovered model
 as user-selected: access changes are pending until `Save`, and `Enable`/`Disable`
@@ -400,6 +412,14 @@ request cannot silently start or replace a login.
   to FCC's audited provider-neutral `xhigh` effort. It is accepted by both
   standard and sandbox Admin settings; FCC does not send a fabricated literal
   `ultra` value to providers.
+- Standard `fcc-claude` launches default the child session to
+  `CLAUDE_CODE_EFFORT_LEVEL=xhigh`, the strongest effort value supported by
+  Claude Code's remote gateway transport. An explicit `--effort` argument or a
+  nonblank `CLAUDE_CODE_EFFORT_LEVEL` value takes precedence. Native Claude Code
+  `ultracode` is a separate client-only mode that adds dynamic workflow
+  orchestration; FCC's Anthropic-compatible gateway cannot create that mode or
+  its thinking-picker state. Native availability remains subject to Claude
+  Code's entitlement, configuration, and model capability.
 - The remaining governor settings below apply only when the explicitly
   disabled governor is turned on for a bounded experiment.
 - `REASONING_POLICY=client` preserves the effort requested by the client.
@@ -606,3 +626,15 @@ a `claude-3-haiku-*` child in the same session inherits the parent OpenAI
 route when inheritance is enabled, preserving Codex thread affinity across
 subagents and Claude-owned compaction turns. See
 `tests/regressions/test_openai_routing_parity.py` for the locked contract.
+
+Every advertised reasoning-capable model also has a
+`claude-3-freecc-ultra/<provider>/<model>` variant that routes identically but
+forces FCC's maximum provider-neutral `xhigh` reasoning, selectable from inside
+Claude Code's model picker. This is separate from Claude Code's native
+`ultracode`, which adds client-side dynamic workflow orchestration. FCC's gateway
+can provide the remote `xhigh` effort and this server-side ultra variant, but it
+cannot manufacture native ultracode or its thinking-picker state. Claude's own
+"Thinking…" renderer remains client-owned and cannot be labeled by the proxy.
+Upstream `<summary>...</summary>` thinking tags are stripped into the thinking
+channel like `<think>` tags, so a stray `</summary>` can never leak into
+visible answers (FCC never emits such tags itself).

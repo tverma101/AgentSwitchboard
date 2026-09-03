@@ -8,6 +8,7 @@ import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
+from free_claude_code.cli.control_tui import _catalog_model_refs
 from free_claude_code.cli.model_picker_tui import (
     ModelListButton,
     TuiuiControlCenterApp,
@@ -46,6 +47,21 @@ def _catalog() -> dict[str, object]:
         "model_evidence": {},
         "catalog_model_evidence": {},
     }
+
+
+def test_catalog_removes_stale_models_from_unregistered_providers() -> None:
+    visible, catalog = _catalog_model_refs(
+        {
+            "models": [MODEL_A, "retired_gateway/model"],
+            "catalog_models": [MODEL_A, "retired_gateway/model"],
+            "provider_status": [
+                {"provider_id": "open_router", "status": "configured"},
+            ],
+        }
+    )
+
+    assert visible == {MODEL_A}
+    assert catalog == {MODEL_A}
 
 
 def _row(app: TuiuiControlCenterApp, model: str) -> ModelListButton:

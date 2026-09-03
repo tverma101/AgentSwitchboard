@@ -23,6 +23,22 @@ def _settings(*, port: int = 8082) -> Settings:
     )
 
 
+def test_default_control_surface_uses_native_control_center() -> None:
+    from free_claude_code.cli import control_tui_entry
+
+    settings = _settings()
+    launch = MagicMock()
+    with patch.object(control_tui_entry, "run_native_control_center") as run_native:
+        control_tui_entry.run_control_tui(
+            settings,
+            supervisor=None,
+            launch_client=launch,
+            startup_error="startup warning",
+        )
+
+    run_native.assert_called_once_with(settings, notice="startup warning")
+
+
 def test_interactive_fcc_server_owns_control_center_when_proxy_is_down() -> None:
     from free_claude_code.cli import (
         commands,
@@ -617,7 +633,7 @@ def test_direct_claude_launch_uses_owned_control_center_when_proxy_is_down() -> 
     ):
         claude.launch(("--model", "muse"))
 
-    owner.assert_called_once_with(["--model", "muse"])
+    owner.assert_called_once_with(["--model", "muse"], initial_danger=False)
 
 
 def test_direct_claude_launch_preserves_explicit_profile_for_owned_control_center(
@@ -634,7 +650,11 @@ def test_direct_claude_launch_preserves_explicit_profile_for_owned_control_cente
     ):
         claude.launch(("--profile", "coding", "--model", "muse"))
 
-    owner.assert_called_once_with(["--model", "muse"], profile="coding")
+    owner.assert_called_once_with(
+        ["--model", "muse"],
+        profile="coding",
+        initial_danger=False,
+    )
     assert "FCC_LEARNING_PROFILE" not in os.environ
 
 
@@ -649,7 +669,10 @@ def test_direct_danger_launch_preserves_skip_permissions_through_startup() -> No
     ):
         claude.launch_danger(())
 
-    owner.assert_called_once_with(["--dangerously-skip-permissions"])
+    owner.assert_called_once_with(
+        ["--dangerously-skip-permissions"],
+        initial_danger=True,
+    )
 
 
 def test_control_callback_returns_exit_status_instead_of_printing_it(
@@ -763,6 +786,7 @@ def test_control_launcher_recovers_with_exact_known_good_binary(
     assert enforce.call_count == 2
     assert enforce.call_args_list[1].args[0] == str(fallback)
     assert run_process.call_args.kwargs["command"] == [str(fallback)]
+    assert run_process.call_args.kwargs["env"]["CLAUDE_CODE_EFFORT_LEVEL"] == "xhigh"
 
 
 def test_control_launcher_explains_missing_known_good_repair(
@@ -878,6 +902,31 @@ def test_control_tui_does_not_adopt_a_child_profile_as_server_state(
     ]
 
 
+def test_attached_control_center_falls_back_when_native_binary_is_missing() -> None:
+    from free_claude_code.cli import control_tui_entry
+    from free_claude_code.cli.rust_tui import NativeControlCenterUnavailable
+
+    settings = _settings()
+    launch_client = MagicMock()
+    with (
+        patch.object(
+            control_tui_entry,
+            "run_native_control_center",
+            side_effect=NativeControlCenterUnavailable("not installed"),
+        ),
+        patch.object(
+            control_tui_entry, "run_legacy_attached_control_center"
+        ) as fallback,
+    ):
+        control_tui_entry.run_control_tui(
+            settings,
+            supervisor=None,
+            launch_client=launch_client,
+        )
+
+    fallback.assert_called_once_with(settings, launch_client=launch_client)
+
+
 def test_owned_control_center_returns_initial_launch_failure_to_tui() -> None:
     from free_claude_code.cli import control_tui_entry
     from free_claude_code.cli.launchers.common import ClientLaunchError
@@ -893,6 +942,24 @@ def test_owned_control_center_returns_initial_launch_failure_to_tui() -> None:
     )
 
     with (
+        patch.object(control_tui_entry, "build_bootstrap_state", return_value={}),
+        patch.object(control_tui_entry, "write_bootstrap_json"),
+        patch.object(control_tui_entry, "run_native_control_center"),
+        patch.object(
+            control_tui_entry,
+            "read_bootstrap_result",
+            return_value={
+                "version": 1,
+                "values": {},
+                "selected_repository": None,
+                "start_server": True,
+            },
+        ),
+        patch.object(
+            control_tui_entry,
+            "apply_bootstrap_result",
+            return_value=settings,
+        ),
         patch.object(control_tui_entry, "ServerSupervisor", return_value=supervisor),
         patch.object(control_tui_entry.threading, "Thread", return_value=server_thread),
         patch.object(control_tui_entry, "_wait_for_proxy", return_value=None),
@@ -912,6 +979,102 @@ def test_owned_control_center_returns_initial_launch_failure_to_tui() -> None:
     )
     supervisor.request_stop.assert_called_once_with()
     server_thread.join.assert_called_once_with(5.0)
+
+
+def test_owned_control_center_starts_server_only_after_bootstrap_tui_saves() -> None:
+    from free_claude_code.cli import control_tui_entry
+
+    settings = _settings()
+    supervisor = MagicMock()
+    supervisor.schedule_run.return_value = True
+    server_thread = MagicMock()
+    events: list[str] = []
+
+    def run_native(*_args, **_kwargs):
+        events.append("tui")
+
+    def apply_result(result):
+        assert result["start_server"] is True
+        events.append("apply")
+        return settings
+
+    def make_supervisor(*_args, **_kwargs):
+        assert events == ["tui", "apply"]
+        events.append("supervisor")
+        return supervisor
+
+    with (
+        patch.object(control_tui_entry, "build_bootstrap_state", return_value={}),
+        patch.object(control_tui_entry, "write_bootstrap_json"),
+        patch.object(
+            control_tui_entry,
+            "run_native_control_center",
+            side_effect=run_native,
+        ),
+        patch.object(
+            control_tui_entry,
+            "read_bootstrap_result",
+            return_value={
+                "version": 1,
+                "values": {"MODEL": "provider/selected"},
+                "selected_repository": None,
+                "start_server": True,
+            },
+        ),
+        patch.object(
+            control_tui_entry,
+            "apply_bootstrap_result",
+            side_effect=apply_result,
+        ),
+        patch.object(
+            control_tui_entry, "ServerSupervisor", side_effect=make_supervisor
+        ),
+        patch.object(control_tui_entry.threading, "Thread", return_value=server_thread),
+        patch.object(control_tui_entry, "_wait_for_proxy", return_value=None),
+        patch.object(control_tui_entry, "run_control_tui"),
+    ):
+        control_tui_entry.run_owned_control_center(
+            settings,
+            launch_client=MagicMock(),
+        )
+
+    assert events == ["tui", "apply", "supervisor"]
+
+
+def test_owned_control_center_persists_choices_even_when_user_quits_before_start() -> (
+    None
+):
+    from free_claude_code.cli import control_tui_entry
+
+    settings = _settings()
+    with (
+        patch.object(control_tui_entry, "build_bootstrap_state", return_value={}),
+        patch.object(control_tui_entry, "write_bootstrap_json"),
+        patch.object(control_tui_entry, "run_native_control_center"),
+        patch.object(
+            control_tui_entry,
+            "read_bootstrap_result",
+            return_value={
+                "version": 1,
+                "values": {"MODEL": "provider/selected"},
+                "selected_repository": None,
+                "start_server": False,
+            },
+        ),
+        patch.object(
+            control_tui_entry,
+            "apply_bootstrap_result",
+            return_value=settings,
+        ) as apply_result,
+        patch.object(control_tui_entry, "ServerSupervisor") as supervisor,
+    ):
+        control_tui_entry.run_owned_control_center(
+            settings,
+            launch_client=MagicMock(),
+        )
+
+    apply_result.assert_called_once()
+    supervisor.assert_not_called()
 
 
 def test_direct_owner_starts_control_center_with_post_migration_settings() -> None:
@@ -940,6 +1103,8 @@ def test_direct_owner_starts_control_center_with_post_migration_settings() -> No
     owner.assert_called_once_with(
         settings,
         initial_argv=("--model", "muse"),
+        initial_cwd=None,
+        initial_danger=False,
         launch_client=claude._launch_control_client,
     )
 

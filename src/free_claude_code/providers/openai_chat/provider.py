@@ -157,7 +157,10 @@ class OpenAIChatProvider(BaseProvider):
                 self._provider_name,
                 type(exc).__name__,
             )
-            return model_infos_from_ids(self._fallback_model_ids)
+            return model_infos_from_ids(
+                self._fallback_model_ids,
+                provider_name=self._provider_name,
+            )
         if not self._profile.model_ids_are_routable:
             return frozenset()
         return extract_openai_model_infos(payload, provider_name=self._provider_name)

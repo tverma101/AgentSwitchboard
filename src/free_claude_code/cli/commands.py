@@ -10,6 +10,7 @@ from pathlib import Path
 
 import uvicorn
 
+import free_claude_code.runtime.bootstrap as _server_bootstrap
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import kill_all_best_effort
 from free_claude_code.config.env_migrations import (
@@ -22,7 +23,13 @@ from free_claude_code.config.paths import (
 )
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
-from free_claude_code.runtime.bootstrap import build_asgi_app
+from free_claude_code.core.diagnostics import safe_exception_message
+
+build_asgi_app = _server_bootstrap.build_asgi_app
+apply_bootstrap_result = _server_bootstrap.apply_bootstrap_result
+build_bootstrap_state = _server_bootstrap.build_bootstrap_state
+read_bootstrap_result = _server_bootstrap.read_bootstrap_result
+write_bootstrap_json = _server_bootstrap.write_bootstrap_json
 
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
 
@@ -52,6 +59,14 @@ class ServerSupervisor:
         self._running = False
         self._stop_requested = False
         self._restart_generation = 0
+        self._last_error: str | None = None
+
+    @property
+    def last_error(self) -> str | None:
+        """Return the last bounded worker failure, if one was observed."""
+
+        with self._lock:
+            return self._last_error
 
     @property
     def status(self) -> ServerStatus:
@@ -101,6 +116,12 @@ class ServerSupervisor:
                         return
                     get_settings.cache_clear()
             except KeyboardInterrupt:
+                return
+            except Exception as exc:
+                with self._lock:
+                    self._last_error = (
+                        f"{type(exc).__name__}: {safe_exception_message(exc)}"[:500]
+                    )
                 return
         finally:
             with self._lock:

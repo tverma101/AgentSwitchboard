@@ -56,6 +56,51 @@ def convert_tools(value: Any) -> list[dict[str, Any]] | None:
     return tools
 
 
+def additional_tools_from_input(value: Any) -> list[dict[str, Any]]:
+    """Extract Codex Responses-Lite tools carried by input items.
+
+    Lite clients send prompt-only ``additional_tools`` items instead of the
+    public top-level ``tools`` field.  The item is metadata, not a user
+    message, so callers should consume the returned definitions and omit the
+    item from conversation history.
+    """
+
+    items = value if isinstance(value, list) else [value]
+    extracted: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "additional_tools":
+            continue
+        role = item.get("role")
+        if role is not None and role != "developer":
+            raise ResponsesConversionError(
+                "Responses additional_tools items must use role 'developer'."
+            )
+        tools = item.get("tools")
+        if not isinstance(tools, list):
+            raise ResponsesConversionError(
+                "Responses additional_tools.tools must be a list"
+            )
+        for tool in tools:
+            if not isinstance(tool, dict):
+                raise ResponsesConversionError(
+                    f"Unsupported Responses additional tool: {type(tool).__name__}"
+                )
+            extracted.append(tool)
+    return extracted
+
+
+def response_tools_for_request(
+    request_tools: list[dict[str, Any]] | None,
+    input_value: Any,
+) -> list[dict[str, Any]] | None:
+    """Return top-level and Lite input tools in their original wire order."""
+
+    additional = additional_tools_from_input(input_value)
+    if request_tools is None:
+        return additional or None
+    return [*request_tools, *additional]
+
+
 def convert_tool_choice(value: Any) -> dict[str, Any] | None:
     if value is None or value == "auto":
         return None

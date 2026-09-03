@@ -1,15 +1,20 @@
 """Lightweight entry points for installed Free Claude Code commands."""
 
 import os
+import shutil
+import stat
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from free_claude_code.cli.server_startup import (
-    server_port_is_occupied as _server_port_is_occupied,
+from free_claude_code.config.paths import (
+    FCC_CONFIG_DIR_ENV,
+    FCC_ENV_FILENAME,
+    config_dir_path,
 )
 from free_claude_code.core.branding import PRODUCT_NAME
 from free_claude_code.core.process_identity import set_process_identity
+from free_claude_code.core.server_identity import SERVER_MODE_ENV
 from free_claude_code.core.version import package_version
 from free_claude_code.learning.config import (
     PROFILE_ENV,
@@ -20,9 +25,52 @@ from free_claude_code.learning.config import (
 _SERVER_USAGE = "fcc-server [--profile <name>] [--terminal|--no-browser] [--headless]"
 _FCC_USAGE = "fcc <accounts> [options]"
 
+SANDBOX_CONFIG_DIR_ENV = "FCC_SANDBOX_DIR"
+SANDBOX_CONFIG_DIRNAME = ".fcc-sandbox"
+SANDBOX_PORT_DEFAULT = 8083
+SANDBOX_WEB_TOOLS_ENV = "ENABLE_WEB_SERVER_TOOLS"
+SANDBOX_LOCAL_A3S_ENV = "ENABLE_LOCAL_A3S_SEARCH"
+
+
+def _server_port_is_occupied(host: str, port: int) -> bool:
+    """Load the port probe after sandbox environment selection."""
+
+    from free_claude_code.cli.server_startup import server_port_is_occupied
+
+    return server_port_is_occupied(host, port)
+
 
 def serve(argv: Sequence[str] | None = None) -> None:
     """Start the FastAPI server (registered as ``fcc-server``)."""
+    _serve(argv)
+
+
+def serve_sandbox(argv: Sequence[str] | None = None) -> None:
+    """Start an isolated test server (registered as ``t-fcc-server``)."""
+
+    args = tuple(sys.argv[1:] if argv is None else argv)
+    _apply_sandbox_defaults()
+    if _print_version_if_requested(args):
+        return
+    if "--help" in args or "-h" in args:
+        remaining, _profile = extract_profile_argument(args)
+        _parse_server_options(remaining)
+
+    from free_claude_code.cli import commands
+    from free_claude_code.config.server_urls import local_admin_url
+
+    settings = commands.load_server_settings()
+    print(
+        f"{PRODUCT_NAME} sandbox: state in {config_dir_path()} "
+        f"({local_admin_url(settings)})"
+    )
+    _serve(args, process_detail="sandbox")
+
+
+def _serve(
+    argv: Sequence[str] | None = None, *, process_detail: str | None = None
+) -> None:
+    """Run the shared server entry-point flow with an optional process label."""
     args = tuple(sys.argv[1:] if argv is None else argv)
     if _print_version_if_requested(args):
         return
@@ -34,11 +82,43 @@ def serve(argv: Sequence[str] | None = None) -> None:
     if profile is not None:
         os.environ[PROFILE_ENV] = profile
     _parse_server_options(remaining)
-    set_process_identity("Server")
+    set_process_identity("Server", process_detail)
     if "--headless" in remaining:
         _run_server_entrypoint(headless=True)
     else:
         _run_server_entrypoint()
+
+
+def _apply_sandbox_defaults() -> None:
+    """Point this process at sandbox state unless the user set overrides."""
+
+    config_override = os.environ.get(FCC_CONFIG_DIR_ENV, "").strip()
+    if config_override:
+        sandbox_dir = config_override
+    else:
+        sandbox_dir = os.environ.get(SANDBOX_CONFIG_DIR_ENV, "").strip()
+        if not sandbox_dir:
+            sandbox_dir = str(Path.home() / SANDBOX_CONFIG_DIRNAME)
+        os.environ[FCC_CONFIG_DIR_ENV] = sandbox_dir
+    os.environ.setdefault("PORT", str(SANDBOX_PORT_DEFAULT))
+    os.environ.setdefault(SANDBOX_WEB_TOOLS_ENV, "true")
+    os.environ.setdefault(SANDBOX_LOCAL_A3S_ENV, "true")
+    os.environ[SERVER_MODE_ENV] = "sandbox"
+    _seed_sandbox_env(Path(sandbox_dir).expanduser())
+
+
+def _seed_sandbox_env(sandbox_dir: Path) -> None:
+    """Copy the live managed env into the sandbox once, never overwriting."""
+
+    sandbox_env = sandbox_dir / FCC_ENV_FILENAME
+    if sandbox_env.exists():
+        return
+    live_env = Path.home() / ".fcc" / FCC_ENV_FILENAME
+    if not live_env.is_file():
+        return
+    sandbox_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(live_env, sandbox_env)
+    sandbox_env.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
 def _run_server_entrypoint(*, headless: bool = False) -> None:
@@ -56,7 +136,16 @@ def _run_server_entrypoint(*, headless: bool = False) -> None:
 
     settings = commands.load_server_settings()
     interactive = not headless and terminal_control_available()
-    preflight_error = preflight_proxy(local_proxy_root_url(settings))
+    mode = os.environ.get(SERVER_MODE_ENV, "standard").strip() or "standard"
+    endpoint = local_proxy_root_url(settings)
+    if mode == "sandbox":
+        print(
+            f"{PRODUCT_NAME} sandbox startup: endpoint {endpoint}; "
+            f"state in {config_dir_path()}"
+        )
+    else:
+        print(f"{PRODUCT_NAME} startup: checking {endpoint}")
+    preflight_error = preflight_proxy(endpoint, expected_mode=mode)
     if preflight_error is None:
         if interactive:
             run_attached_control_center(

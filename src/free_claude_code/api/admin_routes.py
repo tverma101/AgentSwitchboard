@@ -1,5 +1,6 @@
 """Local admin UI routes and APIs."""
 
+import asyncio
 import ipaddress
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -32,6 +33,13 @@ from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
 )
+from free_claude_code.core.repository_inventory import (
+    RepoEntry,
+    load_repository_inventory,
+)
+from free_claude_code.core.repository_inventory import (
+    select_repository as select_local_repository,
+)
 from free_claude_code.learning.config import configured_profile
 from free_claude_code.learning.reviewer_config import ReviewerPackSettings
 from free_claude_code.learning.reviewer_flow import reviewer_status
@@ -44,6 +52,7 @@ from free_claude_code.learning.reviewer_scars import (
 from free_claude_code.usage import tracking_summary
 
 from .dependencies import get_services
+from .model_catalog import build_models_list_response
 from .ports import ApiServices
 
 router = APIRouter()
@@ -97,6 +106,14 @@ class ConnectedAccountLoginPayload(BaseModel):
     """Interactive connected-account login selection."""
 
     mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
+
+
+class RepositorySelectionPayload(BaseModel):
+    """One local checkout selected by the native control center."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=4096, pattern=r"^[^\r\n]+$")
 
 
 def _is_loopback_host(host: str | None) -> bool:
@@ -157,9 +174,17 @@ async def admin_asset(filename: str, request: Request):
 
 
 @router.get("/admin/api/config")
-async def get_admin_config(request: Request):
+async def get_admin_config(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
     require_loopback_admin(request)
-    return load_config_response()
+    response = load_config_response()
+    runtime_status = services.admin.admin_status()
+    provider_status = runtime_status.get("provider_status")
+    if isinstance(provider_status, list):
+        response["provider_status"] = provider_status
+    return response
 
 
 @router.post("/admin/api/config/validate")
@@ -242,6 +267,73 @@ async def custom_provider_status(
 ):
     require_loopback_admin(request)
     return _no_store({"providers": services.admin.custom_provider_status()})
+
+
+def _repository_payload(repo: RepoEntry) -> dict[str, Any]:
+    """Return display-safe repository metadata without remote credentials."""
+
+    return {
+        "name": repo.name,
+        "path": repo.path,
+        "branch": repo.branch,
+        "remote": repo.remote,
+        "last_used": repo.last_used,
+        "display_path": repo.display_path,
+        "repository_name": repo.repository_name,
+        "identity": repo.identity,
+        "selection_detail": repo.selection_detail,
+    }
+
+
+@router.get("/admin/api/repositories")
+async def repositories(
+    request: Request,
+    refresh: bool = Query(default=False),
+):
+    """Return real local GitHub checkouts for the native repository page."""
+
+    require_loopback_admin(request)
+    try:
+        repos, selected_path = await asyncio.to_thread(
+            load_repository_inventory,
+            refresh=refresh,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Repository discovery failed ({type(exc).__name__}).",
+        ) from exc
+    return _no_store(
+        {
+            "repositories": [_repository_payload(repo) for repo in repos],
+            "selected_path": selected_path,
+        }
+    )
+
+
+@router.post("/admin/api/repositories/select")
+async def select_repository(
+    payload: RepositorySelectionPayload,
+    request: Request,
+):
+    """Persist one validated checkout as the next native-client workspace."""
+
+    require_loopback_admin(request)
+    try:
+        repo, persisted = await asyncio.to_thread(select_local_repository, payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Repository selection failed ({type(exc).__name__}).",
+        ) from exc
+    return _no_store(
+        {
+            "repository": _repository_payload(repo),
+            "persisted": persisted,
+        }
+    )
 
 
 @router.post("/admin/api/custom-providers")
@@ -534,19 +626,21 @@ def _model_options(
     *,
     refresh_result: ProviderModelRefreshResult | None = None,
 ) -> dict[str, object]:
-    configured = {
-        ref.model_ref
-        for ref in configured_chat_model_refs(services.requests.current_settings())
-    }
+    settings = services.requests.current_settings()
+    configured = {ref.model_ref for ref in configured_chat_model_refs(settings)}
     discovered_infos = tuple(
         filter_cached_model_infos(
-            services.requests.current_settings(),
+            settings,
             services.requests.cached_prefixed_model_infos(),
         )
     )
     catalog_infos = tuple(services.requests.cached_discovered_prefixed_model_infos())
     discovered = {info.model_id for info in discovered_infos}
     catalog = configured | {info.model_id for info in catalog_infos}
+    # Keep this response in lockstep with the client-facing Claude registry.
+    # The editable model rows above intentionally remain raw provider/model
+    # refs because those are the values the routing settings accept.
+    claude_registry = build_models_list_response(settings, services.requests)
     failed_provider_ids = (
         refresh_result.failed_provider_ids if refresh_result is not None else ()
     )
@@ -559,6 +653,10 @@ def _model_options(
         "catalog_models": sorted(catalog, key=str.casefold),
         "catalog_model_labels": model_display_names(catalog),
         "catalog_model_evidence": _model_evidence(configured, catalog_infos),
+        "claude_models": [model.id for model in claude_registry.data],
+        "claude_model_labels": {
+            model.id: model.display_name for model in claude_registry.data
+        },
     }
 
 

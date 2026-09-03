@@ -91,8 +91,10 @@ def test_cli_scripts_are_registered() -> None:
     assert pyproject["project"]["scripts"] == {
         "fcc": "free_claude_code.cli.entrypoints:main",
         "fcc-server": "free_claude_code.cli.entrypoints:serve",
+        "t-fcc-server": "free_claude_code.cli.entrypoints:serve_sandbox",
         "fcc-claude": "free_claude_code.cli.launchers.claude:launch",
         "fccdanger": "free_claude_code.cli.launchers.claude:launch_danger",
+        "fcc-cline": "free_claude_code.cli.launchers.cline:launch",
         "fcc-codex": "free_claude_code.cli.launchers.codex:launch",
         "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
         "fcc-learning": "free_claude_code.learning.cli:main",
@@ -507,7 +509,8 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
     assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:9090"
     assert env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in env
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in env
     assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in env
     assert env["DISABLE_AUTOUPDATER"] == "1"
     assert env["DISABLE_FEEDBACK_COMMAND"] == "1"
@@ -692,12 +695,18 @@ def test_launch_claude_passes_args_and_child_env(
 
     assert exc_info.value.code == 7
     popen.assert_called_once()
-    assert popen.call_args.args[0] == ["resolved-claude.cmd", "--model", "sonnet"]
+    assert popen.call_args.args[0] == [
+        "resolved-claude.cmd",
+        "--model",
+        "sonnet",
+    ]
     child_env = popen.call_args.kwargs["env"]
     assert child_env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:9191"
     assert child_env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert child_env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
-    assert child_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert child_env["CLAUDE_CODE_EFFORT_LEVEL"] == "xhigh"
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in child_env
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in child_env
     assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in child_env
     assert child_env["DISABLE_AUTOUPDATER"] == "1"
     assert child_env["DISABLE_FEEDBACK_COMMAND"] == "1"
@@ -856,12 +865,13 @@ def test_prepare_computer_use_session_reports_actionable_failure(
     assert "FCC_ALLOWED_HELPERS" in message
 
 
-def test_launch_claude_applies_model_context_window_override(
+def test_launch_claude_leaves_context_window_to_standard_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Launch with a flash gateway model raises the auto-compact window."""
+    """Standard launches do not inject the sandbox-only context window."""
     from free_claude_code.cli.launchers.claude import launch
 
+    monkeypatch.delenv("FCC_SERVER_MODE", raising=False)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path("/nonexistent-fcc-test-config")))
     settings = _launcher_settings(port=9191, token="proxy-token")
 
@@ -888,9 +898,49 @@ def test_launch_claude_applies_model_context_window_override(
 
     assert exc_info.value.code == 7
     child_env = popen.call_args.kwargs["env"]
-    assert child_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
-    assert child_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in child_env
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in child_env
     assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in child_env
+
+
+def test_launch_claude_restores_context_window_in_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sandbox launches expose the bounded 256K window to Claude."""
+    from free_claude_code.cli.launchers.claude import launch
+
+    monkeypatch.setenv("FCC_SERVER_MODE", "sandbox")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path("/nonexistent-fcc-test-config")))
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.claude.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.claude.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-claude.cmd",
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(["--model", "anthropic/opencode/deepseek-v4-flash-free"])
+
+    assert exc_info.value.code == 0
+    child_env = popen.call_args.kwargs["env"]
+    assert child_env["FCC_CLAUDE_CONTEXT_TOKENS"] == "256000"
+    assert child_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
+    assert child_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert "MAX_MCP_OUTPUT_TOKENS" not in child_env
+    assert "ENABLE_TOOL_SEARCH" not in child_env
 
 
 def test_launch_codex_passes_responses_config_and_child_env(

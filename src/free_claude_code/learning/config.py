@@ -54,9 +54,14 @@ def learning_home() -> Path:
     """Return the root directory containing all FCC Learning profiles."""
 
     override = os.environ.get("FCC_LEARNING_HOME")
-    return (
-        Path(override).expanduser() if override else Path.home() / ".fcc" / "learning"
-    )
+    if override:
+        return Path(override).expanduser()
+    # Mirrors config.paths.FCC_CONFIG_DIR so sandbox runs stay out of ~/.fcc;
+    # learning stays dependency-neutral and must not import the config package.
+    config_override = os.environ.get("FCC_CONFIG_DIR", "").strip()
+    if config_override:
+        return Path(config_override).expanduser() / "learning"
+    return Path.home() / ".fcc" / "learning"
 
 
 def profile_home(profile: str | None = None) -> Path:

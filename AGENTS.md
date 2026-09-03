@@ -55,6 +55,14 @@
 6. **PROPAGATION**: Changes impact multiple files; propagate updates correctly.
 7. **VERSION**: If the commit touches production files on `main`, bump semver in the same commit (see [Versioning](#versioning-main)).
 
+## CODEX PROPOSAL QUALITY & PUSHBACK
+
+- Treat a user-proposed mechanism as a hypothesis, not as a confirmed root cause. Separate the symptom, the boundary owner, the evidence, and the proposed remedy before editing code.
+- Push back clearly when a prompt edit, proxy change, synthetic fixture, or architecture change would not exercise the suspected failure boundary. Explain what that test would and would not prove.
+- Use synthetic cases for deterministic edge coverage, then pair them with the smallest live or wire-level discriminating check that can distinguish model output, client state, proxy transformation, and server/provider behavior.
+- Prefer the narrowest repair at the first proven ownership boundary. Do not move a client-lifecycle defect into provider compatibility code merely because the symptoms cross the gateway.
+- When evidence contradicts the user's theory, state that directly and recommend the next bounded experiment instead of implementing the theory speculatively.
+
 ## CODEX SELF-LEARNING
 
 - Self-learning is part of every meaningful task. At the end of the task, run a bounded learning checkpoint over the current work and only the most relevant prior sessions or project notes.

@@ -11,6 +11,7 @@ from free_claude_code.cli.claude_firewall import (
 )
 from free_claude_code.cli.local_http import with_local_proxy_bypass
 from free_claude_code.cli.proxy_auth import proxy_auth_token
+from free_claude_code.core.server_identity import server_mode
 
 CLAUDE_CONTEXT_CAP_DEFAULT = 256_000
 CLAUDE_CONTEXT_CAP_MIN = 32_000
@@ -19,9 +20,8 @@ CLAUDE_CONTEXT_CAP_ENV = "FCC_CLAUDE_CONTEXT_TOKENS"
 CLAUDE_BINARY_NAME = "claude"
 CLAUDE_DISABLE_NONSTREAMING_FALLBACK_ENV = "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"
 
-# Claude Code applies this public limit to MCP tool results. Keep the default
-# below the client warning threshold so a verbose local server cannot consume
-# the whole conversation; preserve an explicit user value unchanged.
+# Retained as compatibility constants for callers that inspect older FCC
+# policy names. The launcher does not inject these client-owned settings.
 CLAUDE_MCP_OUTPUT_TOKENS_DEFAULT = 12_000
 CLAUDE_MCP_OUTPUT_TOKENS_ENV = "MAX_MCP_OUTPUT_TOKENS"
 
@@ -31,6 +31,13 @@ CLAUDE_MCP_OUTPUT_TOKENS_ENV = "MAX_MCP_OUTPUT_TOKENS"
 # default while preserving an explicit client setting.
 CLAUDE_TOOL_SEARCH_DEFAULT = "true"
 CLAUDE_TOOL_SEARCH_ENV = "ENABLE_TOOL_SEARCH"
+
+CLAUDE_EFFORT_LEVEL_ENV = "CLAUDE_CODE_EFFORT_LEVEL"
+CLAUDE_EFFORT_FLAG = "--effort"
+# ``xhigh`` is the strongest effort value Claude Code can transmit through
+# the remote gateway. Native ``ultracode`` also requires client-only workflow
+# state and must not be advertised by the FCC launcher.
+CLAUDE_EFFORT_DEFAULT = "xhigh"
 
 # Keys Claude Code applies from its settings.json ``env`` block over the
 # process environment. FCC's launcher owns these for a proxy session; when a
@@ -50,12 +57,11 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {}
 
 
 def context_cap_tokens(base_env: Mapping[str, str]) -> int:
-    """Return FCC's effective Claude context cap for this launch.
+    """Parse the legacy FCC context value without applying it to a launch.
 
-    The default is deliberately 256K even when an upstream gateway advertises
-    a larger window. An explicit ``FCC_CLAUDE_CONTEXT_TOKENS`` override may
-    choose a value from 32K through 1M; malformed/out-of-range values fail safe
-    to the 256K default instead of silently creating an extreme window.
+    This helper remains for backwards-compatible settings/UI readers. The
+    current launcher deliberately does not call it when constructing the child
+    environment.
     """
 
     raw = base_env.get(CLAUDE_CONTEXT_CAP_ENV)
@@ -86,7 +92,7 @@ def effective_context_window(
     model_id: str | None,
     base_env: Mapping[str, str],
 ) -> int:
-    """Return the launch cap, respecting a known smaller native model ceiling."""
+    """Return the legacy computed cap for compatibility-only callers."""
 
     configured_cap = context_cap_tokens(base_env)
     native_ceiling = model_context_window(model_id)
@@ -279,6 +285,28 @@ def _settings_env_from_document(document: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in env.items() if isinstance(key, str)}
 
 
+def claude_effort_environment(
+    argv: Sequence[str], base_env: Mapping[str, str]
+) -> dict[str, str]:
+    """Add the strongest supported remote effort unless the client chose one.
+
+    Native ``ultracode`` is a Claude Code client-session mode that cannot be
+    created by an Anthropic-compatible gateway. ``xhigh`` is the valid remote
+    effort value and is translated by FCC at its provider boundary.
+    """
+
+    environment = dict(base_env)
+    if any(
+        argument == CLAUDE_EFFORT_FLAG or argument.startswith(f"{CLAUDE_EFFORT_FLAG}=")
+        for argument in argv
+    ):
+        return environment
+    if environment.get(CLAUDE_EFFORT_LEVEL_ENV, "").strip():
+        return environment
+    environment[CLAUDE_EFFORT_LEVEL_ENV] = CLAUDE_EFFORT_DEFAULT
+    return environment
+
+
 def build_claude_proxy_env(
     *,
     proxy_root_url: str,
@@ -289,9 +317,11 @@ def build_claude_proxy_env(
 ) -> dict[str, str]:
     """Return the canonical environment for Claude Code proxy sessions.
 
-    FCC owns the gateway context policy. Claude Code is told to treat the
-    session as 256K by default even when the upstream model advertises 1M.
-    ``FCC_CLAUDE_CONTEXT_TOKENS`` is the single user-facing override.
+    FCC owns only the loopback proxy transport and authentication boundary in
+    standard mode. The sandbox intentionally restores its audited 256K Claude
+    window contract; context governance, MCP output, and tool-search policy
+    remain client-owned in both modes. Explicit client values are preserved
+    except for the sandbox-owned context-window pair.
     """
 
     # Claude's aggregate traffic flag also suppresses gateway model discovery.
@@ -316,31 +346,17 @@ def build_claude_proxy_env(
     # its non-streaming fallback after provider-visible work may have started.
     env[CLAUDE_DISABLE_NONSTREAMING_FALLBACK_ENV] = "1"
 
-    window = effective_context_window(model_id, base_env)
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(window)
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(window)
-    # Do not disable Claude Code's unknown-model safety enforcement. Current
-    # Claude Code uses that switch to wait for the API instead of proactively
-    # compacting when a gateway model is not in its native model map. FCC has a
-    # bounded window, but must still let the client compact before the boundary.
-    env.pop("CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT", None)
-    # Inherited compact-disable flags would defeat the bounded-session contract
-    # and make the status line reach 100% before Claude can compact. The
-    # automatic-only flag is separate from DISABLE_COMPACT in Claude Code.
-    env.pop("DISABLE_COMPACT", None)
-    env.pop("DISABLE_AUTO_COMPACT", None)
+    if server_mode() == "sandbox":
+        # The sandbox deliberately keeps the former narrow Claude window
+        # contract for controlled testing. Do not re-enable the broader FCC
+        # context governor or MCP/tool-search policy here.
+        window = effective_context_window(model_id, base_env)
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(window)
+        env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(window)
+
     env[CLAUDE_PROCESS_WRAPPER_ENV] = process_wrapper_path or str(
         default_process_wrapper_path(base_env)
     )
-
-    # Do not inject Claude Code's private percentage override. Current Claude
-    # versions compose it with the explicit gateway window in surprising ways,
-    # and repeated compaction after rules/context reload is an upstream failure
-    # mode. If a user explicitly supplies the variable, base_env preserves it.
-    if not env.get(CLAUDE_MCP_OUTPUT_TOKENS_ENV, "").strip():
-        env[CLAUDE_MCP_OUTPUT_TOKENS_ENV] = str(CLAUDE_MCP_OUTPUT_TOKENS_DEFAULT)
-    if not env.get(CLAUDE_TOOL_SEARCH_ENV, "").strip():
-        env[CLAUDE_TOOL_SEARCH_ENV] = CLAUDE_TOOL_SEARCH_DEFAULT
 
     env["DISABLE_AUTOUPDATER"] = "1"
     env["DISABLE_FEEDBACK_COMMAND"] = "1"

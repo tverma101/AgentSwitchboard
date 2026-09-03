@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOGUE = ROOT / "docs" / "README.md"
 IGNORED_DIRECTORIES = {
     ".git",
+    ".project-memory",
     ".pytest_cache",
     ".ruff_cache",
     ".venv",

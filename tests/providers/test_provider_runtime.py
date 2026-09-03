@@ -81,6 +81,7 @@ def _make_settings(**overrides):
     mock.nvidia_nim_proxy = ""
     mock.open_router_proxy = ""
     mock.bai_proxy = ""
+    mock.deepseek_proxy = ""
     mock.lmstudio_proxy = ""
     mock.llamacpp_proxy = ""
     mock.mistral_proxy = ""
@@ -114,6 +115,7 @@ def _make_settings(**overrides):
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
     mock.ollama_cloud_proxy = ""
+    mock.ollama_proxy = ""
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = ""
     mock.openai_proxy = ""
@@ -360,6 +362,63 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
     config = build_provider_config(descriptor, settings)
 
     assert config.api_key == "shared-opencode-token"
+
+
+@pytest.mark.parametrize("provider_id", tuple(PROVIDER_CATALOG))
+def test_every_builtin_provider_maps_its_registered_proxy_setting(
+    provider_id: str,
+) -> None:
+    descriptor = PROVIDER_CATALOG[provider_id]
+    assert descriptor.proxy_attr is not None
+    proxy = f"http://proxy-{provider_id}.test:8080"
+    overrides = {descriptor.proxy_attr: proxy}
+    if descriptor.credential_attr is not None:
+        overrides[descriptor.credential_attr] = f"test-{provider_id}-key"
+    settings = _make_settings(**overrides)
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.proxy == proxy
+
+
+@pytest.mark.parametrize("provider_id", tuple(PROVIDER_CATALOG))
+def test_every_builtin_provider_constructs_a_transport_with_its_proxy(
+    provider_id: str,
+) -> None:
+    descriptor = PROVIDER_CATALOG[provider_id]
+    assert descriptor.proxy_attr is not None
+    proxy = f"http://proxy-{provider_id}.test:8080"
+    overrides = {descriptor.proxy_attr: proxy}
+    if descriptor.credential_attr is not None:
+        overrides[descriptor.credential_attr] = f"test-{provider_id}-key"
+    settings = _make_settings(**overrides)
+    auth = MagicMock()
+    injected_factories = {
+        "openai": lambda config, _settings, admission: OpenAICodexProvider(
+            config,
+            auth=auth,
+            admission=admission,
+        )
+    }
+
+    with (
+        patch("httpx.AsyncClient") as async_client,
+        patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"),
+        patch(
+            "free_claude_code.providers.runtime.factory.ProviderAdmissionController",
+            return_value=MagicMock(),
+        ),
+    ):
+        provider = create_provider(
+            provider_id,
+            settings,
+            injected_factories=injected_factories,
+        )
+
+    assert provider._config.proxy == proxy
+    assert any(
+        call.kwargs.get("proxy") == proxy for call in async_client.call_args_list
+    )
 
 
 def test_build_provider_config_opencode_go_accepts_explicit_base_url() -> None:

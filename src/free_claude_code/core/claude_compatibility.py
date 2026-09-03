@@ -24,8 +24,10 @@ _CLAUDE_PACKAGE_NAME = "@anthropic-ai/claude-code"
 _CLAUDE_INSTALL_ROOT_NAME = "claude-code"
 _WRAPPER_FILENAME = "fcc-claude-process-wrapper"
 _RECEIPT_DIRNAME = "claude-compatibility"
+_WRAPPER_CONTRACT_MARKER = "# FCC wrapper contract: proxy-transport-v2"
 _WRAPPER_BODY = """#!/bin/sh
 # FCC-generated Claude Code self-spawn firewall. Keep this script silent.
+# FCC wrapper contract: proxy-transport-v2
 set -eu
 
 case "${ANTHROPIC_BASE_URL:-}" in
@@ -34,8 +36,6 @@ case "${ANTHROPIC_BASE_URL:-}" in
 esac
 
 : "${ANTHROPIC_AUTH_TOKEN:?FCC proxy auth is missing}"
-: "${CLAUDE_CODE_MAX_CONTEXT_TOKENS:?FCC context cap is missing}"
-: "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:?FCC auto-compact policy is missing}"
 
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 export DISABLE_AUTOUPDATER=1
@@ -80,6 +80,10 @@ class ClaudeCompatibilityStatus:
 def _config_dir_path() -> Path:
     """Return FCC's user-private config directory without a package import."""
 
+    # Mirrors config.paths.FCC_CONFIG_DIR so sandbox runs stay out of ~/.fcc.
+    override = os.environ.get("FCC_CONFIG_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
     return Path.home() / ".fcc"
 
 
@@ -284,9 +288,22 @@ def ensure_process_wrapper(path: Path | None = None) -> Path:
             "FCC Claude process wrapper must use an absolute path"
         )
     if wrapper.exists():
+        if _wrapper_is_valid(wrapper):
+            return wrapper
+        if _is_legacy_fcc_context_wrapper(wrapper):
+            _install_process_wrapper(wrapper)
+            _validate_process_wrapper(wrapper)
+            return wrapper
         _validate_process_wrapper(wrapper)
         return wrapper
 
+    _install_process_wrapper(wrapper)
+    _validate_process_wrapper(wrapper)
+    return wrapper
+
+
+def _install_process_wrapper(wrapper: Path) -> None:
+    """Atomically install the current FCC-owned wrapper body."""
     try:
         wrapper.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         temporary = wrapper.with_name(f".{wrapper.name}.{os.getpid()}.tmp")
@@ -298,8 +315,6 @@ def ensure_process_wrapper(path: Path | None = None) -> Path:
             "FCC could not install its Claude self-spawn wrapper; refusing "
             "to launch an uncontained Claude process"
         ) from exc
-    _validate_process_wrapper(wrapper)
-    return wrapper
 
 
 def inspect_claude_compatibility(
@@ -444,15 +459,30 @@ def _wrapper_is_valid(path: Path) -> bool:
     except OSError:
         return False
     required = (
+        _WRAPPER_CONTRACT_MARKER,
         'exec "$@"',
         '"${ANTHROPIC_BASE_URL:-}"',
         '"${ANTHROPIC_AUTH_TOKEN:?FCC proxy auth is missing}"',
-        '"${CLAUDE_CODE_MAX_CONTEXT_TOKENS:?FCC context cap is missing}"',
     )
     return bool(
         stat.S_ISREG(mode)
         and mode & stat.S_IXUSR
         and all(marker in body for marker in required)
+    )
+
+
+def _is_legacy_fcc_context_wrapper(path: Path) -> bool:
+    """Recognize only the previous FCC-generated context-enforcing wrapper."""
+
+    try:
+        body = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return (
+        body.startswith("#!/bin/sh\n# FCC-generated Claude Code self-spawn firewall.")
+        and '"${CLAUDE_CODE_MAX_CONTEXT_TOKENS:?FCC context cap is missing}"' in body
+        and '"${CLAUDE_CODE_AUTO_COMPACT_WINDOW:?FCC auto-compact policy is missing}"'
+        in body
     )
 
 

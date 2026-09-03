@@ -1,18 +1,17 @@
 # Claude Code compaction conformance contract
 
-> **Status: core path shipped and live-proven.** Current `main` has a literal
-> Claude Code receipt proving a 50K effective window, automatic compaction,
-> substantial context reduction, a post-compact tool turn, resume success, and
-> continued FCC -> OpenCode Go -> Muse routing. Remaining acceptance boundaries
-> include deeper semantic torture, economics around the compact boundary,
-> subagent-crossing-compact, and interrupted-compaction recovery. The associated
-> receipt-only issue references are historical traceability, not an open-backlog
-> claim.
+> **Status: historical evidence retained; live FCC intervention disabled.**
+> Earlier receipts prove one literal Claude Code compact/resume boundary, but
+> they are not a current live-mode behavior or re-enablement claim. The
+> sandbox launcher intentionally restores its bounded Claude context/auto-
+> compact pair for controlled testing; that sandbox setting is not a live FCC
+> default. The ingress governor remains off pending certification.
 
-Compaction is part of AgentSwitchboard correctness because AgentSwitchboard owns the client-facing
-context budget. A lower token count alone is not enough: the literal client must
-prove compaction fires before hard failure, preserves semantic state and routing,
-and does not create pathological cache/economic behavior.
+Compaction is primarily Claude Code's responsibility because the client owns its
+context budget. If FCC later opts into a provider-facing context intervention,
+a lower token count alone will not be enough: the literal client must prove
+compaction fires before hard failure, preserves semantic state and routing, and
+does not create pathological cache/economic behavior.
 
 ## Economical test order
 

@@ -1,7 +1,6 @@
 use crate::api::{ConfigField, ProviderStatus};
-use crate::app::{
-    pretty, App, ChromeGeometry, Hitbox, Modal, Page, UiAction, CONTEXT_MAX, CONTEXT_MIN,
-};
+use crate::app::{pretty, App, ChromeGeometry, ConnectionState, Hitbox, Modal, Page, UiAction};
+use crate::models::{PriceFilter, PriceState, MODEL_KEY};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -20,6 +19,27 @@ const ACCENT_DIM: Color = Color::Rgb(35, 45, 78);
 const GOOD: Color = Color::Rgb(97, 203, 137);
 const WARN: Color = Color::Rgb(241, 190, 75);
 const BAD: Color = Color::Rgb(239, 101, 101);
+
+fn short_instance_id(value: &str) -> &str {
+    value.get(..8).unwrap_or(value)
+}
+
+fn format_uptime(seconds: f64) -> String {
+    let total = seconds.max(0.0) as u64;
+    let days = total / 86_400;
+    let hours = (total % 86_400) / 3_600;
+    let minutes = (total % 3_600) / 60;
+    let seconds = total % 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     app.hitboxes.clear();
@@ -57,24 +77,11 @@ fn render_topbar(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(14),
-            Constraint::Length(24),
-            Constraint::Min(20),
-            Constraint::Length(34),
+            Constraint::Percentage(32),
+            Constraint::Percentage(26),
+            Constraint::Percentage(42),
         ])
         .split(area);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("●", Style::default().fg(Color::Rgb(255, 95, 87))),
-            Span::raw("  "),
-            Span::styled("●", Style::default().fg(Color::Rgb(254, 188, 46))),
-            Span::raw("  "),
-            Span::styled("●", Style::default().fg(Color::Rgb(40, 200, 64))),
-        ]))
-        .style(Style::default().bg(PANEL))
-        .block(bottom_border()),
-        chunks[0],
-    );
     frame.render_widget(
         Paragraph::new("AgentSwitchboard")
             .style(
@@ -84,7 +91,7 @@ fn render_topbar(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
             .block(bottom_border()),
-        chunks[1],
+        chunks[0],
     );
     frame.render_widget(
         Paragraph::new(app.page.label())
@@ -96,13 +103,21 @@ fn render_topbar(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
             .block(bottom_border()),
-        chunks[2],
+        chunks[1],
     );
-    let state = if app.error.is_some() {
-        Span::styled("● ERROR", Style::default().fg(BAD))
-    } else {
-        Span::styled("● FCC LOCAL", Style::default().fg(GOOD))
+    let state_color = match app.connection_state {
+        ConnectionState::Running => GOOD,
+        ConnectionState::Starting | ConnectionState::Degraded => WARN,
+        ConnectionState::Offline | ConnectionState::Unknown => BAD,
     };
+    let state = Span::styled(
+        format!(
+            "{} {}",
+            app.connection_state.label(),
+            app.server_identity.mode
+        ),
+        Style::default().fg(state_color),
+    );
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             state,
@@ -112,7 +127,7 @@ fn render_topbar(frame: &mut Frame, app: &App, area: Rect) {
         .alignment(ratatui::layout::Alignment::Right)
         .style(Style::default().bg(PANEL))
         .block(bottom_border()),
-        chunks[3],
+        chunks[2],
     );
 }
 
@@ -142,16 +157,17 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         title,
     );
 
+    let row_height = if inner.height < 25 { 1 } else { 2 };
     let mut y = inner.y + 4;
     for page in Page::ALL {
-        if y >= inner.bottom().saturating_sub(7) {
+        if y >= inner.bottom() {
             break;
         }
         let row = Rect {
             x: inner.x + 1,
             y,
             width: inner.width.saturating_sub(2),
-            height: 2,
+            height: row_height.min(inner.bottom().saturating_sub(y)),
         };
         let selected = app.page == page;
         let hovered = app.mouse.map(|(x, y)| contains(row, x, y)).unwrap_or(false);
@@ -174,54 +190,187 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             rect: row,
             action: UiAction::Navigate(page),
         });
-        y += 2;
+        y += row_height;
     }
-
-    let context = Rect {
-        x: inner.x + 2,
-        y: inner.bottom().saturating_sub(6),
-        width: inner.width.saturating_sub(4),
-        height: 5,
-    };
-    frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::from(Span::styled("ACTIVE MODEL", Style::default().fg(MUTED))),
-            Line::from(Span::styled(
-                trim_to(&app.status_model(), 22),
-                Style::default().fg(TEXT),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("CONTEXT  ", Style::default().fg(MUTED)),
-                Span::styled(
-                    format_tokens(&app.current_context()),
-                    Style::default().fg(ACCENT),
-                ),
-            ]),
-        ])),
-        context,
-    );
 }
 
 fn render_page(frame: &mut Frame, app: &mut App, area: Rect) {
     match app.page {
         Page::Dashboard => render_dashboard(frame, app, area),
+        Page::Repositories => render_repositories(frame, app, area),
         Page::Providers => render_providers(frame, app, area),
         Page::Models => render_models(frame, app, area),
         Page::Routing => render_field_page(frame, app, area, Page::Routing),
         Page::Context => render_context(frame, app, area),
-        Page::Local => render_field_page(frame, app, area, Page::Local),
+        Page::Local => render_local(frame, app, area),
         Page::Settings => render_field_page(frame, app, area, Page::Settings),
         Page::Usage => render_usage(frame, app, area),
         Page::Diagnostics => render_diagnostics(frame, app, area),
     }
 }
 
+fn render_repositories(frame: &mut Frame, app: &mut App, area: Rect) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(10), Constraint::Length(5)])
+        .split(area);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(rows[0]);
+    render_repository_list(frame, app, panes[0]);
+    render_repository_detail(frame, app, panes[1]);
+    let actions = if app.is_bootstrap() {
+        if app.bootstrap_launch_after_repository() {
+            vec![
+                (
+                    app.bootstrap_repository_action_label(),
+                    UiAction::UseRepository,
+                ),
+                ("Models", UiAction::Navigate(Page::Models)),
+            ]
+        } else {
+            vec![
+                ("Use selected", UiAction::UseRepository),
+                ("Start server", UiAction::StartServer),
+            ]
+        }
+    } else {
+        vec![
+            ("Use selected", UiAction::UseRepository),
+            ("Refresh", UiAction::RefreshRepositories),
+            ("Launch Claude", UiAction::LaunchClaude(false)),
+            ("Danger launch", UiAction::LaunchClaude(true)),
+        ]
+    };
+    action_bar(frame, app, rows[1], &actions);
+}
+
+fn render_repository_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = section_block("Repositories");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if app.repositories.is_empty() {
+        frame.render_widget(
+            Paragraph::new(
+                "No local GitHub checkouts found. Press Refresh to rescan.\n\n".to_string()
+                    + "Linked worktrees, non-GitHub folders, and stale cache paths are omitted.",
+            )
+            .style(Style::default().fg(MUTED))
+            .wrap(Wrap { trim: true }),
+            inner,
+        );
+        return;
+    }
+    let offset = list_offset(
+        app.repository_selected,
+        app.repositories.len(),
+        inner.height as usize,
+    );
+    for (visible, repository) in app
+        .repositories
+        .iter()
+        .skip(offset)
+        .take(inner.height as usize)
+        .enumerate()
+    {
+        let index = offset + visible;
+        let row = Rect {
+            x: inner.x,
+            y: inner.y + visible as u16,
+            width: inner.width,
+            height: 1,
+        };
+        let selected = index == app.repository_selected;
+        let persisted = app
+            .selected_repo_path
+            .as_deref()
+            .map(|path| path == repository.path)
+            .unwrap_or(false);
+        let marker = if selected {
+            "▌ "
+        } else if persisted {
+            "✓ "
+        } else {
+            "  "
+        };
+        let label = format!(
+            "{marker}{}  {}",
+            trim_to(&repository.identity, 26),
+            trim_to(&repository.name, 18),
+        );
+        let style = if selected {
+            Style::default()
+                .bg(ACCENT_DIM)
+                .fg(TEXT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(BG).fg(TEXT)
+        };
+        frame.render_widget(Paragraph::new(label).style(style), row);
+        app.hitboxes.push(Hitbox {
+            rect: row,
+            action: UiAction::SelectRepository(index),
+        });
+    }
+}
+
+fn render_repository_detail(frame: &mut Frame, app: &App, area: Rect) {
+    let block = section_block("Repository inspector");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let Some(repository) = app.selected_repository() else {
+        frame.render_widget(
+            Paragraph::new("Select a repository or press Refresh")
+                .style(Style::default().fg(MUTED)),
+            inner,
+        );
+        return;
+    };
+    let selected = app
+        .selected_repo_path
+        .as_deref()
+        .map(|path| path == repository.path)
+        .unwrap_or(false);
+    let lines = vec![
+        Line::from(Span::styled(
+            repository.identity.clone(),
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        kv("GitHub / remote", &repository.remote),
+        kv("Local folder", &repository.name),
+        kv("Branch", &repository.branch),
+        kv("Path", &repository.display_path),
+        kv(
+            "Selection",
+            if selected {
+                "next Claude launch"
+            } else {
+                "not selected"
+            },
+        ),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Use selected persists this checkout. Launch Claude starts in its folder.",
+            Style::default().fg(MUTED),
+        )),
+        Line::from(Span::styled(
+            "Danger launch uses fccdanger (--dangerously-skip-permissions).",
+            Style::default().fg(WARN),
+        )),
+    ];
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
+        inner,
+    );
+}
+
 fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),
+            Constraint::Length(8),
             Constraint::Min(8),
             Constraint::Length(4),
         ])
@@ -239,8 +388,42 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(status, Style::default().fg(GOOD)),
             ]),
             Line::from(vec![
-                Span::styled("Model   ", Style::default().fg(MUTED)),
+                Span::styled("Model     ", Style::default().fg(MUTED)),
                 Span::styled(model, Style::default().fg(TEXT)),
+            ]),
+            Line::from(vec![
+                Span::styled("Endpoint  ", Style::default().fg(MUTED)),
+                Span::styled(
+                    if app.server_identity.health_url.is_empty() {
+                        "not advertised".to_string()
+                    } else {
+                        app.server_identity.health_url.clone()
+                    },
+                    Style::default().fg(TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Process   ", Style::default().fg(MUTED)),
+                Span::styled(
+                    format!(
+                        "pid {} · instance {} · uptime {}",
+                        app.server_identity.pid,
+                        short_instance_id(&app.server_identity.instance_id),
+                        format_uptime(app.server_identity.uptime_seconds),
+                    ),
+                    Style::default().fg(TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Checked   ", Style::default().fg(MUTED)),
+                Span::styled(
+                    app.last_check_label(),
+                    Style::default().fg(if app.connection_state == ConnectionState::Running {
+                        GOOD
+                    } else {
+                        WARN
+                    }),
+                ),
             ]),
         ]))
         .style(Style::default().bg(BG))
@@ -253,13 +436,35 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
         .get("pending_fields")
         .cloned()
         .unwrap_or(Value::Null);
+    let snapshot = app.catalog_snapshot();
+    let opening = if app.is_bootstrap() && app.bootstrap_launch_after_repository() {
+        "Choose the exact model, then select a repository to start FCC and Claude."
+    } else if app.is_bootstrap() {
+        "Prelaunch control: the server is stopped until you save choices and press Start server."
+    } else {
+        "The Rust control center is a thin client of fcc-server."
+    };
     let body = Text::from(vec![
-        Line::from(Span::styled("The Rust control center is a thin client of fcc-server.", Style::default().fg(TEXT))),
+        Line::from(Span::styled(opening, Style::default().fg(TEXT))),
         Line::from(""),
-        Line::from(vec![Span::styled("Context window  ", Style::default().fg(MUTED)), Span::styled(format_tokens(&app.current_context()), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled("Context policy  ", Style::default().fg(MUTED)), Span::styled("FCC intervention disabled", Style::default().fg(WARN).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled("Catalog         ", Style::default().fg(MUTED)), Span::styled(format!("{} route rows · Claude {} IDs · {} providers", snapshot.records.len(), snapshot.claude_registry_count(), snapshot.provider_options().len()), Style::default().fg(TEXT))]),
         Line::from(vec![Span::styled("Pending changes  ", Style::default().fg(MUTED)), Span::styled(compact_json(&pending), Style::default().fg(WARN))]),
+        Line::from(vec![
+            Span::styled("State detail    ", Style::default().fg(MUTED)),
+            Span::styled(
+                app.last_connection_error
+                    .as_deref()
+                    .unwrap_or("health check is passing"),
+                Style::default().fg(if app.connection_state == ConnectionState::Running {
+                    MUTED
+                } else {
+                    BAD
+                }),
+            ),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("API keys, model routing, local endpoints, custom providers, reasoning and context remain owned by the canonical loopback Admin API.", Style::default().fg(MUTED))),
+        Line::from(Span::styled("Click the sidebar to open a workspace. Models shows registered-provider routes: filter, inspect, enable, and choose one exact active model.", Style::default().fg(MUTED))),
     ]);
     frame.render_widget(
         Paragraph::new(body)
@@ -273,7 +478,20 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
         rows[2],
         &[
             ("Refresh", UiAction::Refresh),
-            ("Launch Claude", UiAction::LaunchClaude(false)),
+            if app.is_bootstrap() && app.bootstrap_launch_after_repository() {
+                ("Repositories", UiAction::Navigate(Page::Repositories))
+            } else if app.is_bootstrap() {
+                ("Start server", UiAction::StartServer)
+            } else {
+                ("Launch Claude", UiAction::LaunchClaude(false))
+            },
+            if !app.is_bootstrap() {
+                ("Danger launch", UiAction::LaunchClaude(true))
+            } else if app.bootstrap_launch_after_repository() {
+                ("Models", UiAction::Navigate(Page::Models))
+            } else {
+                ("Save models", UiAction::SaveModels)
+            },
         ],
     );
 }
@@ -281,7 +499,7 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_providers(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(4)])
+        .constraints([Constraint::Min(9), Constraint::Length(5)])
         .split(area);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
@@ -457,62 +675,157 @@ fn render_models(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(10),
             Constraint::Length(4),
+            Constraint::Min(9),
+            Constraint::Length(5),
         ])
         .split(area);
-    let query = if app.model_query.is_empty() {
-        "Search all models…".to_string()
-    } else {
-        format!("Filter: {}", app.model_query)
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "MODEL CATALOG",
-                Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(query, Style::default().fg(TEXT)),
-            Span::raw("    "),
-            Span::styled(
-                format!(
-                    "{} shown · {} catalog · {} routable · {} providers · {} failures",
-                    app.filtered_models().len(),
-                    app.model_inventory().len(),
-                    app.models.models.len(),
-                    app.models.provider_status.len(),
-                    app.models.failed_providers.len()
-                ),
-                Style::default().fg(MUTED),
-            ),
-        ]))
-        .style(Style::default().bg(PANEL_2))
-        .block(bottom_border()),
-        rows[0],
-    );
+    render_model_toolbar(frame, app, rows[0]);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
         .split(rows[1]);
     let models = app.filtered_models();
     render_model_list(frame, app, panes[0], &models);
-    render_model_detail(frame, app, panes[1], models.get(app.model_selected));
-    action_bar(
-        frame,
-        app,
-        rows[2],
-        &[
-            ("Search", UiAction::SearchModels),
-            ("Default", UiAction::AssignModel("MODEL".to_string())),
-            ("Fable", UiAction::AssignModel("MODEL_FABLE".to_string())),
-            ("Opus", UiAction::AssignModel("MODEL_OPUS".to_string())),
-            ("Sonnet", UiAction::AssignModel("MODEL_SONNET".to_string())),
-            ("Haiku", UiAction::AssignModel("MODEL_HAIKU".to_string())),
-            ("Refresh", UiAction::Refresh),
-        ],
+    render_model_detail(frame, app, panes[1], models.get(app.browser.selected));
+    let catalog_label = if app.browser.show_catalog {
+        "Active only"
+    } else {
+        "Show catalog"
+    };
+    let access_label = app
+        .selected_model()
+        .map(|model| {
+            if app.browser.is_enabled(&model) {
+                "Disable selected"
+            } else {
+                "Enable selected"
+            }
+        })
+        .unwrap_or("Enable selected");
+    let final_action = if app.is_bootstrap() && app.bootstrap_launch_after_repository() {
+        ("Repositories", UiAction::Navigate(Page::Repositories))
+    } else if app.is_bootstrap() {
+        ("Start server", UiAction::StartServer)
+    } else {
+        ("Refresh", UiAction::Refresh)
+    };
+    let actions = vec![
+        ("Use selected", UiAction::AssignModel(MODEL_KEY.to_string())),
+        (access_label, UiAction::ToggleModelAccess),
+        ("Disable all", UiAction::DisableAllModels),
+        ("Save", UiAction::SaveModels),
+        ("Undo", UiAction::DiscardModels),
+        (catalog_label, UiAction::ToggleCatalogVisibility),
+        final_action,
+    ];
+    action_bar(frame, app, rows[2], &actions);
+}
+
+fn render_model_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Length(2)])
+        .split(area);
+    let snapshot = app.catalog_snapshot();
+    let query = if app.browser.query.is_empty() {
+        if app.browser.search_focused {
+            "▌".to_string()
+        } else {
+            "Search model or provider…  (/)".to_string()
+        }
+    } else if app.browser.search_focused {
+        format!("{}▌", app.browser.query)
+    } else {
+        format!("Filter: {}", app.browser.query)
+    };
+    let search_style = if app.browser.search_focused {
+        Style::default().fg(TEXT).bg(ACCENT_DIM)
+    } else {
+        Style::default().fg(TEXT).bg(PANEL_2)
+    };
+    let active_model = if app.browser.pending_model().trim().is_empty() {
+        "not set".to_string()
+    } else {
+        app.browser.pending_model().to_string()
+    };
+    let selected_model = app.selected_model().unwrap_or_else(|| "none".to_string());
+    let provider_options = snapshot.provider_filter_options();
+    frame.render_widget(
+        Paragraph::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    "MODEL CATALOG  ",
+                    Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(query, search_style),
+            ]),
+            Line::from(vec![
+                Span::styled("ACTIVE  ", Style::default().fg(MUTED)),
+                Span::styled(trim_to(&active_model, 28), Style::default().fg(TEXT)),
+                Span::styled("  ·  SELECTED  ", Style::default().fg(MUTED)),
+                Span::styled(trim_to(&selected_model, 28), Style::default().fg(ACCENT)),
+            ]),
+        ]))
+        .style(Style::default().bg(PANEL_2)),
+        chunks[0],
     );
+    app.hitboxes.push(Hitbox {
+        rect: chunks[0],
+        action: UiAction::SearchModels,
+    });
+
+    let mut x = chunks[1].x + 1;
+    let chip_y = chunks[1].y;
+    let provider_label = match &app.browser.provider_filter {
+        Some(provider) => provider_options
+            .iter()
+            .find(|option| option.id.eq_ignore_ascii_case(provider))
+            .map(|option| format!("Provider: {}", option.label))
+            .unwrap_or_else(|| format!("Provider: {provider}")),
+        None => "Providers: registered".to_string(),
+    };
+    let free_label = if app.browser.price_filter == PriceFilter::Free {
+        "Free only ✓".to_string()
+    } else {
+        "Free only".to_string()
+    };
+    let chips: Vec<(String, UiAction, bool)> = vec![
+        (
+            provider_label,
+            UiAction::OpenProviderFilter,
+            app.browser.provider_filter.is_some(),
+        ),
+        (
+            free_label,
+            UiAction::ToggleFreeFilter,
+            app.browser.price_filter == PriceFilter::Free,
+        ),
+    ];
+    for (label, action, active) in chips {
+        let width = (label.chars().count() as u16 + 4).min(chunks[1].right().saturating_sub(x));
+        if width < 5 {
+            break;
+        }
+        let chip = Rect {
+            x,
+            y: chip_y,
+            width,
+            height: chunks[1].height,
+        };
+        let hovered = app
+            .mouse
+            .map(|(mx, my)| contains(chip, mx, my))
+            .unwrap_or(false);
+        let style = if hovered || active {
+            Style::default().fg(TEXT).bg(ACCENT_DIM)
+        } else {
+            Style::default().fg(MUTED).bg(PANEL)
+        };
+        frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), chip);
+        app.hitboxes.push(Hitbox { rect: chip, action });
+        x = x.saturating_add(width + 1);
+    }
 }
 
 fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[String]) {
@@ -520,53 +833,174 @@ fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[Str
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if models.is_empty() {
+        let snapshot = app.catalog_snapshot();
+        let provider_label = app.browser.provider_filter.as_ref().and_then(|provider| {
+            snapshot
+                .provider_options()
+                .into_iter()
+                .find(|(id, _)| id.eq_ignore_ascii_case(provider))
+                .map(|(_, label)| label)
+        });
+        let provider_records = app.browser.provider_filter.as_ref().map_or_else(
+            || {
+                snapshot
+                    .records
+                    .iter()
+                    .filter(|record| snapshot.provider_is_registered(&record.provider_id))
+                    .count()
+            },
+            |provider| {
+                snapshot
+                    .records
+                    .iter()
+                    .filter(|record| {
+                        record.provider_id.eq_ignore_ascii_case(provider)
+                            && snapshot.provider_is_registered(&record.provider_id)
+                    })
+                    .count()
+            },
+        );
+        let search = app.browser.query.trim();
+        let message = if snapshot.records.is_empty() {
+            "No models discovered. Press Refresh to query configured providers.".to_string()
+        } else if !search.is_empty() {
+            let scope = provider_label
+                .as_deref()
+                .map(|label| format!(" for {label}"))
+                .unwrap_or_default();
+            format!(
+                "No models match ‘{}’{}. Clear search or choose another provider.",
+                trim_to(search, 40),
+                scope
+            )
+        } else if app.browser.price_filter == PriceFilter::Free {
+            let scope = provider_label
+                .as_deref()
+                .map(|label| format!(" for {label}"))
+                .unwrap_or_default();
+            format!(
+                "No models{scope} have explicit FREE evidence. Clear Free only or choose a provider with FREE models."
+            )
+        } else if let Some(label) = provider_label {
+            if provider_records == 0 {
+                format!(
+                    "No cached models for {label}. Press Refresh after configuring this provider."
+                )
+            } else if !app.browser.show_catalog {
+                format!(
+                    "No active models for {label}. Choose Show catalog to inspect blocked rows."
+                )
+            } else {
+                format!("No models match the current filters for {label}.")
+            }
+        } else if !app.browser.show_catalog {
+            "No active models match these filters. Choose Show catalog or clear the current filters."
+                .to_string()
+        } else {
+            "No models match these filters. Clear the current filters.".to_string()
+        };
         frame.render_widget(
-            Paragraph::new("No discovered/configured models match the filter")
+            Paragraph::new(message)
+                .wrap(Wrap { trim: true })
                 .style(Style::default().fg(MUTED)),
             inner,
         );
         return;
     }
-    let offset = list_offset(app.model_selected, models.len(), inner.height as usize);
-    for (visible, model) in models
+    let snapshot = app.catalog_snapshot();
+    let mut display: Vec<(Option<String>, Option<usize>)> = Vec::new();
+    let mut last_provider = String::new();
+    let grouped = true;
+    for (index, model) in models.iter().enumerate() {
+        if grouped {
+            let provider = snapshot
+                .record(model)
+                .map(|record| record.provider_label.clone())
+                .unwrap_or_else(|| model.clone());
+            if provider != last_provider {
+                display.push((Some(provider.clone()), None));
+                last_provider = provider;
+            }
+        }
+        display.push((None, Some(index)));
+    }
+    let selected_display = display
+        .iter()
+        .position(|(_, model_index)| *model_index == Some(app.browser.selected))
+        .unwrap_or(0);
+    let offset = list_offset(selected_display, display.len(), inner.height as usize);
+    for (visible, (header, model_index)) in display
         .iter()
         .skip(offset)
         .take(inner.height as usize)
         .enumerate()
     {
-        let index = offset + visible;
         let row = Rect {
             x: inner.x,
             y: inner.y + visible as u16,
             width: inner.width,
             height: 1,
         };
-        let selected = index == app.model_selected;
-        let label = app.model_label(model);
-        let routable = app.model_is_routable(model);
-        let marker = if routable { "✓ " } else { "· " };
-        let suffix = if routable { "" } else { "  (policy)" };
+        if let Some(header) = header {
+            frame.render_widget(
+                Paragraph::new(format!(" {header}")).style(
+                    Style::default()
+                        .fg(ACCENT)
+                        .bg(PANEL)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                row,
+            );
+            continue;
+        }
+        let Some(index) = *model_index else {
+            continue;
+        };
+        let model = &models[index];
+        let selected = index == app.browser.selected;
+        let record = snapshot.record(model);
+        let label = record
+            .map(|item| item.label.as_str())
+            .unwrap_or(model.as_str());
+        let price = record.map(|item| item.price).unwrap_or(PriceState::Unknown);
+        let enabled = app.browser.is_enabled(model);
+        let is_active_model = app.browser.is_active_model(model);
+        let marker = format!(
+            "{} {}",
+            if is_active_model { "→" } else { " " },
+            if enabled { "✓" } else { "○" },
+        );
+        let price_badge = match price {
+            PriceState::Free => " [FREE]",
+            PriceState::Paid => " [PAID]",
+            PriceState::Unknown => "",
+        };
+        let exact_ref = record
+            .map(|item| item.model_ref.as_str())
+            .unwrap_or(model.as_str());
+        let row_label = if label == exact_ref {
+            format!("{label}{price_badge}")
+        } else {
+            format!("{label}{price_badge}  ·  {exact_ref}")
+        };
         let style = if selected {
             Style::default()
                 .bg(ACCENT_DIM)
                 .fg(TEXT)
                 .add_modifier(Modifier::BOLD)
-        } else {
+        } else if is_active_model {
+            Style::default().bg(BG).fg(GOOD)
+        } else if enabled {
             Style::default().bg(BG).fg(TEXT)
+        } else {
+            Style::default().bg(BG).fg(MUTED)
         };
-        let prefix = format!("{}{}", if selected { "▌ " } else { "  " }, marker);
+        let prefix = format!("{} {}", if selected { "▌" } else { " " }, marker);
         let available = inner
             .width
-            .saturating_sub(prefix.chars().count() as u16)
-            .saturating_sub(suffix.chars().count() as u16) as usize;
+            .saturating_sub(prefix.chars().count() as u16 + 1) as usize;
         frame.render_widget(
-            Paragraph::new(format!(
-                "{}{}{}",
-                prefix,
-                trim_to(&label, available),
-                suffix
-            ))
-            .style(style),
+            Paragraph::new(format!("{} {}", prefix, trim_to(&row_label, available))).style(style),
             row,
         );
         app.hitboxes.push(Hitbox {
@@ -587,50 +1021,73 @@ fn render_model_detail(frame: &mut Frame, app: &App, area: Rect, model: Option<&
         );
         return;
     };
-    let label = app.model_label(model);
-    let evidence = app.model_evidence(model).cloned().unwrap_or(Value::Null);
-    let free = evidence
-        .get("is_free")
-        .map(compact_json)
-        .unwrap_or_else(|| "unknown".to_string());
-    let source = evidence
-        .get("evidence_source")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let capabilities = evidence.get("capabilities").cloned().unwrap_or(Value::Null);
-    let lines = vec![
+    let snapshot = app.catalog_snapshot();
+    let record = snapshot.record(model);
+    let label = record
+        .map(|item| item.label.clone())
+        .unwrap_or_else(|| model.clone());
+    let enabled = app.browser.is_enabled(model);
+    let is_active_model = app.browser.is_active_model(model);
+    let unavailable = app.browser.active_model_unavailable(&snapshot) && is_active_model;
+    let price = record.map(|item| item.price).unwrap_or(PriceState::Unknown);
+    let status = if unavailable {
+        "→ Active model unavailable"
+    } else if is_active_model && enabled {
+        "→ Active model · ✓ Enabled"
+    } else if is_active_model {
+        "→ Active model"
+    } else if enabled {
+        "✓ Enabled"
+    } else {
+        "○ Cataloged · blocked"
+    };
+    let mut lines = vec![
         Line::from(Span::styled(
-            label.to_string(),
+            label,
             Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(model.to_string(), Style::default().fg(MUTED))),
+    ];
+    if let Some(record) = record {
+        lines.push(kv("Provider", &record.provider_label));
+    }
+    lines.extend([
         Line::from(""),
+        kv("Status", status),
         kv(
             "Availability",
             if app.model_is_routable(model) {
                 "routable"
             } else {
-                "cataloged; blocked by policy"
+                "cataloged; blocked until enabled"
             },
         ),
-        kv("Free", &free),
-        kv("Evidence", source),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Routing shortcuts",
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-        )),
-        Line::from("D default   F fable   O opus   S sonnet   H haiku"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Capabilities",
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            trim_to(&compact_json(&capabilities), 280),
-            Style::default().fg(TEXT),
-        )),
-    ];
+    ]);
+    if price == PriceState::Paid {
+        lines.push(kv("Cost", "PAID"));
+    }
+    lines.push(Line::from(""));
+    if is_active_model && enabled {
+        lines.push(Line::from(Span::styled(
+            "This exact route is active. Use another row before disabling it.",
+            Style::default().fg(MUTED),
+        )));
+    } else if is_active_model {
+        lines.push(Line::from(Span::styled(
+            "This exact route remains active even when access is cleared.",
+            Style::default().fg(MUTED),
+        )));
+    } else if enabled {
+        lines.push(Line::from(Span::styled(
+            "Access is enabled. Use selected makes this the active route.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Access is disabled. Enable selected before using this route.",
+            Style::default().fg(MUTED),
+        )));
+    }
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
         inner,
@@ -640,7 +1097,10 @@ fn render_model_detail(frame: &mut Frame, app: &App, area: Rect, model: Option<&
 fn render_field_page(frame: &mut Frame, app: &mut App, area: Rect, page: Page) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(4)])
+        .constraints([
+            Constraint::Min(if page == Page::Routing { 9 } else { 10 }),
+            Constraint::Length(if page == Page::Routing { 5 } else { 4 }),
+        ])
         .split(area);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
@@ -663,11 +1123,30 @@ fn render_field_page(frame: &mut Frame, app: &mut App, area: Rect, page: Page) {
         .get(selected)
         .and_then(|index| app.config.fields.get(*index))
         .cloned();
-    render_field_detail(frame, field.as_ref(), panes[1]);
-    let mut actions = vec![
+    let routing_target = if page == Page::Routing {
+        Some(
+            app.selected_model()
+                .unwrap_or_else(|| "none — choose a model on Models tab".to_string()),
+        )
+    } else {
+        None
+    };
+    render_field_detail(frame, field.as_ref(), panes[1], routing_target.as_deref());
+    let mut actions = Vec::new();
+    if page == Page::Routing {
+        actions.extend([
+            ("Active model", UiAction::AssignRoute(MODEL_KEY.to_string())),
+            ("Fable", UiAction::AssignRoute("MODEL_FABLE".to_string())),
+            ("Opus", UiAction::AssignRoute("MODEL_OPUS".to_string())),
+            ("Sonnet", UiAction::AssignRoute("MODEL_SONNET".to_string())),
+            ("Haiku", UiAction::AssignRoute("MODEL_HAIKU".to_string())),
+            ("Models tab", UiAction::Navigate(Page::Models)),
+        ]);
+    }
+    actions.extend([
         ("Edit", UiAction::EditField),
         ("Refresh", UiAction::Refresh),
-    ];
+    ]);
     if page == Page::Settings {
         actions.push((
             if app.show_advanced {
@@ -692,7 +1171,7 @@ fn render_field_list(
     let block = section_block(match page {
         Page::Routing => "Routing policy",
         Page::Local => "Local endpoints",
-        Page::Settings => "Configuration",
+        Page::Settings => "App settings",
         _ => "Fields",
     });
     let inner = block.inner(area);
@@ -750,7 +1229,12 @@ fn render_field_list(
     }
 }
 
-fn render_field_detail(frame: &mut Frame, field: Option<&ConfigField>, area: Rect) {
+fn render_field_detail(
+    frame: &mut Frame,
+    field: Option<&ConfigField>,
+    area: Rect,
+    routing_target: Option<&str>,
+) {
     let block = section_block("Inspector");
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -768,6 +1252,16 @@ fn render_field_detail(frame: &mut Frame, field: Option<&ConfigField>, area: Rec
         )),
         Line::from(Span::styled(field.key.clone(), Style::default().fg(MUTED))),
         Line::from(""),
+    ];
+    if let Some(target) = routing_target {
+        lines.push(kv("Selected model", target));
+        lines.push(Line::from(Span::styled(
+            "Routing buttons assign this selected Models-tab row.",
+            Style::default().fg(MUTED),
+        )));
+        lines.push(Line::from(""));
+    }
+    lines.extend([
         kv("Value", &App::display_field_value(field)),
         kv("Source", &field.source),
         kv("Type", &field.field_type),
@@ -789,7 +1283,7 @@ fn render_field_detail(frame: &mut Frame, field: Option<&ConfigField>, area: Rec
             field.description.clone(),
             Style::default().fg(MUTED),
         )),
-    ];
+    ]);
     if field.secret {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -808,57 +1302,278 @@ fn render_context(frame: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(12), Constraint::Length(4)])
         .split(area);
-    let field = app.context_field().cloned();
-    let current = field
-        .as_ref()
-        .map(App::display_field_value)
-        .unwrap_or_else(|| "256000".to_string());
-    let block = section_block("Claude Code context policy");
+    let block = section_block("Claude Code context policy (inactive)");
     let inner = block.inner(rows[0]);
     frame.render_widget(block, rows[0]);
     let lines = vec![
-        Line::from(Span::styled("SESSION WINDOW", Style::default().fg(MUTED).add_modifier(Modifier::BOLD))),
-        Line::from(Span::styled(format_tokens(&current), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("FCC INTERVENTION", Style::default().fg(MUTED).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("DISABLED", Style::default().fg(WARN).add_modifier(Modifier::BOLD))),
         Line::from(""),
-        kv("FCC setting", "FCC_CLAUDE_CONTEXT_TOKENS"),
-        kv("Accepted range", &format!("{CONTEXT_MIN} – {CONTEXT_MAX} tokens")),
+        kv("FCC setting", "FCC_CONTEXT_GOVERNOR_ENABLED=false"),
         Line::from(""),
-        Line::from(Span::styled("New FCC-launched Claude sessions receive the selected value as BOTH:", Style::default().fg(TEXT))),
-        Line::from(Span::styled("CLAUDE_CODE_MAX_CONTEXT_TOKENS", Style::default().fg(GOOD))),
-        Line::from(Span::styled("CLAUDE_CODE_AUTO_COMPACT_WINDOW", Style::default().fg(GOOD))),
+        Line::from(Span::styled("Standard FCC does not set or enforce Claude context, MCP output, or tool-search policy. Sandbox intentionally sets only its bounded 256K context/auto-compact pair; Claude owns the remaining policy.", Style::default().fg(TEXT))),
         Line::from(""),
-        Line::from(Span::styled("Changing this setting does not resize an already-running Claude process. Known model-native ceilings smaller than the configured cap still win.", Style::default().fg(MUTED))),
-        Line::from(""),
-        Line::from(Span::styled("Default 256K is deliberate. Raise it only when the selected upstream model actually supports the larger window.", Style::default().fg(WARN))),
+        Line::from(Span::styled("The legacy FCC_CLAUDE_CONTEXT_TOKENS value supplies the sandbox window and remains readable for standard old config files; the standard launcher does not send it to the child.", Style::default().fg(MUTED))),
     ];
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
         inner,
     );
+    action_bar(frame, app, rows[1], &[("Refresh", UiAction::Refresh)]);
+}
+
+fn render_local(frame: &mut Frame, app: &mut App, area: Rect) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(10), Constraint::Length(4)])
+        .split(area);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+        .split(rows[0]);
+    render_local_status_list(frame, app, panes[0]);
+    render_local_detail(frame, app, panes[1]);
     action_bar(
         frame,
         app,
         rows[1],
         &[
-            ("Edit context", UiAction::EditField),
+            ("Edit endpoint", UiAction::EditField),
             ("Refresh", UiAction::Refresh),
         ],
     );
 }
 
+fn render_local_status_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = section_block("Local endpoints");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let indices = app.local_field_indices();
+    if indices.is_empty() && app.local_status.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No local provider fields advertised").style(Style::default().fg(MUTED)),
+            inner,
+        );
+        return;
+    }
+    let offset = list_offset(
+        app.local_selected,
+        indices.len().max(1),
+        inner.height as usize,
+    );
+    for (visible, field_index) in indices
+        .iter()
+        .skip(offset)
+        .take(inner.height as usize)
+        .enumerate()
+    {
+        let index = offset + visible;
+        let field = &app.config.fields[*field_index];
+        let row = Rect {
+            x: inner.x,
+            y: inner.y + visible as u16,
+            width: inner.width,
+            height: 1,
+        };
+        let selected = index == app.local_selected;
+        let status = local_status_for(app, &field.key);
+        let line = format!(
+            "{}{:18}  {}",
+            if selected { "▌ " } else { "  " },
+            trim_to(&field.label, 18),
+            status
+        );
+        let style = if selected {
+            Style::default()
+                .bg(ACCENT_DIM)
+                .fg(TEXT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(BG).fg(TEXT)
+        };
+        frame.render_widget(Paragraph::new(line).style(style), row);
+        app.hitboxes.push(Hitbox {
+            rect: row,
+            action: UiAction::SelectLocal(index),
+        });
+    }
+}
+
+fn render_local_detail(frame: &mut Frame, app: &App, area: Rect) {
+    let indices = app.local_field_indices();
+    let field = indices
+        .get(app.local_selected)
+        .and_then(|index| app.config.fields.get(*index));
+    let block = section_block("Reachability");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let Some(field) = field else {
+        frame.render_widget(
+            Paragraph::new("Select a local endpoint").style(Style::default().fg(MUTED)),
+            inner,
+        );
+        return;
+    };
+    let status = app
+        .local_status
+        .iter()
+        .find(|provider| local_field_matches_provider(&field.key, &provider.provider_id));
+    let mut lines = vec![
+        Line::from(Span::styled(
+            field.label.clone(),
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(field.key.clone(), Style::default().fg(MUTED))),
+        Line::from(""),
+        kv("Value", &App::display_field_value(field)),
+    ];
+    if let Some(status) = status {
+        lines.push(kv(
+            "Probe",
+            if status.label.is_empty() {
+                &status.status
+            } else {
+                &status.label
+            },
+        ));
+        if !status.base_url.is_empty() {
+            lines.push(kv("Probed URL", &status.base_url));
+        }
+        lines.push(Line::from(Span::styled(
+            "Reachability uses /admin/api/providers/local-status. This UI never probes hosts itself.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Press Refresh to probe LM Studio, llama.cpp, and Ollama through the Admin API.",
+            Style::default().fg(MUTED),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
+        inner,
+    );
+}
+
+fn local_status_for(app: &App, field_key: &str) -> String {
+    if let Some(provider) = app
+        .local_status
+        .iter()
+        .find(|provider| local_field_matches_provider(field_key, &provider.provider_id))
+    {
+        if provider.label.is_empty() {
+            return provider.status.clone();
+        }
+        return provider.label.clone();
+    }
+    app.config
+        .fields
+        .iter()
+        .find(|field| field.key == field_key)
+        .map(App::display_field_value)
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn local_field_matches_provider(field_key: &str, provider_id: &str) -> bool {
+    matches!(
+        (field_key, provider_id),
+        ("LM_STUDIO_BASE_URL", "lmstudio")
+            | ("LLAMACPP_BASE_URL", "llamacpp")
+            | ("OLLAMA_BASE_URL" | "OLLAMA_API_KEY", "ollama")
+    )
+}
+
 fn render_usage(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(4)])
+        .constraints([
+            Constraint::Length(7),
+            Constraint::Min(8),
+            Constraint::Length(4),
+        ])
         .split(area);
+    let totals = app.usage.get("totals").cloned().unwrap_or(Value::Null);
+    let range = app
+        .usage
+        .get("range_days")
+        .map(compact_json)
+        .unwrap_or_else(|| "30".to_string());
     frame.render_widget(
-        Paragraph::new(pretty(&app.usage))
-            .style(Style::default().fg(TEXT).bg(BG))
-            .wrap(Wrap { trim: false })
-            .block(section_block("30-day metadata-only usage")),
+        Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                format!("{range}-day metadata-only usage"),
+                Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::styled("Requests  ", Style::default().fg(MUTED)),
+                Span::styled(json_number(&totals, "requests"), Style::default().fg(TEXT)),
+                Span::raw("    "),
+                Span::styled("Input  ", Style::default().fg(MUTED)),
+                Span::styled(
+                    json_number(&totals, "input_tokens"),
+                    Style::default().fg(TEXT),
+                ),
+                Span::raw("    "),
+                Span::styled("Output  ", Style::default().fg(MUTED)),
+                Span::styled(
+                    json_number(&totals, "output_tokens"),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(Span::styled(
+                "Prompt and response content are never shown here.",
+                Style::default().fg(MUTED),
+            )),
+        ]))
+        .block(section_block("Totals")),
         rows[0],
     );
-    action_bar(frame, app, rows[1], &[("Refresh", UiAction::Refresh)]);
+    let model_rows = app
+        .usage
+        .get("models")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = Vec::new();
+    if model_rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No usage events in this window.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        for row in model_rows.iter().take(16) {
+            let model = row
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let label = app
+                .usage
+                .get("model_labels")
+                .and_then(Value::as_object)
+                .and_then(|labels| labels.get(model))
+                .and_then(Value::as_str)
+                .unwrap_or(model);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<28}", trim_to(label, 28)),
+                    Style::default().fg(TEXT),
+                ),
+                Span::styled(
+                    format!(
+                        "  in {}  out {}",
+                        json_number(row, "input_tokens"),
+                        json_number(row, "output_tokens")
+                    ),
+                    Style::default().fg(MUTED),
+                ),
+            ]));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).block(section_block("By model")),
+        rows[1],
+    );
+    action_bar(frame, app, rows[2], &[("Refresh", UiAction::Refresh)]);
 }
 
 fn render_diagnostics(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -866,15 +1581,17 @@ fn render_diagnostics(frame: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(8), Constraint::Length(4)])
         .split(area);
-    let body = if app.diagnostic.is_null() {
-        "Run a synthetic route diagnostic. No prompt content is sent to a provider.".to_string()
+    let lines = if app.diagnostic.is_null() {
+        vec![Line::from(Span::styled(
+            "Run a synthetic route diagnostic. No prompt content is sent to a provider.",
+            Style::default().fg(MUTED),
+        ))]
     } else {
-        pretty(&app.diagnostic)
+        diagnostic_lines(&app.diagnostic)
     };
     frame.render_widget(
-        Paragraph::new(body)
-            .style(Style::default().fg(TEXT))
-            .wrap(Wrap { trim: false })
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: true })
             .block(section_block("Route diagnostic")),
         rows[0],
     );
@@ -889,33 +1606,112 @@ fn render_diagnostics(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
+fn diagnostic_lines(value: &Value) -> Vec<Line<'static>> {
+    let controller = value.get("controller").cloned().unwrap_or(Value::Null);
+    let policy = value.get("policy").cloned().unwrap_or(Value::Null);
+    let mut lines = vec![
+        kv(
+            "Requested",
+            controller
+                .get("requested_model")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Provider",
+            controller
+                .get("provider")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Model ref",
+            controller
+                .get("model_ref")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Route source",
+            controller
+                .get("route_source")
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        ),
+        kv(
+            "Network",
+            value
+                .get("network")
+                .and_then(Value::as_str)
+                .unwrap_or("none"),
+        ),
+        kv(
+            "Policy",
+            policy.get("mode").and_then(Value::as_str).unwrap_or("—"),
+        ),
+    ];
+    if let Some(error) = value
+        .pointer("/policy/error")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/decision/error").and_then(Value::as_str))
+    {
+        lines.push(kv("Error", error));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Capability evidence",
+        Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+    )));
+    if let Some(rows) = value.get("capability_evidence").and_then(Value::as_array) {
+        for row in rows.iter().take(8) {
+            let name = row
+                .get("capability")
+                .or_else(|| row.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("capability");
+            let state = row
+                .get("state")
+                .or_else(|| row.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            lines.push(kv(name, state));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            trim_to(&pretty(value), 400),
+            Style::default().fg(MUTED),
+        )));
+    }
+    lines
+}
+
+fn json_number(value: &Value, key: &str) -> String {
+    match value.get(key) {
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::String(text)) => text.clone(),
+        _ => "0".to_string(),
+    }
+}
+
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let message = if let Some(error) = &app.error {
         Span::styled(
-            trim_to(error, 72),
+            trim_to(error, area.width.saturating_sub(2) as usize),
             Style::default().fg(BAD).add_modifier(Modifier::BOLD),
         )
     } else if let Some(notice) = &app.notice {
-        Span::styled(trim_to(notice, 72), Style::default().fg(GOOD))
+        Span::styled(
+            trim_to(notice, area.width.saturating_sub(2) as usize),
+            Style::default().fg(GOOD),
+        )
     } else {
-        Span::styled("LOCAL · LOOPBACK ADMIN API", Style::default().fg(MUTED))
+        Span::raw("")
     };
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(area);
     frame.render_widget(
         Paragraph::new(Line::from(message))
             .style(Style::default().bg(PANEL))
             .block(top_border()),
-        chunks[0],
-    );
-    frame.render_widget(
-        Paragraph::new("Mouse · ↑↓ Navigate · Enter Open · R Refresh · C Claude · ? Help · Q Quit")
-            .alignment(ratatui::layout::Alignment::Right)
-            .style(Style::default().fg(MUTED).bg(PANEL))
-            .block(top_border()),
-        chunks[1],
+        area,
     );
 }
 
@@ -927,17 +1723,27 @@ fn action_bar(frame: &mut Frame, app: &mut App, area: Rect, actions: &[(&str, Ui
             .style(Style::default().bg(PANEL)),
         area,
     );
+    let button_height = if actions.len() > 6 { 1 } else { 2 };
     let mut x = area.x + 1;
+    let mut y = area.y + 1;
     for (label, action) in actions {
-        let width = (label.chars().count() as u16 + 4).min(area.right().saturating_sub(x));
-        if width < 5 || x >= area.right() {
+        let desired_width = label.chars().count() as u16 + 4;
+        if x > area.x + 1 && x.saturating_add(desired_width) > area.right() {
+            x = area.x + 1;
+            y = y.saturating_add(button_height);
+        }
+        if y >= area.bottom() || x >= area.right() {
+            break;
+        }
+        let width = desired_width.min(area.right().saturating_sub(x));
+        if width < 5 {
             break;
         }
         let button = Rect {
             x,
-            y: area.y + 1,
+            y,
             width,
-            height: 2.min(area.height.saturating_sub(1)),
+            height: button_height.min(area.bottom().saturating_sub(y)),
         };
         let hovered = app
             .mouse
@@ -960,16 +1766,16 @@ fn action_bar(frame: &mut Frame, app: &mut App, area: Rect, actions: &[(&str, Ui
     }
 }
 
-fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(modal) = &app.modal else {
+fn render_modal(frame: &mut Frame, app: &mut App, area: Rect) {
+    let Some(modal) = app.modal.clone() else {
         return;
     };
     let rect = centered(
         area,
         76,
-        match modal {
+        match &modal {
             Modal::ProviderEditor { .. } => 24,
-            Modal::Help => 22,
+            Modal::ProviderPicker { options, .. } => (options.len() as u16 + 4).min(24),
             Modal::FieldPicker { field_indices, .. } => (field_indices.len() as u16 + 6).min(24),
             Modal::Choice { options, .. } => (options.len() as u16 + 6).min(22),
             _ => 14,
@@ -977,15 +1783,95 @@ fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
     );
     frame.render_widget(Clear, rect);
     frame.render_widget(Block::default().style(Style::default().bg(PANEL)), rect);
-    match modal {
+    match &modal {
         Modal::EditField { field, input } => render_edit_modal(frame, rect, field, input),
-        Modal::Choice { label, options, selected, .. } => render_choice_modal(frame, rect, label, options, *selected),
-        Modal::FieldPicker { title, field_indices, selected } => render_field_picker(frame, app, rect, title, field_indices, *selected),
-        Modal::ProviderEditor { existing_id, draft, selected, editing } => render_provider_editor(frame, rect, existing_id.as_deref(), draft, *selected, editing.as_ref()),
-        Modal::SearchModels { input } => render_simple_input(frame, rect, "Search models", input, "Enter filters · Esc cancels"),
-        Modal::Confirm { title, body, .. } => render_message_box(frame, rect, title, &format!("{body}\n\nEnter/Y confirms · Esc/N cancels"), WARN),
+        Modal::Choice {
+            label,
+            options,
+            selected,
+            ..
+        } => render_choice_modal(frame, rect, label, options, *selected),
+        Modal::FieldPicker {
+            title,
+            field_indices,
+            selected,
+        } => render_field_picker(frame, app, rect, title, field_indices, *selected),
+        Modal::ProviderEditor {
+            existing_id,
+            draft,
+            selected,
+            editing,
+        } => render_provider_editor(
+            frame,
+            rect,
+            existing_id.as_deref(),
+            draft,
+            *selected,
+            editing.as_ref(),
+        ),
+        Modal::ProviderPicker { options, selected } => {
+            render_provider_picker(frame, app, rect, options, *selected)
+        }
+        Modal::Confirm { title, body, .. } => render_message_box(
+            frame,
+            rect,
+            title,
+            &format!("{body}\n\nEnter/Y confirms · Esc/N cancels"),
+            WARN,
+        ),
         Modal::Message { title, body } => render_message_box(frame, rect, title, body, TEXT),
-        Modal::Help => render_message_box(frame, rect, "Keyboard + mouse", "Click sidebar rows, list rows, and action buttons.\n\nGlobal: Tab/Shift-Tab pages · R refresh · C launch Claude · ! danger launcher · Q quit\nProviders: Enter configure · T test · N new custom · E edit custom · X delete · L browser login · Shift-L device login · Shift-D disconnect\nModels: / search · D/F/O/S/H assign default/Fable/Opus/Sonnet/Haiku\nSettings: Enter edit · A advanced · X clear selected secret\nMultiline editor: Ctrl-Enter saves · Esc cancels\nCustom provider editor: ↑↓ field · Enter edit · Space toggle booleans · Ctrl-S save", TEXT),
+    }
+}
+
+fn render_provider_picker(
+    frame: &mut Frame,
+    app: &mut App,
+    rect: Rect,
+    options: &[crate::models::ProviderFilterOption],
+    selected: usize,
+) {
+    let block = modal_block("Registered providers");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    let height = inner.height as usize;
+    let offset = list_offset(selected, options.len(), height);
+    for (visible, option) in options.iter().skip(offset).take(height).enumerate() {
+        let index = offset + visible;
+        let row = Rect {
+            x: inner.x,
+            y: inner.y + visible as u16,
+            width: inner.width,
+            height: 1,
+        };
+        let free = if option.free_count == 0 {
+            "no explicit FREE".to_string()
+        } else {
+            format!("{} FREE", option.free_count)
+        };
+        let label = format!(
+            "{}{}  ·  {} models  ·  {}  ·  {}",
+            if index == selected { "▌ " } else { "  " },
+            option.label,
+            option.model_count,
+            free,
+            option.status
+        );
+        let style = if index == selected {
+            Style::default()
+                .fg(TEXT)
+                .bg(ACCENT_DIM)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TEXT).bg(PANEL)
+        };
+        frame.render_widget(
+            Paragraph::new(trim_to(&label, inner.width as usize)).style(style),
+            row,
+        );
+        app.hitboxes.push(Hitbox {
+            rect: row,
+            action: UiAction::SelectProviderFilter(index),
+        });
     }
 }
 
@@ -1031,42 +1917,6 @@ fn render_edit_modal(
         Rect {
             x: inner.x,
             y: inner.bottom().saturating_sub(2),
-            width: inner.width,
-            height: 2,
-        },
-    );
-}
-
-fn render_simple_input(
-    frame: &mut Frame,
-    rect: Rect,
-    title: &str,
-    input: &crate::app::TextInput,
-    hint: &str,
-) {
-    let block = modal_block(title);
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    frame.render_widget(
-        Paragraph::new(input.value.clone())
-            .style(Style::default().fg(TEXT).bg(BG))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT)),
-            ),
-        Rect {
-            x: inner.x,
-            y: inner.y + 2,
-            width: inner.width,
-            height: 3,
-        },
-    );
-    frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(MUTED)),
-        Rect {
-            x: inner.x,
-            y: inner.y + 6,
             width: inner.width,
             height: 2,
         },
@@ -1357,21 +2207,12 @@ fn compact_json(value: &Value) -> String {
     }
 }
 
-fn format_tokens(value: &str) -> String {
-    let normalized = value.replace(',', "");
-    match normalized.parse::<u64>() {
-        Ok(tokens) if tokens >= 1_000_000 => format!("{:.2}M", tokens as f64 / 1_000_000.0),
-        Ok(tokens) if tokens >= 1_000 => format!("{}K", tokens / 1_000),
-        Ok(tokens) => tokens.to_string(),
-        Err(_) => value.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::{
-        ConfigField, ConfigOption, CustomProvider, ModelsResponse, ProviderStatus, MASKED_SECRET,
+        AdminClient, BootstrapState, ConfigField, ConfigOption, CustomProvider, ModelsResponse,
+        ProviderStatus, Repository, MASKED_SECRET,
     };
     use crate::app::{ConfirmAction, ProviderDraft, TextInput, CONTEXT_KEY};
     use ratatui::backend::TestBackend;
@@ -1407,12 +2248,12 @@ mod tests {
         app.config.fields = vec![
             ConfigField {
                 key: "MODEL".to_string(),
-                label: "Default model".to_string(),
+                label: "Active model".to_string(),
                 field_type: "text".to_string(),
                 value: "open_router/openrouter/free".to_string(),
                 configured: true,
                 source: "managed_env".to_string(),
-                description: "Default route".to_string(),
+                description: "Active route".to_string(),
                 ..ConfigField::default()
             },
             ConfigField {
@@ -1434,6 +2275,24 @@ mod tests {
                 secret: true,
                 source: "managed_env".to_string(),
                 description: "Provider credential".to_string(),
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "LM_STUDIO_BASE_URL".to_string(),
+                label: "LM Studio URL".to_string(),
+                field_type: "text".to_string(),
+                value: "http://127.0.0.1:1234/v1".to_string(),
+                configured: true,
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "MODEL_CATALOG_MODE".to_string(),
+                value: "curated".to_string(),
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "MODEL_CATALOG_ALLOWLIST".to_string(),
+                value: "open_router/openrouter/free".to_string(),
                 ..ConfigField::default()
             },
         ];
@@ -1475,6 +2334,31 @@ mod tests {
             proxy_configured: true,
             model_ids: vec!["lab/model".to_string()],
         }];
+        app.local_status = vec![ProviderStatus {
+            provider_id: "lmstudio".to_string(),
+            status: "reachable".to_string(),
+            label: "Reachable".to_string(),
+            base_url: "http://127.0.0.1:1234/v1".to_string(),
+            ..ProviderStatus::default()
+        }];
+        app.usage = serde_json::json!({
+            "range_days": 30,
+            "totals": {"requests": 2, "input_tokens": 11, "output_tokens": 4},
+            "models": [{"model": "open_router/openrouter/free", "input_tokens": 11, "output_tokens": 4}],
+            "model_labels": {"open_router/openrouter/free": "OpenRouter · Free"}
+        });
+        app.diagnostic = serde_json::json!({
+            "network": "none",
+            "controller": {
+                "requested_model": "open_router/openrouter/free",
+                "provider": "open_router",
+                "model_ref": "open_router/openrouter/free",
+                "route_source": "MODEL"
+            },
+            "policy": {"mode": "strict"},
+            "capability_evidence": [{"capability": "native_tools", "state": "supported"}]
+        });
+        app.sync_model_browser();
 
         for page in Page::ALL {
             app.page = page;
@@ -1493,7 +2377,7 @@ mod tests {
             },
             Modal::Choice {
                 key: "MODEL".to_string(),
-                label: "Default model".to_string(),
+                label: "Active model".to_string(),
                 options: vec![ConfigOption {
                     value: "open_router/openrouter/free".to_string(),
                     label: "OpenRouter · Free".to_string(),
@@ -1522,9 +2406,6 @@ mod tests {
                 selected: 3,
                 editing: Some(TextInput::new("replacement".to_string(), false, true)),
             },
-            Modal::SearchModels {
-                input: TextInput::new("free".to_string(), false, false),
-            },
             Modal::Confirm {
                 title: "Clear secret".to_string(),
                 body: "Clear OpenRouter API key?".to_string(),
@@ -1534,7 +2415,25 @@ mod tests {
                 title: "Provider test".to_string(),
                 body: "{\"ok\":true}".to_string(),
             },
-            Modal::Help,
+            Modal::ProviderPicker {
+                options: vec![
+                    crate::models::ProviderFilterOption {
+                        id: String::new(),
+                        label: "Registered providers".to_string(),
+                        status: "active".to_string(),
+                        model_count: 1,
+                        free_count: 1,
+                    },
+                    crate::models::ProviderFilterOption {
+                        id: "open_router".to_string(),
+                        label: "OpenRouter".to_string(),
+                        status: "configured".to_string(),
+                        model_count: 1,
+                        free_count: 1,
+                    },
+                ],
+                selected: 0,
+            },
         ];
         app.page = Page::Providers;
         for modal in modals {
@@ -1544,5 +2443,239 @@ mod tests {
                 terminal.draw(|frame| render(frame, &mut app)).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn models_page_pins_search_filters_and_list_detail_hitboxes() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.config.fields.push(ConfigField {
+            key: "MODEL".to_string(),
+            value: "open_router/openrouter/free".to_string(),
+            ..ConfigField::default()
+        });
+        app.models = ModelsResponse {
+            models: vec!["open_router/openrouter/free".to_string()],
+            catalog_models: vec![
+                "open_router/openrouter/free".to_string(),
+                "open_router/openrouter/paid".to_string(),
+            ],
+            catalog_model_labels: [
+                (
+                    "open_router/openrouter/free".to_string(),
+                    "Free row".to_string(),
+                ),
+                (
+                    "open_router/openrouter/paid".to_string(),
+                    "Paid row".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            catalog_model_evidence: [(
+                "open_router/openrouter/free".to_string(),
+                serde_json::json!({"is_free": true}),
+            )]
+            .into_iter()
+            .collect(),
+            ..ModelsResponse::default()
+        };
+        app.sync_model_browser();
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.geometry.top.height, 3);
+        assert_eq!(app.geometry.sidebar.width, 28);
+        assert_eq!(app.geometry.main.width, 132);
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::SearchModels)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::ToggleFreeFilter)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::SelectModel(0))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::AssignModel(_))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::DisableAllModels)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::ToggleCatalogVisibility)));
+        assert!(!app.hitboxes.iter().any(|hitbox| {
+            matches!(
+                hitbox.action,
+                UiAction::AssignModel(ref key) if key != MODEL_KEY
+            )
+        }));
+    }
+
+    #[test]
+    fn compact_models_page_keeps_bulk_disable_action_visible_and_routes_are_separate() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/one".to_string(), "provider/two".to_string()];
+        app.models.catalog_models = app.models.models.clone();
+        app.sync_model_browser();
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::DisableAllModels)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::ToggleCatalogVisibility)));
+        assert!(!app.hitboxes.iter().any(|hitbox| {
+            matches!(
+                hitbox.action,
+                UiAction::AssignModel(ref key) if key != MODEL_KEY
+            )
+        }));
+        assert!(!app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::AssignRoute(_))));
+
+        app.page = Page::Routing;
+        app.hitboxes.clear();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        for key in [
+            "MODEL",
+            "MODEL_FABLE",
+            "MODEL_OPUS",
+            "MODEL_SONNET",
+            "MODEL_HAIKU",
+        ] {
+            assert!(app.hitboxes.iter().any(|hitbox| {
+                matches!(
+                    &hitbox.action,
+                    UiAction::AssignRoute(route) if route == key
+                )
+            }));
+        }
+    }
+
+    #[test]
+    fn dashboard_renders_operational_server_metadata_and_failure_detail() {
+        let mut app = App::fixture();
+        app.server_identity.health_url = "http://127.0.0.1:8083/health".to_string();
+        app.server_identity.instance_id = "0123456789abcdef".to_string();
+        app.server_identity.pid = 12345;
+        app.server_identity.uptime_seconds = 3661.0;
+        app.connection_state = ConnectionState::Offline;
+        app.last_connection_error = Some("connection refused".to_string());
+
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("Endpoint"));
+        assert!(rendered.contains("127.0.0.1:8083/health"));
+        assert!(rendered.contains("pid 12345"));
+        assert!(rendered.contains("instance 01234567"));
+        assert!(rendered.contains("uptime 1h 1m"));
+        assert!(rendered.contains("OFFLINE"));
+        assert!(rendered.contains("connection refused"));
+    }
+
+    #[test]
+    fn compact_models_page_has_no_overlapping_controls_or_default_metadata() {
+        let mut app = App::from_bootstrap(
+            AdminClient::new("http://127.0.0.1:8082").unwrap(),
+            BootstrapState::default(),
+            None,
+            std::env::temp_dir().join("fcc-control-center-ui-test-result.json"),
+        );
+        app.page = Page::Models;
+        app.models.models = vec!["provider/one".to_string(), "provider/two".to_string()];
+        app.models.catalog_models = app.models.models.clone();
+        app.sync_model_browser();
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+        assert!(app
+            .hitboxes
+            .iter()
+            .all(|hitbox| hitbox.rect.bottom() <= app.geometry.footer.y));
+        assert!(app
+            .hitboxes
+            .iter()
+            .all(|hitbox| hitbox.rect.right() <= terminal.backend().buffer().area.right()));
+        assert!(app.hitboxes.iter().any(
+            |hitbox| matches!(hitbox.action, UiAction::AssignModel(ref key) if key == MODEL_KEY)
+        ));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::StartServer)));
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Use selected"));
+        assert!(!rendered.contains("DEFAULT"));
+        assert!(!rendered.contains("Capabilities"));
+    }
+
+    #[test]
+    fn repositories_page_exposes_real_selection_and_launch_actions() {
+        let mut app = App::fixture();
+        app.page = Page::Repositories;
+        app.repositories = vec![Repository {
+            name: "switchboard".to_string(),
+            path: "/Users/tejas/Projects/AgentSwitchboard".to_string(),
+            branch: "main".to_string(),
+            remote: "tverma101/AgentSwitchboard".to_string(),
+            display_path: "~/Projects/AgentSwitchboard".to_string(),
+            identity: "tverma101/AgentSwitchboard".to_string(),
+        }];
+        app.selected_repo_path = Some(app.repositories[0].path.clone());
+
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::SelectRepository(0))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::UseRepository)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::RefreshRepositories)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::LaunchClaude(false))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(hitbox.action, UiAction::LaunchClaude(true))));
     }
 }

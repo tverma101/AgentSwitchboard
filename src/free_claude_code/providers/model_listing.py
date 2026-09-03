@@ -25,11 +25,23 @@ class ModelListResponseError(ValueError):
 
 
 def model_infos_from_ids(
-    model_ids: Iterable[str], *, supports_thinking: bool | None = None
+    model_ids: Iterable[str],
+    *,
+    supports_thinking: bool | None = None,
+    provider_name: str | None = None,
 ) -> frozenset[_ProviderModelInfo]:
     """Build unknown-capability model metadata from plain provider model ids."""
     return frozenset(
-        _ProviderModelInfo(model_id=model_id, supports_thinking=supports_thinking)
+        _ProviderModelInfo(
+            model_id=model_id,
+            supports_thinking=supports_thinking,
+            is_free=(
+                True
+                if provider_name is not None
+                and _is_cline_free_variant(provider_name, model_id)
+                else None
+            ),
+        )
         for model_id in model_ids
         if model_id.strip()
     )
@@ -77,7 +89,9 @@ def extract_openai_model_infos(
                 ),
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
-                is_free=_free_status(item, pricing),
+                is_free=_free_status(
+                    item, pricing, provider_name=provider_name, model_id=model_id
+                ),
                 pricing=pricing,
                 reasoning=reasoning,
                 capability_evidence=capability_evidence,
@@ -131,7 +145,9 @@ def extract_tool_capable_model_infos(
                 ),
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
-                is_free=_free_status(item, pricing),
+                is_free=_free_status(
+                    item, pricing, provider_name=provider_name, model_id=model_id
+                ),
                 pricing=pricing,
                 reasoning=reasoning,
                 capability_evidence=capability_evidence,
@@ -508,13 +524,38 @@ def _first_bool(item: Any, capabilities: Mapping[str, Any], *names: str) -> bool
     return result if isinstance(result, bool) else None
 
 
-def _free_status(item: Any, pricing: tuple[tuple[str, float], ...]) -> bool | None:
-    """Resolve an explicit provider free flag, then complete zero pricing."""
+def _free_status(
+    item: Any,
+    pricing: tuple[tuple[str, float], ...],
+    *,
+    provider_name: str,
+    model_id: str,
+) -> bool | None:
+    """Resolve provider evidence without guessing from arbitrary model names.
+
+    Cline's hosted OpenAI-compatible catalog explicitly encodes its free lane
+    in model IDs ending in ``:free`` but does not return a pricing object.  The
+    provider identity is required so this convention cannot leak into other
+    custom endpoints.
+    """
 
     explicit = _first_field(item, "is_free", "free")
     if isinstance(explicit, bool):
         return explicit
-    return pricing_is_free(pricing)
+    priced = pricing_is_free(pricing)
+    if priced is not None:
+        return priced
+    return True if _is_cline_free_variant(provider_name, model_id) else None
+
+
+def _is_cline_free_variant(provider_name: str, model_id: str) -> bool:
+    """Recognize only Cline's explicit hosted ``:free`` model variant."""
+
+    normalized_provider = provider_name.strip().casefold().replace(" ", "")
+    return normalized_provider in {
+        "cline",
+        "custom_provider:cline",
+    } and model_id.strip().casefold().endswith(":free")
 
 
 def _is_sequence(value: Any) -> bool:

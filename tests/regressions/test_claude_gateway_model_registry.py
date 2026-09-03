@@ -32,12 +32,12 @@ class _CachedRuntime:
         return self._infos
 
 
-def _settings(allowlist: str) -> Settings:
+def _settings(allowlist: str, *, model: str = MODEL_A) -> Settings:
     return Settings.model_construct(
         host="0.0.0.0",
         port=8082,
         anthropic_auth_token="freecc",
-        model=MODEL_A,
+        model=model,
         model_fable=None,
         model_opus=None,
         model_sonnet=None,
@@ -75,3 +75,42 @@ def test_enabling_cached_picker_model_adds_it_to_claude_registry_with_name() -> 
 
     assert beta.display_name == model_display_name(MODEL_B)
     assert beta.display_name != MODEL_B
+
+
+def test_maximum_reasoning_variant_does_not_claim_native_ultracode() -> None:
+    runtime = cast(RequestRuntimePort, _CachedRuntime(MODEL_A))
+
+    response = build_models_list_response(_settings(MODEL_A), runtime)
+
+    maximum_reasoning = next(
+        model
+        for model in response.data
+        if model.id.startswith("claude-3-freecc-ultra/")
+    )
+    assert maximum_reasoning.display_name == (
+        f"{model_display_name(MODEL_A)} (maximum reasoning)"
+    )
+    assert "ultracode" not in maximum_reasoning.display_name.lower()
+
+
+def test_registry_does_not_retain_dynamic_label_disambiguation() -> None:
+    runtime = cast(RequestRuntimePort, _CachedRuntime())
+
+    colliding = build_models_list_response(
+        _settings(
+            "anthropic/claude-opus-4",
+            model="anthropic/claude-opus-4",
+        ),
+        runtime,
+    )
+    colliding_static = next(
+        model for model in colliding.data if model.id == "claude-opus-4-20250514"
+    )
+    assert colliding_static.display_name == ("Claude Opus 4 [claude-opus-4-20250514]")
+
+    later = build_models_list_response(_settings(MODEL_A), runtime)
+    later_static = next(
+        model for model in later.data if model.id == "claude-opus-4-20250514"
+    )
+
+    assert later_static.display_name == "Claude Opus 4"

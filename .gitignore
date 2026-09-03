@@ -14,5 +14,6 @@ debug-*.log
 .coverage
 llama_cache
 .smoke-results
+.project-memory/
 src/free_claude_code/native_tui/target/
 .vscode

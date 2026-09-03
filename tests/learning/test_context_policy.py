@@ -20,6 +20,30 @@ from free_claude_code.learning.context_policy import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _enable_legacy_writer_for_unit_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the retained writer only under its explicit experiment gate."""
+
+    monkeypatch.setenv("FCC_CONTEXT_GOVERNOR_ENABLED", "1")
+
+
+def test_install_is_disabled_without_explicit_experiment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "CLAUDE.md"
+    original = "# Personal instructions\n"
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.delenv("FCC_CONTEXT_GOVERNOR_ENABLED")
+
+    assert install_context_policy(tmp_path) is False
+    assert path.read_text(encoding="utf-8") == original
+    status = context_policy_status(tmp_path)
+    assert status["enabled"] is False
+    assert status["installed"] is False
+
+
 def test_install_is_idempotent_and_preserves_user_instructions(tmp_path: Path) -> None:
     original = "# Personal instructions\n\nPrefer small, verified changes.\n"
     path = tmp_path / "CLAUDE.md"
@@ -34,6 +58,7 @@ def test_install_is_idempotent_and_preserves_user_instructions(tmp_path: Path) -
     assert path.read_text(encoding="utf-8") == installed
 
     status = context_policy_status(tmp_path)
+    assert status["enabled"] is True
     assert status["installed"] is True
     assert status["policy_version"] == "1"
     assert status["policy_digest"] == policy_digest()

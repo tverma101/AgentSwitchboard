@@ -206,13 +206,6 @@ class TuiuiControlCenterApp(ControlCenterApp):
         background: $panel;
     }
 
-    #window-controls {
-        width: 9;
-        height: 3;
-        content-align: left middle;
-        color: $text-muted;
-    }
-
     #page-title {
         width: 1fr;
         height: 3;
@@ -430,7 +423,10 @@ class TuiuiControlCenterApp(ControlCenterApp):
         self._model_prices: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        # The header icon opens Textual's command palette, but it is not a
+        # useful control in this app's workflow. Keep the header/clock while
+        # removing the misleading clickable placeholder.
+        yield Header(show_clock=True, icon="")
         with Horizontal(id="shell"):
             with Vertical(id="sidebar"):
                 yield Static(self.TITLE, id="sidebar-title")
@@ -443,7 +439,6 @@ class TuiuiControlCenterApp(ControlCenterApp):
                     yield Button("Danger", id="launch-danger", variant="error")
             with Vertical(id="main-panel"):
                 with Horizontal(id="window-titlebar"):
-                    yield Static("●  ●  ●", id="window-controls")
                     yield Static("Dashboard", id="page-title")
                     yield Static("Control Center", id="window-state")
                 yield Static("", id="summary")

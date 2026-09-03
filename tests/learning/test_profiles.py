@@ -196,7 +196,9 @@ def test_launcher_profile_is_removed_from_claude_args_and_inherited(
         "sonnet",
     ]
     assert os.environ["FCC_LEARNING_PROFILE"] == "default"
-    assert build_env.call_args.kwargs["base_env"]["FCC_LEARNING_PROFILE"] == "coding"
+    child_base_env = build_env.call_args.kwargs["base_env"]
+    assert child_base_env["FCC_LEARNING_PROFILE"] == "coding"
+    assert child_base_env["CLAUDE_CODE_EFFORT_LEVEL"] == "xhigh"
 
 
 def test_server_profile_option_selects_learning_environment(

@@ -2,8 +2,13 @@
 
 import json
 
+import pytest
+
 from free_claude_code.cli.claude_env import (
+    CLAUDE_EFFORT_DEFAULT,
+    CLAUDE_EFFORT_LEVEL_ENV,
     build_claude_proxy_env,
+    claude_effort_environment,
     claude_settings_env,
     conflicting_settings_env_keys,
     context_cap_tokens,
@@ -12,6 +17,11 @@ from free_claude_code.cli.claude_env import (
     resolved_model_id,
     settings_env_routing_conflict_message,
 )
+
+
+@pytest.fixture(autouse=True)
+def _standard_server_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FCC_SERVER_MODE", raising=False)
 
 
 def test_default_context_cap_is_256k() -> None:
@@ -39,33 +49,119 @@ def test_model_context_window_has_no_large_window_auto_raise() -> None:
         assert model_context_window(model_id) is None
 
 
-def test_build_claude_proxy_env_always_sets_default_256k() -> None:
+def test_claude_effort_environment_defaults_to_remote_xhigh() -> None:
+    args = ("--model", "anthropic/opencode_go/deepseek-v4-flash")
+
+    assert claude_effort_environment(args, {}) == {
+        CLAUDE_EFFORT_LEVEL_ENV: CLAUDE_EFFORT_DEFAULT,
+    }
+
+
+def test_claude_effort_environment_preserves_explicit_separate_effort() -> None:
+    args = ("--effort", "high")
+
+    assert claude_effort_environment(args, {}) == {}
+
+
+def test_claude_effort_environment_preserves_explicit_equals_effort() -> None:
+    args = ("--effort=xhigh",)
+
+    assert claude_effort_environment(args, {}) == {}
+
+
+def test_claude_effort_environment_preserves_explicit_environment_effort() -> None:
+    args = ("--model", "sonnet")
+
+    assert claude_effort_environment(args, {CLAUDE_EFFORT_LEVEL_ENV: "high"}) == {
+        CLAUDE_EFFORT_LEVEL_ENV: "high"
+    }
+
+
+def test_claude_effort_environment_treats_blank_environment_effort_as_unset() -> None:
+    args = ("--model", "sonnet")
+
+    assert claude_effort_environment(args, {CLAUDE_EFFORT_LEVEL_ENV: "  "}) == {
+        CLAUDE_EFFORT_LEVEL_ENV: CLAUDE_EFFORT_DEFAULT
+    }
+
+
+def test_claude_effort_environment_does_not_mutate_input() -> None:
+    args = ["--model", "sonnet"]
+    base_env = {"EDITOR": "vim"}
+
+    result = claude_effort_environment(args, base_env)
+
+    assert args == ["--model", "sonnet"]
+    assert base_env == {"EDITOR": "vim"}
+    assert result == {"EDITOR": "vim", CLAUDE_EFFORT_LEVEL_ENV: CLAUDE_EFFORT_DEFAULT}
+    assert result is not base_env
+
+
+def test_build_claude_proxy_env_does_not_inject_other_client_policy() -> None:
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:8082",
         auth_token="token",
         base_env={},
         model_id="anthropic/opencode_go/deepseek-v4-flash",
     )
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
-    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in env
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in env
     assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in env
     assert "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT" not in env
-    assert env["MAX_MCP_OUTPUT_TOKENS"] == "12000"
-    assert env["ENABLE_TOOL_SEARCH"] == "true"
+    assert "MAX_MCP_OUTPUT_TOKENS" not in env
+    assert "ENABLE_TOOL_SEARCH" not in env
 
 
-def test_build_claude_proxy_env_uses_explicit_override() -> None:
+def test_build_claude_proxy_env_restores_256k_context_only_in_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FCC_SERVER_MODE", "sandbox")
+
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8083",
+        auth_token="token",
+        base_env={},
+        model_id="anthropic/opencode_go/deepseek-v4-flash",
+    )
+
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert "MAX_MCP_OUTPUT_TOKENS" not in env
+    assert "ENABLE_TOOL_SEARCH" not in env
+
+
+def test_sandbox_context_window_uses_legacy_fcc_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FCC_SERVER_MODE", "sandbox")
+
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8083",
+        auth_token="token",
+        base_env={"FCC_CLAUDE_CONTEXT_TOKENS": "192000"},
+    )
+
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "192000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "192000"
+
+
+def test_build_claude_proxy_env_preserves_explicit_context_policy() -> None:
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:8082",
         auth_token="token",
-        base_env={"FCC_CLAUDE_CONTEXT_TOKENS": "192000"},
+        base_env={
+            "FCC_CLAUDE_CONTEXT_TOKENS": "192000",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "190000",
+        },
         model_id="some-1m-model",
     )
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "192000"
-    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "192000"
+    assert env["FCC_CLAUDE_CONTEXT_TOKENS"] == "192000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "190000"
 
 
-def test_build_claude_proxy_env_removes_inherited_compaction_disable() -> None:
+def test_build_claude_proxy_env_preserves_inherited_compaction_controls() -> None:
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:8082",
         auth_token="token",
@@ -76,9 +172,9 @@ def test_build_claude_proxy_env_removes_inherited_compaction_disable() -> None:
         },
     )
 
-    assert "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT" not in env
-    assert "DISABLE_COMPACT" not in env
-    assert "DISABLE_AUTO_COMPACT" not in env
+    assert env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] == "1"
+    assert env["DISABLE_COMPACT"] == "1"
+    assert env["DISABLE_AUTO_COMPACT"] == "1"
 
 
 def test_build_claude_proxy_env_preserves_explicit_compaction_threshold() -> None:
