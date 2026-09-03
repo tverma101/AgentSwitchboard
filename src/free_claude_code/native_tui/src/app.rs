@@ -20,7 +20,9 @@ use std::path::PathBuf;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
+#[allow(dead_code)]
 pub const CONTEXT_KEY: &str = "FCC_CLAUDE_CONTEXT_TOKENS";
+const CONTEXT_WINDOWS_KEY: &str = "MODEL_CONTEXT_WINDOWS";
 const ROUTING_KEYS: &[&str] = &[
     "MODEL",
     "FCC_SUBAGENT_MODEL_INHERIT",
@@ -118,6 +120,7 @@ pub enum UiAction {
     EditField,
     ToggleAdvanced,
     AssignModel(String),
+    ConfigureContext,
     SearchModels,
     OpenProviderFilter,
     SelectProviderFilter(usize),
@@ -408,6 +411,15 @@ pub enum Modal {
     ProviderPicker {
         options: Vec<ProviderFilterOption>,
         selected: usize,
+    },
+    ContextChoice {
+        model_ref: String,
+        options: Vec<ConfigOption>,
+        selected: usize,
+    },
+    ContextInput {
+        model_ref: String,
+        input: TextInput,
     },
 }
 
@@ -773,7 +785,9 @@ impl App {
             }
             KeyCode::Enter => self.activate_selection()?,
             KeyCode::Char('e') if self.page == Page::Models => self.toggle_selected_model_access(),
+            KeyCode::Char('C') if self.page == Page::Models => self.open_context_editor(),
             KeyCode::Char(' ') if self.page == Page::Models => self.toggle_selected_model_access(),
+            KeyCode::Char('e') if self.page == Page::Context => self.open_context_editor(),
             KeyCode::Char('e') => self.edit_action()?,
             KeyCode::Char('t') if self.page == Page::Providers => self.test_selected_provider(),
             KeyCode::Char('n') if self.page == Page::Providers => self.new_custom_provider(),
@@ -985,6 +999,7 @@ impl App {
             UiAction::EditField => self.edit_action()?,
             UiAction::ToggleAdvanced => self.show_advanced = !self.show_advanced,
             UiAction::AssignModel(key) => self.use_selected_model(&key),
+            UiAction::ConfigureContext => self.open_context_editor(),
             UiAction::SearchModels => self.focus_model_search(),
             UiAction::OpenProviderFilter => self.open_provider_filter(),
             UiAction::SelectProviderFilter(index) => self.select_provider_filter(index),
@@ -1015,7 +1030,8 @@ impl App {
             Page::Repositories => self.use_selected_repository(),
             Page::Providers => self.configure_selected_provider(),
             Page::Models => self.use_selected_model("MODEL"),
-            Page::Routing | Page::Context | Page::Local | Page::Settings => self.edit_action()?,
+            Page::Context => self.open_context_editor(),
+            Page::Routing | Page::Local | Page::Settings => self.edit_action()?,
             Page::Diagnostics => self.run_diagnostic(),
             _ => {}
         }
@@ -1025,7 +1041,7 @@ impl App {
     fn edit_action(&mut self) -> Result<()> {
         match self.page {
             Page::Providers => self.edit_selected_custom_provider(),
-            Page::Routing | Page::Context | Page::Local | Page::Settings => {
+            Page::Routing | Page::Local | Page::Settings => {
                 if let Some(index) = self.selected_field_index() {
                     self.open_field_editor(index);
                 }
@@ -1077,7 +1093,7 @@ impl App {
         let len = match self.page {
             Page::Repositories => self.repositories.len(),
             Page::Providers => self.config.provider_status.len(),
-            Page::Models => self.filtered_models().len(),
+            Page::Models | Page::Context => self.filtered_models().len(),
             Page::Routing => self.routing_field_indices().len(),
             Page::Local => self.local_field_indices().len(),
             Page::Settings => self.settings_field_indices().len(),
@@ -1086,7 +1102,7 @@ impl App {
         let selection = match self.page {
             Page::Repositories => &mut self.repository_selected,
             Page::Providers => &mut self.provider_selected,
-            Page::Models => &mut self.browser.selected,
+            Page::Models | Page::Context => &mut self.browser.selected,
             Page::Routing => &mut self.routing_selected,
             Page::Local => &mut self.local_selected,
             Page::Settings => &mut self.setting_selected,
@@ -1265,6 +1281,85 @@ impl App {
         self.browser.selected_ref(&snapshot)
     }
 
+    fn configured_context_windows(&self) -> Map<String, Value> {
+        self.config
+            .fields
+            .iter()
+            .find(|field| field.key == "MODEL_CONTEXT_WINDOWS")
+            .and_then(|field| serde_json::from_str::<Value>(&field.value).ok())
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default()
+    }
+
+    fn current_context_window(&self, model_ref: &str) -> Option<u64> {
+        self.configured_context_windows()
+            .get(model_ref)
+            .and_then(Value::as_u64)
+    }
+
+    fn open_context_editor(&mut self) {
+        let Some(model_ref) = self.selected_model() else {
+            self.set_notice("Select a catalog model first".to_string());
+            return;
+        };
+        let current = self.current_context_window(&model_ref);
+        let selected = match current {
+            None => 0,
+            Some(value) => [128_000_u64, 200_000, 256_000, 500_000, 1_000_000]
+                .iter()
+                .position(|preset| *preset == value)
+                .map(|index| index + 1)
+                .unwrap_or(6),
+        };
+        let mut options = vec![ConfigOption {
+            value: String::new(),
+            label: "Clear override (client default)".to_string(),
+        }];
+        options.extend(
+            [
+                (128_000, "128K tokens"),
+                (200_000, "200K tokens"),
+                (256_000, "256K tokens"),
+                (500_000, "500K tokens"),
+                (1_000_000, "1M tokens"),
+            ]
+            .into_iter()
+            .map(|(value, label)| ConfigOption {
+                value: value.to_string(),
+                label: label.to_string(),
+            }),
+        );
+        options.push(ConfigOption {
+            value: "custom".to_string(),
+            label: "Custom token count...".to_string(),
+        });
+        self.modal = Some(Modal::ContextChoice {
+            model_ref,
+            options,
+            selected,
+        });
+    }
+
+    fn apply_context_window(&mut self, model_ref: &str, value: Option<u64>) {
+        let mut windows = self.configured_context_windows();
+        match value {
+            Some(tokens) if (32_000..=1_000_000).contains(&tokens) => {
+                windows.insert(model_ref.to_string(), Value::from(tokens));
+            }
+            Some(_) => {
+                self.set_error("Context size must be between 32K and 1M tokens".to_string());
+                return;
+            }
+            None => {
+                windows.remove(model_ref);
+            }
+        }
+        self.apply_field_value(
+            CONTEXT_WINDOWS_KEY,
+            Value::String(Value::Object(windows).to_string()),
+        );
+    }
+
     pub fn selected_field_index(&self) -> Option<usize> {
         match self.page {
             Page::Routing => self
@@ -1411,10 +1506,6 @@ impl App {
     }
 
     fn apply_field_value(&mut self, key: &str, value: Value) {
-        if key == CONTEXT_KEY {
-            self.set_error("FCC context policy is disabled and cannot be edited".to_string());
-            return;
-        }
         if self.bootstrap_mode {
             if key == CUSTOM_PROVIDERS_KEY {
                 self.set_notice(
@@ -1884,6 +1975,61 @@ impl App {
                     _ => {}
                 }
                 self.modal = Some(Modal::ProviderPicker { options, selected });
+            }
+            Modal::ContextInput {
+                model_ref,
+                mut input,
+            } => match edit_input(&mut input, key) {
+                InputOutcome::Cancel => {}
+                InputOutcome::Submit => match input.value.trim().parse::<u64>() {
+                    Ok(tokens) => self.apply_context_window(&model_ref, Some(tokens)),
+                    Err(_) => self.set_error("Enter a whole number of tokens".to_string()),
+                },
+                InputOutcome::Continue => {
+                    self.modal = Some(Modal::ContextInput { model_ref, input })
+                }
+            },
+            Modal::ContextChoice {
+                model_ref,
+                options,
+                mut selected,
+            } => {
+                match key.code {
+                    KeyCode::Esc => return Ok(()),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected = wrap_index(selected, options.len(), -1)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        selected = wrap_index(selected, options.len(), 1)
+                    }
+                    KeyCode::Enter => {
+                        if let Some(option) = options.get(selected) {
+                            if option.value == "custom" {
+                                self.modal = Some(Modal::ContextInput {
+                                    model_ref: model_ref.clone(),
+                                    input: TextInput::new(
+                                        self.current_context_window(&model_ref)
+                                            .map(|value| value.to_string())
+                                            .unwrap_or_default(),
+                                        false,
+                                        false,
+                                    ),
+                                });
+                            } else if option.value.is_empty() {
+                                self.apply_context_window(&model_ref, None);
+                            } else if let Ok(tokens) = option.value.parse::<u64>() {
+                                self.apply_context_window(&model_ref, Some(tokens));
+                            }
+                            return Ok(());
+                        }
+                    }
+                    _ => {}
+                }
+                self.modal = Some(Modal::ContextChoice {
+                    model_ref,
+                    options,
+                    selected,
+                });
             }
             Modal::EditField { field, mut input } => match edit_input(&mut input, key) {
                 InputOutcome::Cancel => {}

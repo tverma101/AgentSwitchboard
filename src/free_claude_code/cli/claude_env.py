@@ -11,12 +11,17 @@ from free_claude_code.cli.claude_firewall import (
 )
 from free_claude_code.cli.local_http import with_local_proxy_bypass
 from free_claude_code.cli.proxy_auth import proxy_auth_token
+from free_claude_code.config.model_refs import (
+    normalize_model_ref,
+    parse_model_context_windows,
+)
 from free_claude_code.core.server_identity import server_mode
 
 CLAUDE_CONTEXT_CAP_DEFAULT = 256_000
 CLAUDE_CONTEXT_CAP_MIN = 32_000
 CLAUDE_CONTEXT_CAP_MAX = 1_000_000
 CLAUDE_CONTEXT_CAP_ENV = "FCC_CLAUDE_CONTEXT_TOKENS"
+MODEL_CONTEXT_WINDOWS_ENV = "MODEL_CONTEXT_WINDOWS"
 CLAUDE_BINARY_NAME = "claude"
 CLAUDE_DISABLE_NONSTREAMING_FALLBACK_ENV = "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"
 
@@ -76,29 +81,47 @@ def context_cap_tokens(base_env: Mapping[str, str]) -> int:
     return value
 
 
-def model_context_window(model_id: str | None) -> int | None:
-    """Return a known native context ceiling for ``model_id``, if any."""
+def model_context_window(
+    model_id: str | None,
+    context_windows: Mapping[str, int] | None = None,
+) -> int | None:
+    """Return the exact configured context window for ``model_id``, if any."""
 
     if not model_id:
         return None
-    lowered = model_id.lower()
-    for needle, window in MODEL_CONTEXT_WINDOWS.items():
-        if needle in lowered:
-            return window
-    return None
+    normalized = normalize_model_ref(model_id)
+    if normalized.virtual_context_window is not None:
+        return normalized.virtual_context_window
+    windows = MODEL_CONTEXT_WINDOWS if context_windows is None else context_windows
+    return windows.get(normalized.model_ref)
 
 
 def effective_context_window(
     model_id: str | None,
     base_env: Mapping[str, str],
+    context_windows: Mapping[str, int] | None = None,
 ) -> int:
-    """Return the legacy computed cap for compatibility-only callers."""
+    """Return the configured context window or the legacy default."""
 
     configured_cap = context_cap_tokens(base_env)
-    native_ceiling = model_context_window(model_id)
+    native_ceiling = model_context_window(model_id, context_windows)
     if native_ceiling is None:
         return configured_cap
     return min(configured_cap, native_ceiling)
+
+
+def configured_context_windows(
+    base_env: Mapping[str, str],
+) -> dict[str, int]:
+    """Parse the optional per-model context map from the child environment."""
+
+    raw = base_env.get(MODEL_CONTEXT_WINDOWS_ENV, "")
+    try:
+        return parse_model_context_windows(raw)
+    except ValueError:
+        # Settings validation rejects malformed values before a normal launch.
+        # Keep this helper safe for direct callers and inherited environments.
+        return {}
 
 
 def resolved_model_id(
@@ -313,6 +336,7 @@ def build_claude_proxy_env(
     auth_token: str,
     base_env: Mapping[str, str],
     model_id: str | None = None,
+    context_windows: Mapping[str, int] | None = None,
     process_wrapper_path: str | None = None,
 ) -> dict[str, str]:
     """Return the canonical environment for Claude Code proxy sessions.
@@ -346,13 +370,20 @@ def build_claude_proxy_env(
     # its non-streaming fallback after provider-visible work may have started.
     env[CLAUDE_DISABLE_NONSTREAMING_FALLBACK_ENV] = "1"
 
+    configured_window = model_context_window(model_id, context_windows)
     if server_mode() == "sandbox":
         # The sandbox deliberately keeps the former narrow Claude window
         # contract for controlled testing. Do not re-enable the broader FCC
         # context governor or MCP/tool-search policy here.
-        window = effective_context_window(model_id, base_env)
+        window = effective_context_window(model_id, base_env, context_windows)
         env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(window)
         env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(window)
+    elif configured_window is not None:
+        # Standard launches remain client-owned unless an exact model mapping
+        # explicitly opts into a context budget.
+        window = str(configured_window)
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = window
+        env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = window
 
     env[CLAUDE_PROCESS_WRAPPER_ENV] = process_wrapper_path or str(
         default_process_wrapper_path(base_env)

@@ -137,6 +137,16 @@ MCP-output and tool-search policy remain client-owned. The legacy
 `FCC_CLAUDE_CONTEXT_TOKENS` field remains readable for old configuration files
 and supplies the sandbox value.
 
+The Context page also provides the active configuration surface for
+`MODEL_CONTEXT_WINDOWS`. Select a model in Models (or use the Context page's
+model selection), then choose a 128K, 200K, 256K, 500K, or 1M preset, enter a
+custom value from 32K through 1M, or clear only that model's override. The
+mapping is saved through the Admin API in live mode and through the private
+bootstrap handoff before startup; unrelated model entries are preserved. The
+next Claude launch applies the selected value to Claude Code's context and
+auto-compact environment variables. This is separate from native Claude Code
+`ultracode`, which remains controlled by the client and its entitlement.
+
 ## GUI-like geometry contract
 
 The terminal still renders in character cells, so the deterministic acceptance language is **cell-exact geometry** rather than claiming the terminal emulator's font rasterization is under application control. Ratatui `TestBackend` regressions pin a reference `160 x 50` viewport to:

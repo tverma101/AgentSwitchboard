@@ -157,7 +157,13 @@ MODEL_CONTEXT_WINDOWS={"opencode_go/muse-spark-1.2-contributor": 1000000}
 It applies when a request carries no explicit `[size]` suffix (for example
 `MODEL=opencode_go/model[1m]`); an explicit suffix always wins, and inherited
 subagent routes keep the parent window. The resolved window is surfaced in
-routing diagnostics. Malformed JSON fails settings validation at startup.
+routing diagnostics. Malformed JSON fails settings validation at startup. The native control center's
+Context page can edit this map for the exact selected catalog model: choose a
+preset, enter a custom value from 32K through 1M tokens, or clear that model's
+override. Saved values are applied on the next Claude launch to both
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`; this
+controls Claude Code's client context budget and does not create native
+Claude Code `ultracode` entitlement or UI state.
 
 The loopback Admin model picker keeps the full cached discovery inventory
 separate from the client-visible list. It never treats every discovered model

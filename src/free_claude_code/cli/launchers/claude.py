@@ -32,6 +32,7 @@ from free_claude_code.cli.codex_computer_use_registration import (
     ClaudeMcpRegistrationError,
     ensure_claude_local_computer_use_mcp,
 )
+from free_claude_code.config.model_refs import parse_model_context_windows
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
 from free_claude_code.core.server_identity import server_mode
@@ -230,11 +231,16 @@ def launch(
             f"starting the verified {recovered_version} fallback.",
             file=sys.stderr,
         )
+    selected_model = resolved_model_id(args, launch_environment) or settings.model
+    context_windows = parse_model_context_windows(
+        getattr(settings, "model_context_windows", "")
+    )
     child_env = build_claude_proxy_env(
         proxy_root_url=proxy_root_url,
         auth_token=settings.anthropic_auth_token,
         base_env=launch_environment,
-        model_id=resolved_model_id(args, launch_environment),
+        model_id=selected_model,
+        context_windows=context_windows,
         process_wrapper_path=str(wrapper_path),
     )
     _prepare_computer_use_session(

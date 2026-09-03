@@ -112,6 +112,32 @@ def test_build_claude_proxy_env_does_not_inject_other_client_policy() -> None:
     assert "ENABLE_TOOL_SEARCH" not in env
 
 
+def test_build_claude_proxy_env_applies_exact_model_context_mapping() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={},
+        model_id="provider/model",
+        context_windows={"provider/model": 500_000},
+    )
+
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "500000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "500000"
+
+
+def test_virtual_model_context_suffix_precedes_saved_mapping() -> None:
+    env = build_claude_proxy_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="token",
+        base_env={},
+        model_id="provider/model[128k]",
+        context_windows={"provider/model": 500_000},
+    )
+
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "128000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "128000"
+
+
 def test_build_claude_proxy_env_restores_256k_context_only_in_sandbox(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -169,6 +169,7 @@ _BOOTSTRAP_MODEL_KEYS = frozenset(
         "MODEL_CATALOG_MODE",
         "MODEL_CATALOG_ALLOWLIST",
         "MODEL_ALIASES",
+        "MODEL_CONTEXT_WINDOWS",
     }
 )
 

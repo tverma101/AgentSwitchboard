@@ -712,6 +712,7 @@ fn render_models(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let actions = vec![
         ("Use selected", UiAction::AssignModel(MODEL_KEY.to_string())),
+        ("Context", UiAction::ConfigureContext),
         (access_label, UiAction::ToggleModelAccess),
         ("Disable all", UiAction::DisableAllModels),
         ("Save", UiAction::SaveModels),
@@ -1302,24 +1303,44 @@ fn render_context(frame: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(12), Constraint::Length(4)])
         .split(area);
-    let block = section_block("Claude Code context policy (inactive)");
+    let block = section_block("Claude Code context window");
     let inner = block.inner(rows[0]);
     frame.render_widget(block, rows[0]);
+    let model = app.selected_model().unwrap_or_else(|| "none".to_string());
+    let configured = app
+        .config
+        .fields
+        .iter()
+        .find(|field| field.key == "MODEL_CONTEXT_WINDOWS")
+        .map(|field| field.value.as_str())
+        .unwrap_or("{}");
+    let current = serde_json::from_str::<serde_json::Value>(configured)
+        .ok()
+        .and_then(|value| value.get(&model).and_then(serde_json::Value::as_u64))
+        .map(|value| format!("{value} tokens"))
+        .unwrap_or_else(|| "client default (no override)".to_string());
     let lines = vec![
-        Line::from(Span::styled("FCC INTERVENTION", Style::default().fg(MUTED).add_modifier(Modifier::BOLD))),
-        Line::from(Span::styled("DISABLED", Style::default().fg(WARN).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("SELECT A MODEL", Style::default().fg(MUTED).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(trim_to(&model, inner.width as usize), Style::default().fg(ACCENT))),
         Line::from(""),
-        kv("FCC setting", "FCC_CONTEXT_GOVERNOR_ENABLED=false"),
+        kv("Configured window", &current),
         Line::from(""),
-        Line::from(Span::styled("Standard FCC does not set or enforce Claude context, MCP output, or tool-search policy. Sandbox intentionally sets only its bounded 256K context/auto-compact pair; Claude owns the remaining policy.", Style::default().fg(TEXT))),
-        Line::from(""),
-        Line::from(Span::styled("The legacy FCC_CLAUDE_CONTEXT_TOKENS value supplies the sandbox window and remains readable for standard old config files; the standard launcher does not send it to the child.", Style::default().fg(MUTED))),
+        Line::from(Span::styled("Up/Down selects the exact provider/model reference. Enter or E opens presets, Custom accepts 32K–1M tokens, and Clear removes only this model's override. Saved values set Claude Code's context and auto-compact window; native ultracode remains client-owned.", Style::default().fg(TEXT))),
     ];
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
         inner,
     );
-    action_bar(frame, app, rows[1], &[("Refresh", UiAction::Refresh)]);
+    action_bar(
+        frame,
+        app,
+        rows[1],
+        &[
+            ("Configure selected", UiAction::ConfigureContext),
+            ("Models", UiAction::Navigate(Page::Models)),
+            ("Refresh", UiAction::Refresh),
+        ],
+    );
 }
 
 fn render_local(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -1777,13 +1798,23 @@ fn render_modal(frame: &mut Frame, app: &mut App, area: Rect) {
             Modal::ProviderEditor { .. } => 24,
             Modal::ProviderPicker { options, .. } => (options.len() as u16 + 4).min(24),
             Modal::FieldPicker { field_indices, .. } => (field_indices.len() as u16 + 6).min(24),
-            Modal::Choice { options, .. } => (options.len() as u16 + 6).min(22),
+            Modal::Choice { options, .. } | Modal::ContextChoice { options, .. } => {
+                (options.len() as u16 + 6).min(22)
+            }
             _ => 14,
         },
     );
     frame.render_widget(Clear, rect);
     frame.render_widget(Block::default().style(Style::default().bg(PANEL)), rect);
     match &modal {
+        Modal::ContextInput { model_ref, input } => {
+            render_context_input_modal(frame, rect, model_ref, input)
+        }
+        Modal::ContextChoice {
+            model_ref,
+            options,
+            selected,
+        } => render_choice_modal(frame, rect, model_ref, options, *selected),
         Modal::EditField { field, input } => render_edit_modal(frame, rect, field, input),
         Modal::Choice {
             label,
@@ -1919,6 +1950,45 @@ fn render_edit_modal(
             y: inner.bottom().saturating_sub(2),
             width: inner.width,
             height: 2,
+        },
+    );
+}
+
+fn render_context_input_modal(
+    frame: &mut Frame,
+    rect: Rect,
+    model_ref: &str,
+    input: &crate::app::TextInput,
+) {
+    let block = modal_block("Custom context tokens");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    frame.render_widget(
+        Paragraph::new(input.value.clone())
+            .style(Style::default().fg(TEXT).bg(BG))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(ACCENT)),
+            ),
+        Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: 3,
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(format!(
+            "{}\n32K–1M · Enter saves · Esc cancels",
+            trim_to(model_ref, inner.width as usize)
+        ))
+        .style(Style::default().fg(MUTED)),
+        Rect {
+            x: inner.x,
+            y: inner.bottom().saturating_sub(3),
+            width: inner.width,
+            height: 3,
         },
     );
 }
