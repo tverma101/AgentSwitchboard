@@ -38,7 +38,7 @@ presentation. The verified Muse path is
 
 This repository is the AgentSwitchboard project, substantially evolved from the
 upstream [Free Claude Code](UPSTREAM.md) codebase. The local release head is version
-`4.63.0`; examples below describe this checkout, not every feature proposed in
+`4.65.2`; examples below describe this checkout, not every feature proposed in
 the open design backlog. The installed distribution and `fcc*`
 commands remain the legacy compatibility surface for now. Live smoke receipts
 retain the package version that was installed when each receipt was captured;
@@ -58,8 +58,9 @@ trademarks of OpenAI. See [upstream attribution](UPSTREAM.md) and
 - **Choose a configured model.** Set an exact `provider/model` reference or a
   stable alias in FCC's managed environment file.
 - **Preserve coding-agent behavior.** The release path covers streaming text,
-  file tools, repeated tool calls, provider receipts, and one compact/resume
-  cycle with the literal Claude client.
+  file tools, repeated tool calls, and provider receipts. Claude Code owns
+  client context and compaction; FCC's former intervention is disabled pending
+  certification.
 - **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider; optionally enable [RTK](https://github.com/rtk-ai/rtk) to filter noisy terminal output before it reaches the model.
 - **Keep provider boundaries visible.** FCC records metadata-only usage,
   fault-attribution receipts, and pre-network provider-policy decisions; it
@@ -70,8 +71,8 @@ trademarks of OpenAI. See [upstream attribution](UPSTREAM.md) and
 
 | Status | Current scope |
 | --- | --- |
-| **Current-source verified** | Native Ratatui terminal `fcc-server`/`fcc-tui`/`fccdanger`, provider and model selection, secret-safe custom OpenAI-compatible provider CRUD, independent FCC provider and Codex Tool Account management, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, bounded client context and artifact-backed text-tool-result governance, global context-discipline policy, reasoning capability/visibility receipts, model catalog visibility, stable aliases, GitHub-backed repository selection, and the compatibility wrapper/certification path. |
-| **Live receipt evidence** | The checked-in receipts prove a literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. Each receipt records its own capture version and boundary; they are metadata-only and do not claim that every adjacent feature is certified. |
+| **Current-source verified** | Native Ratatui terminal `fcc-server`/`fcc-tui`/`fccdanger`, provider and model selection, secret-safe custom OpenAI-compatible provider CRUD, independent FCC provider and Codex Tool Account management, FCC routing, OpenCode Go native protocols, text and file-tool loops, the settings-layer proxy-routing firewall, model-scoped Codex Responses-Lite support, reasoning capability/visibility receipts, model catalog visibility, stable aliases, GitHub-backed repository selection, and the compatibility wrapper/certification path. FCC's client context/compaction intervention is disabled pending certification. |
+| **Historical receipt evidence** | The checked-in receipts prove one literal Claude 2.1.228 Muse auto-compact/tool/resume path, managed fresh/resume/fork inheritance, the five-level reasoning matrix, the direct `off`/`minimal` Messages boundary, foreground Agent/subagent execution, and top-level `--bg` attach/tool execution. They predate the disabled context intervention and are metadata-only; they do not certify current context behavior or every adjacent feature. |
 | **Partial or unverified** | Live native-vs-FCC economic parity, deep semantic compaction torture, and the installed Claude CLI's unsupported `--effort off/minimal` flags. Image/Appshot, learning/memory/skills, Codex/Pi, and messaging remain boundary-specific integrations. |
 | **Partial / explicit opt-in** | A loopback-only Chrome/Chromium CDP bridge exposes bounded tab, DOM, navigate, click, type, scroll, and query primitives for injected local tool planes; it is not enabled by default and does not replace the planned end-to-end Claude tool integration. |
 | **Planned or design-only** | Provider-independent computer use, full capability-aware helper execution, and exhaustive Claude-version/subagent compatibility. See [#66](https://github.com/tverma101/AgentSwitchboard/issues/66). |
@@ -149,6 +150,18 @@ To print the installed AgentSwitchboard compatibility version without starting
 the server, run `fcc-server --version`. The output still uses the legacy
 distribution name until the package migration is complete.
 
+To test changes against an isolated copy of the server, run `t-fcc-server`
+instead. It uses its own state directory (`~/.fcc-sandbox`) and port (`8083`)
+so the live server and `~/.fcc` stay untouched; on first start it copies the
+live `~/.fcc/.env` into the sandbox so real providers work. The sandbox also
+opts into the experimental local A3S web-search backend when `a3s-search` is
+installed; live `fcc-server` is unchanged. See
+[Configuration](docs/CONFIGURATION.md#sandboxed-test-server) for details.
+The copy intentionally excludes FCC-owned ChatGPT credentials: an
+`openai/...` route in the sandbox requires connecting an account in the
+sandbox Admin UI at `http://127.0.0.1:8083/admin`, which stores credentials
+under the sandbox state directory rather than reusing `~/.fcc/auth/openai.json`.
+
 Long-lived FCC commands publish descriptive process titles on macOS. Activity
 Monitor can therefore identify the AgentSwitchboard server, desktop, and client
 launcher that owns a local session instead of showing only the embedded Python
@@ -166,16 +179,45 @@ INFO:     FCC control endpoint: http://127.0.0.1:8082/admin (terminal-only; brow
 
 Use the port shown in your terminal if it differs from `8082`.
 
+If Cline is installed, `fcc-cline` configures only Cline's local `anthropic`
+provider entry and launches it through FCC using the configured exact
+`provider/model` route:
+
+```bash
+fcc-cline
+```
+
+It preserves Cline's hosted `cline` provider. Use `--fcc-model
+provider/model` to select another FCC route, or `--fcc-dry-run` to inspect the
+settings path without writing or launching. This bridges the Cline CLI; an
+installed Cline editor extension still needs its own provider configuration.
+See [Cline CLI through local FCC](docs/CONFIGURATION.md#cline-cli-through-local-fcc)
+for details.
+
+On a cold `fcc-server` launch, the native control center appears before this
+listener exists. It prepares the model catalog and repository inventory,
+writes the selected values through a private parent handoff, and starts the
+server only after `Start server` (or the prelaunch `C`/`!` action) is chosen.
+`Q` saves pending model changes and exits without starting the server;
+`fcc-tui` attaches only after a server is already running.
+
 The control center provides the normal client handoff, provider status, model
-catalog and routing, local setup, usage, diagnostics, settings, and explicit
-refresh actions. Provider and model controls use the canonical loopback Admin
-API; custom providers can be added, edited, tested, enabled or disabled, and
-removed there. API keys and proxy values are write-only: configured values are
-masked, blank edits preserve an existing value, and explicit clears require a
-separate confirmation. The full catalog remains searchable while only models
-currently admitted by FCC can be assigned. Repository selection is provided by
-`fcc-repos`; it shows existing checkout folders with configured GitHub remotes,
-does not require GitHub CLI login, and excludes linked worktrees. Use
+catalog browsing and routing, local setup, usage, diagnostics, app settings, and
+explicit refresh actions. Provider and model controls use the canonical loopback
+Admin API; custom providers can be added, edited, tested, enabled or disabled,
+and removed there. API keys and proxy values are write-only: configured values
+are masked, blank edits preserve an existing value, and explicit clears require
+a separate confirmation. Provider credentials, provider endpoints, proxies, and
+custom-provider registration appear only on Providers; App Settings contains
+runtime/app controls. The Models page starts with active/routable rows, offers
+`Show catalog` for disabled discoveries, lets you choose registered providers
+individually, and has an explicit `Free only` filter. Plain click selects a row;
+Shift/Ctrl/Option/Command-click or Space toggles access. `Disable all` clears the
+curated allowlist without erasing cached inventory. Save read-back-verifies
+`MODEL` plus catalog mode/allowlist. The native
+Repositories page and `fcc-repos` both show existing checkout folders with
+configured GitHub remotes, do not require GitHub CLI login, and exclude linked
+worktrees. Use
 `fcc-repos --refresh --root ~/src` to rescan a specific project root.
 FCC keeps two account surfaces independent. The FCC OpenAI/Codex provider uses
 `~/.fcc/auth/openai.json`; installed Codex, Computer Use, and Browser helpers
@@ -193,10 +235,13 @@ curl -fsS http://127.0.0.1:8082/health
 fcc-learning claude-compat --binary "$(command -v claude)"
 ```
 
-The expected health response contains `"status":"healthy"`; the compatibility
-check should report Claude `2.1.228` as `certified` for the default release
-configuration. If a different FCC process already owns the port, inspect it
-and use that healthy instance rather than starting a second server.
+The expected health response contains `"status":"healthy"`,
+`"service":"agentswitchboard"`, a supported `"protocol"`, and the expected
+`"mode"` (`standard` or `sandbox`). The compatibility check should report
+Claude `2.1.228` as `certified` for the default release configuration. If a
+different service or FCC mode already owns the port, startup rejects it rather
+than silently attaching to the wrong server; inspect the reported endpoint and
+choose another port or stop the conflicting process.
 
 `fcc-server --terminal` and `fcc-server --no-browser` are accepted as explicit
 terminal-only compatibility flags. Browser-opening flags and presentation
@@ -235,10 +280,9 @@ gateway while receipts and provider dispatch retain the exact target ref. See
 Discovered models are enriched from one cached `models.dev` snapshot per TTL
 window. The metadata includes modalities, context/output limits, and pricing
 signals and is stored at `~/.fcc/model-metadata-catalog.json`; it never enables
-providers or changes model visibility. The terminal Models page can order free
-models first or show only models with explicit free evidence. Missing pricing
-stays unknown and is excluded from `Free only`; model names are never treated as
-proof of a free offer. Disable it with
+providers or changes model visibility. The terminal Models page can show only
+models with explicit free evidence. Missing pricing stays unknown and is excluded
+from `Free only`; model names are never treated as proof of a free offer. Disable it with
 `MODEL_METADATA_CATALOG_ENABLED=false` or tune
 `MODEL_METADATA_CATALOG_TTL_HOURS` in `~/.fcc/.env`.
 
@@ -281,40 +325,44 @@ fcc-codex exec "hello"
 
 `fcc-pi` registers FCC only for that Pi process; your existing Pi settings, sessions, credentials, and extensions remain unchanged.
 
-For a cheap global context-discipline leash, explicitly install FCC's bounded
-read/output guidance into Claude's global instruction file:
+The former global context-discipline leash is retained only for compatibility
+experiments. Its install command is disabled by default and does not write
+Claude's global instruction file:
 
 ```bash
 fcc-learning context-policy install
 fcc-learning context-policy status
 ```
 
-The operation is idempotent, preserves unrelated `CLAUDE.md` text, and creates
-one recovery copy before its first mutation. Remove only the managed block with
-`fcc-learning context-policy uninstall`. This is advisory guidance; the
-launcher context cap remains the actual client budget.
+`status` reports the disabled state. Only an explicitly isolated experiment
+with `FCC_CONTEXT_GOVERNOR_ENABLED=true` can exercise the old writer; it is
+idempotent, preserves unrelated `CLAUDE.md` text, and creates one recovery copy
+before its first mutation. Remove only an old managed block with
+`fcc-learning context-policy uninstall`. Claude Code owns the client context
+and compaction budget in standard mode; the sandbox separately supplies its
+bounded 256K context/auto-compact window.
 
-Oversized text-only tool results are redirected to private local artifacts by
-the hard ingress governor. Retrieve a bounded follow-up slice from the
-terminal, without dumping the artifact back into the session:
+If the explicitly opt-in FCC ingress governor is enabled, oversized text-only
+tool results are redirected to private local artifacts. Retrieve a bounded
+follow-up slice from the terminal, without dumping the artifact back into the
+session:
 
 ```bash
 fcc-learning context-artifact slice /path/from-the-locator.txt \
   --start-line 1 --line-count 80 --max-bytes 16384
 ```
 
-The compact/resume claim is backed by the current sanitized
-[Muse receipt](smoke/receipts/muse-auto-compact-2026-08-24.json). It records the
-literal Claude Code version, the effective 50K context window, an automatic
-compact boundary, a post-compact tool turn, resume success, and the OpenCode Go
-Responses route. The local debug trace and prompt content are intentionally not
-published.
+The earlier compact/resume receipt
+[Muse receipt](smoke/receipts/muse-auto-compact-2026-08-24.json) is historical
+evidence for a bounded FCC experiment. The standard launcher does not set that
+context window; the sandbox launcher intentionally sets its bounded 256K
+window for controlled testing.
 
 The managed-session inheritance slice is separately recorded in the sanitized
 [managed fresh/resume/fork receipt](smoke/receipts/claude-managed-resume-2026-08-24.json).
 It proves one fresh managed Claude task, one resume, and one forked continuation
-through FCC with the 256K policy. Background and subagent inheritance remain
-outside that receipt. That receipt also records Muse's current reasoning shape:
+through an earlier FCC 256K policy. Background and subagent inheritance remain
+outside that receipt. That receipt also records Muse's historical reasoning shape:
 opaque provider state and reasoning-token usage, with no fabricated visible
 summary or raw reasoning text.
 
@@ -346,9 +394,8 @@ PASS/UNVERIFIED/SKIPPED map is in the
 ### CI execution
 
 Protected push, pull-request, merge-group, and manual-dispatch CI uses only
-GitHub-hosted `ubuntu-latest` runners. It does not depend on a Mac runner,
-Codespaces, a self-hosted label, or the `HARNESS_RUNNER` repository variable.
-No package command provisions a self-hosted runner, Codespace, or remote CI job.
+GitHub-hosted `ubuntu-latest` runners. No package command provisions a
+self-hosted runner, Codespace, or remote CI job.
 For local development, the default `scripts/ci.sh` pytest tier is serial and excludes subprocess-heavy
 installer, integration, live, and interactive tests; those tiers are explicit.
 
@@ -384,7 +431,7 @@ cannot be mistaken for one another. Use the generated local catalog at
 
 | Provider | Configuration | Example `MODEL` |
 | --- | --- | --- |
-| [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
+| [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/moonshotai/kimi-k3` |
 | [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | FCC connected-account state | `openai/<model-id>` |
 | [Azure OpenAI](https://learn.microsoft.com/azure/foundry/openai/how-to/chatgpt) | `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_BASE_URL` | `azure_openai/<deployment-name>` |
 | [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | `open_router/openrouter/free` |
@@ -595,7 +642,6 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
   { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" },
   { "name": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "value": "1" },
-  { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "256000" },
   { "name": "DISABLE_AUTOUPDATER", "value": "1" },
   { "name": "DISABLE_FEEDBACK_COMMAND", "value": "1" },
   { "name": "DISABLE_ERROR_REPORTING", "value": "1" }
@@ -685,7 +731,6 @@ Set the environment for `acp.registry.claude-acp`:
   "ANTHROPIC_BASE_URL": "http://localhost:8082",
   "ANTHROPIC_AUTH_TOKEN": "freecc",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
-  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "256000",
   "DISABLE_AUTOUPDATER": "1",
   "DISABLE_FEEDBACK_COMMAND": "1",
   "DISABLE_ERROR_REPORTING": "1"

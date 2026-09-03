@@ -108,6 +108,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-server"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-desktop"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-claude"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-cline"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fccdanger"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-pi"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
@@ -485,7 +486,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         call.startswith(
             "uv:tool install --force --refresh-package free-claude-code "
             "--python 3.14.0 free-claude-code @ "
-            "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+            "https://github.com/tverma101/AgentSwitchboard/archive/refs/heads/main.zip"
         )
         for call in calls
     )
@@ -964,7 +965,7 @@ def test_install_sh_voice_flags_only_change_fcc_spec(
     assert result.returncode == 0, result.stderr
     assert any(
         "--torch-backend cu130 free-claude-code[voice,voice_local] @ "
-        "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+        "https://github.com/tverma101/AgentSwitchboard/archive/refs/heads/main.zip"
         in call
         for call in posix_harness.calls()
     )
@@ -1213,6 +1214,7 @@ if not exist "%FAKE_TOOL_BIN%" mkdir "%FAKE_TOOL_BIN%"
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-server.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-desktop.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-claude.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-cline.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fccdanger.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-pi.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
@@ -1504,7 +1506,7 @@ def test_install_ps1_fresh_install_is_verified(
             "uv:tool install --force --refresh-package free-claude-code "
             "--python cpython-3.14.0-windows-x86_64-none "
             '"free-claude-code @ '
-            'https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"'
+            'https://github.com/tverma101/AgentSwitchboard/archive/refs/heads/main.zip"'
         )
         for call in calls
     )
@@ -1938,7 +1940,7 @@ def test_install_ps1_voice_flags_only_change_fcc_spec(
     assert result.returncode == 0, result.stderr
     assert any(
         '--torch-backend cu130 "free-claude-code[voice,voice_local] @ '
-        'https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"'
+        'https://github.com/tverma101/AgentSwitchboard/archive/refs/heads/main.zip"'
         in call
         for call in powershell_harness.calls()
     )
@@ -2000,7 +2002,7 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
         assert "git+" not in text
         assert "git --version" not in text
         assert (
-            "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+            "https://github.com/tverma101/AgentSwitchboard/archive/refs/heads/main.zip"
             in text
         )
         assert "python install" not in text

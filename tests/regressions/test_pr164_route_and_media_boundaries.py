@@ -19,12 +19,46 @@ def _settings() -> Settings:
         update={
             "model": "openai/gpt-test",
             "model_haiku": "openai/gpt-test",
+            "context_governor_enabled": True,
         }
     )
 
 
 def _unreachable_provider_resolver(_provider_id: str) -> ProviderPort:
     raise AssertionError("provider resolution should not run")
+
+
+def test_context_governor_is_disabled_by_default(tmp_path) -> None:
+    settings = _settings().model_copy(
+        update={
+            "context_governor_enabled": False,
+            "context_governor_artifact_dir": str(tmp_path),
+        }
+    )
+    request = MessagesRequest(
+        model="openai/gpt-test",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool-large",
+                        "content": "large-output\n" * 10_000,
+                    }
+                ],
+            }
+        ],
+    )
+
+    governed = apply_context_governor(
+        request,
+        settings,
+        request_id="context-disabled",
+    )
+
+    assert governed is request
+    assert not list(tmp_path.iterdir())
 
 
 def test_count_tokens_never_establishes_parent_route() -> None:

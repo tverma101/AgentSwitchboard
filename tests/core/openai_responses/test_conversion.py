@@ -206,6 +206,57 @@ def test_responses_messages_tools_and_tool_results_convert() -> None:
     assert payload["tool_choice"] == {"type": "tool", "name": "echo"}
 
 
+def test_responses_lite_additional_tools_convert_to_anthropic_tools() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "gpt-5.6-luna",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "description": "",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "exec",
+                                    "description": "Run a command",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {"command": {"type": "string"}},
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Run it"}],
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "Run it"}]}
+    ]
+    assert payload["tools"] == [
+        {
+            "name": "functions__exec",
+            "description": "Run a command",
+            "input_schema": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+            },
+        }
+    ]
+
+
 def test_responses_tool_result_image_output_converts_to_anthropic_image() -> None:
     payload = _to_anthropic_payload(
         {

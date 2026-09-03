@@ -1,13 +1,13 @@
 # Claude Code compatibility firewall
 
 > **Status: partially shipped, with remaining certification work.** Current
-> `main` already pins/certifies Claude Code `2.1.228`, applies fail-closed
-> routing-env checks, installs the supported process-wrapper boundary, and has
-> black-box receipts for fresh/resume/fork, compact/resume, foreground
-> subagents, background attach/tool execution, steering, and queued prompts.
-> Candidate-version promotion/quarantine and the exhaustive compatibility matrix
-> below remain active design work. The former receipt-only issue reference is
-> retained only in historical issue records, not as an open-backlog claim.
+> `main` pins/certifies Claude Code `2.1.228`, applies fail-closed routing-env
+> checks, installs the supported process-wrapper boundary, and retains
+> historical black-box receipts for fresh/resume/fork, compact/resume,
+> foreground subagents, background attach/tool execution, steering, and queued
+> prompts. FCC's client context intervention is currently disabled; candidate
+> version promotion/quarantine and the exhaustive compatibility matrix below
+> remain active design work.
 
 Claude Code is an external moving dependency. AgentSwitchboard should treat each Claude
 version like a protocol dependency that must be certified before promotion.
@@ -34,7 +34,7 @@ Candidate certification should cover, as applicable:
 7. image attachment path;
 8. lifecycle hooks;
 9. resume/fork;
-10. context advertisement and auto-compact;
+10. preservation of client-owned context advertisement and auto-compact;
 11. stream-json;
 12. permissions and `--dangerously-skip-permissions`;
 13. cancellation/interrupt;
@@ -48,10 +48,11 @@ certification failure.
 ## Child-process containment
 
 When the installed Claude version exposes a supported process-wrapper mechanism,
-AgentSwitchboard should reassert the canonical FCC environment for child/background
-processes rather than maintain a divergent copy. This includes local gateway
-routing/auth, context policy, provider isolation, updater/reporting suppression
-where applicable, and loopback proxy bypass requirements.
+AgentSwitchboard should reassert the canonical FCC transport environment for
+child/background processes rather than maintain a divergent copy. This includes
+local gateway routing/auth, provider isolation, updater/reporting suppression
+where applicable, and loopback proxy bypass requirements. The uncertified
+context policy is not reasserted.
 
 Child processes must never inspect unrelated credentials and independently pick
 a provider.
@@ -78,7 +79,8 @@ arguments, or raw session ids.
 A candidate becomes certified only when required canaries pass on the same
 binary and AgentSwitchboard revision. If it fails, preserve the last known-good
 certification, mark the candidate quarantined with the failing contract, do not
-weaken routing/auth/context policy, and provide an explicit rollback path.
+weaken routing/auth or silently re-enable the uncertified context intervention,
+and provide an explicit rollback path.
 
 Rollback should be a launcher/runtime choice rather than destructive mutation
 of the user's Claude state. The launcher may automatically select an exact
@@ -92,7 +94,7 @@ or overwrite a pre-existing user directory.
 ## Update-survival fixtures
 
 Deterministic tests should simulate additive stream events, settings precedence
-changes, context-window behavior changes, stripped child environments, new
+changes, client-owned context-window behavior changes, stripped child environments, new
 request metadata, streaming-mode changes, tool-terminal-shape changes, and
 resume/session-id shape changes.
 

@@ -73,11 +73,20 @@ def _reasoning_options(
         ReasoningPreference.HIGH: "High",
         ReasoningPreference.XHIGH: "X-High",
         ReasoningPreference.MAX: "Max",
+        ReasoningPreference.ULTRACODE: "Ultracode (→ xhigh)",
     }
     return tuple(
         ConfigOptionSpec(preference.value, labels[preference])
         for preference in preferences
     )
+
+
+def visible_options(
+    options: tuple[str | ConfigOptionSpec, ...],
+) -> tuple[str | ConfigOptionSpec, ...]:
+    """Return options supported by the local FCC Admin surface."""
+
+    return options
 
 
 SECTIONS: tuple[ConfigSectionSpec, ...] = (
@@ -149,12 +158,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ),
     ConfigFieldSpec(
         "MODEL",
-        "Default Model",
+        "Active Model",
         "models",
         "model",
         settings_attr="model",
         default="nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
-        description="Fallback provider/model route for all Claude model names.",
+        description="Provider/model route used for Claude requests unless a tier override is set.",
     ),
     ConfigFieldSpec(
         "FCC_SUBAGENT_MODEL_INHERIT",
@@ -176,7 +185,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "models",
         "optional_model",
         settings_attr="model_fable",
-        description="Select None to use the Default Model for Fable requests.",
+        description="Select None to use the Active Model for Fable requests.",
     ),
     ConfigFieldSpec(
         "MODEL_OPUS",
@@ -184,7 +193,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "models",
         "optional_model",
         settings_attr="model_opus",
-        description="Select None to use the Default Model for Opus requests.",
+        description="Select None to use the Active Model for Opus requests.",
     ),
     ConfigFieldSpec(
         "MODEL_SONNET",
@@ -192,7 +201,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "models",
         "optional_model",
         settings_attr="model_sonnet",
-        description="Select None to use the Default Model for Sonnet requests.",
+        description="Select None to use the Active Model for Sonnet requests.",
     ),
     ConfigFieldSpec(
         "MODEL_HAIKU",
@@ -200,7 +209,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "models",
         "optional_model",
         settings_attr="model_haiku",
-        description="Select None to use the Default Model for Haiku requests.",
+        description="Select None to use the Active Model for Haiku requests.",
     ),
     ConfigFieldSpec(
         "MODEL_CATALOG_MODE",
@@ -241,16 +250,29 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "MODEL_CONTEXT_WINDOWS",
+        "Manual Model Context Windows",
+        "models",
+        "textarea",
+        settings_attr="model_context_windows",
+        description=(
+            "Optional JSON mapping exact provider/model refs to context-window "
+            'tokens, e.g. {"opencode_go/muse-spark-1.2-contributor": 1000000}. '
+            "Applies when a request carries no explicit [size] suffix; an "
+            "explicit suffix always wins. Surfaced in routing diagnostics."
+        ),
+    ),
+    ConfigFieldSpec(
         "FCC_CLAUDE_CONTEXT_TOKENS",
-        "Claude Context Window (tokens)",
+        "Claude Context Window (legacy; inactive)",
         "models",
         "number",
         settings_attr="claude_context_tokens",
         default="256000",
         description=(
-            "Context window presented to Claude Code for new FCC-launched sessions. "
-            "Default 256000; raise it only when the selected model supports the "
-            "larger window. Valid range: 32000 through 1000000."
+            "Retained for configuration compatibility only. FCC does not inject "
+            "or enforce a Claude context/compaction window while this policy is "
+            "uncertified. Valid range: 32000 through 1000000."
         ),
     ),
     ConfigFieldSpec(
@@ -485,7 +507,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "Server Host",
         "runtime",
         settings_attr="host",
-        default="0.0.0.0",
+        default="127.0.0.1",
         restart_required=True,
     ),
     ConfigFieldSpec(
@@ -662,6 +684,15 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "boolean",
         settings_attr="enable_web_server_tools",
         default="true",
+    ),
+    ConfigFieldSpec(
+        "ENABLE_LOCAL_A3S_SEARCH",
+        "Experimental Local A3S Search",
+        "web_tools",
+        "boolean",
+        settings_attr="enable_local_a3s_search",
+        default="false",
+        advanced=True,
     ),
     ConfigFieldSpec(
         "WEB_FETCH_ALLOWED_SCHEMES",

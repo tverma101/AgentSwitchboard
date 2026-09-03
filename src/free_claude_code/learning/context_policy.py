@@ -10,6 +10,12 @@ POLICY_VERSION = "1"
 POLICY_BEGIN = "<!-- FCC_CONTEXT_POLICY:BEGIN -->"
 POLICY_END = "<!-- FCC_CONTEXT_POLICY:END -->"
 POLICY_ENV = "FCC_CLAUDE_GLOBAL_INSTRUCTIONS"
+CONTEXT_INTERVENTION_ENV = "FCC_CONTEXT_GOVERNOR_ENABLED"
+_TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
+_DISABLED_REASON = (
+    "FCC-managed Claude context instructions are disabled until Claude Code "
+    "compatibility is certified"
+)
 
 _POLICY_BODY = """## FCC context discipline
 
@@ -87,6 +93,14 @@ def backup_path(path: Path) -> Path:
     """Return the one-time recovery copy path for ``path``."""
 
     return path.with_name(f"{path.name}.fcc-context-policy.bak")
+
+
+def _context_intervention_enabled() -> bool:
+    """Return whether an explicit isolated context experiment is enabled."""
+
+    return (
+        os.environ.get(CONTEXT_INTERVENTION_ENV, "").strip().lower() in _TRUTHY_VALUES
+    )
 
 
 def _managed_span(document: str) -> tuple[int, int] | None:
@@ -199,7 +213,16 @@ def _backup_once(path: Path) -> None:
 
 
 def install_context_policy(config_dir: Path | None = None) -> bool:
-    """Install or update the managed global context policy idempotently."""
+    """Install the policy only inside an explicit future experiment.
+
+    FCC must not write model-facing Claude instructions in its normal runtime.
+    Keep the old reversible writer available for a separately isolated,
+    explicitly enabled compatibility experiment, but make the safe default a
+    no-op.
+    """
+
+    if not _context_intervention_enabled():
+        return False
 
     path = instructions_path(config_dir)
     _ensure_safe_target(path)
@@ -262,6 +285,10 @@ def context_policy_status(config_dir: Path | None = None) -> dict[str, object]:
             installed_digest = policy_digest(installed_block)
     recovery = backup_path(path)
     return {
+        "enabled": _context_intervention_enabled(),
+        "disabled_reason": None
+        if _context_intervention_enabled()
+        else _DISABLED_REASON,
         "path": str(path),
         "installed": installed,
         "policy_version": installed_version,

@@ -85,11 +85,11 @@ it is not the normal Claude MCP path. The signed native client remains
 unmodified.
 
 The registration is project-local and the Claude launcher does not replace or
-silently remove other user-owned MCP servers. The launcher supplies a default
-`MAX_MCP_OUTPUT_TOKENS=12000` result budget to the child Claude process when
-the user has not configured one, and the FCC server rejects any future
-Computer Use tool-schema expansion beyond its fixed 16 KiB contract. This
-keeps MCP growth bounded while preserving native structured screenshot blocks.
+silently remove other user-owned MCP servers. FCC does not set Claude's
+`MAX_MCP_OUTPUT_TOKENS` result budget; user and Claude Code policy remain in
+control. The FCC server still rejects any future Computer Use tool-schema
+expansion beyond its fixed 16 KiB contract, preserving native structured
+screenshot blocks.
 
 ### Structured result transport boundary
 

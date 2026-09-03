@@ -11,6 +11,7 @@ from free_claude_code.cli.claude_env import (
     CLAUDE_CONTEXT_CAP_DEFAULT,
     CLAUDE_CONTEXT_CAP_ENV,
     build_claude_proxy_env,
+    claude_effort_environment,
     resolved_model_id,
     settings_env_routing_conflict_message,
 )
@@ -31,8 +32,10 @@ from free_claude_code.cli.codex_computer_use_registration import (
     ClaudeMcpRegistrationError,
     ensure_claude_local_computer_use_mcp,
 )
+from free_claude_code.config.model_refs import parse_model_context_windows
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
+from free_claude_code.core.server_identity import server_mode
 from free_claude_code.learning.config import (
     PROFILE_ENV,
     LearningProfileError,
@@ -93,35 +96,45 @@ def launch(
         _run_client_help(args, cwd=cwd, raise_for_control=raise_for_control)
         return
 
+    # Native ultracode is client-only and cannot be created through FCC's
+    # gateway. Default the child to the strongest effort value the remote
+    # transport supports, while preserving explicit client choices.
+    launch_environment = claude_effort_environment(args, launch_environment)
     settings = get_settings()
-    # Settings loads the managed FCC env file without mutating os.environ. Copy
-    # the validated context-window choice into this child launch only so the TUI
-    # setting and direct env override share the existing Claude env policy. Keep
-    # the established 256K default for partial/legacy Settings-like callers.
-    context_tokens = getattr(
-        settings,
-        "claude_context_tokens",
-        CLAUDE_CONTEXT_CAP_DEFAULT,
-    )
-    launch_environment[CLAUDE_CONTEXT_CAP_ENV] = str(context_tokens)
+    if server_mode() == "sandbox":
+        # The sandbox intentionally exposes the bounded Claude window to the
+        # child. Standard launches must leave this client-owned setting alone.
+        launch_environment[CLAUDE_CONTEXT_CAP_ENV] = str(
+            getattr(settings, "claude_context_tokens", CLAUDE_CONTEXT_CAP_DEFAULT)
+        )
     proxy_root_url = local_proxy_root_url(settings)
     if error := preflight_proxy(proxy_root_url):
+        requested_danger = "--dangerously-skip-permissions" in args
         started = False
         if not raise_for_control:
             if cwd is None:
                 started = (
-                    _start_interactive_owner(args)
+                    _start_interactive_owner(args, initial_danger=requested_danger)
                     if selected_profile is None
-                    else _start_interactive_owner(args, profile=selected_profile)
+                    else _start_interactive_owner(
+                        args,
+                        profile=selected_profile,
+                        initial_danger=requested_danger,
+                    )
                 )
             else:
                 started = (
-                    _start_interactive_owner(args, cwd=cwd)
+                    _start_interactive_owner(
+                        args,
+                        cwd=cwd,
+                        initial_danger=requested_danger,
+                    )
                     if selected_profile is None
                     else _start_interactive_owner(
                         args,
                         cwd=cwd,
                         profile=selected_profile,
+                        initial_danger=requested_danger,
                     )
                 )
         if started:
@@ -218,11 +231,16 @@ def launch(
             f"starting the verified {recovered_version} fallback.",
             file=sys.stderr,
         )
+    selected_model = resolved_model_id(args, launch_environment) or settings.model
+    context_windows = parse_model_context_windows(
+        getattr(settings, "model_context_windows", "")
+    )
     child_env = build_claude_proxy_env(
         proxy_root_url=proxy_root_url,
         auth_token=settings.anthropic_auth_token,
         base_env=launch_environment,
-        model_id=resolved_model_id(args, launch_environment),
+        model_id=selected_model,
+        context_windows=context_windows,
         process_wrapper_path=str(wrapper_path),
     )
     _prepare_computer_use_session(
@@ -421,6 +439,7 @@ def _start_interactive_owner(
     *,
     cwd: Path | None = None,
     profile: str | None = None,
+    initial_danger: bool = False,
 ) -> bool:
     """Start an explicit in-process server owner for an interactive direct launch."""
 
@@ -459,6 +478,8 @@ def _start_interactive_owner(
     run_owned_control_center(
         settings,
         initial_argv=initial_argv,
+        initial_cwd=cwd,
+        initial_danger=initial_danger,
         launch_client=_launch_control_client,
     )
     return True

@@ -1,4 +1,4 @@
-"""Metadata-only native OpenCode vs Harness behavior comparator.
+"""Metadata-only native OpenCode vs AgentSwitchboard behavior comparator.
 
 This module intentionally compares normalized receipts rather than prompts or raw
 wire payloads. It is shared evidence machinery for the remaining OpenCode Go,

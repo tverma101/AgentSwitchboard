@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from free_claude_code.cli.claude_env import build_claude_proxy_env
 from free_claude_code.cli.managed.claude import (
     MANAGED_CLAUDE_MODEL_TIER,
@@ -12,6 +14,11 @@ from free_claude_code.cli.managed.claude import (
     parse_managed_claude_stdout_line,
 )
 from free_claude_code.cli.managed.diagnostics import classify_managed_claude_stderr
+
+
+@pytest.fixture(autouse=True)
+def _standard_server_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FCC_SERVER_MODE", raising=False)
 
 
 def _config(**overrides: object) -> ManagedClaudeConfig:
@@ -67,7 +74,8 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert invocation.env["ANTHROPIC_BASE_URL"] == "http://localhost:8082"
     assert invocation.env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert invocation.env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
-    assert invocation.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in invocation.env
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in invocation.env
     assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in invocation.env
     assert invocation.env["DISABLE_AUTOUPDATER"] == "1"
     assert invocation.env["DISABLE_FEEDBACK_COMMAND"] == "1"
@@ -136,6 +144,23 @@ def test_managed_claude_env_uses_sentinel_when_proxy_auth_blank() -> None:
     )
 
     assert env["ANTHROPIC_AUTH_TOKEN"] == "fcc-no-auth"
+
+
+def test_managed_claude_sandbox_env_restores_256k_context_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FCC_SERVER_MODE", "sandbox")
+
+    env = build_managed_claude_env(
+        proxy_root_url="http://localhost:8083",
+        auth_token="proxy-token",
+        base_env={},
+    )
+
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "256000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "256000"
+    assert "MAX_MCP_OUTPUT_TOKENS" not in env
+    assert "ENABLE_TOOL_SEARCH" not in env
 
 
 def test_managed_claude_env_adds_noninteractive_process_policy() -> None:

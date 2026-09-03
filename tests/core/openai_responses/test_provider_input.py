@@ -8,12 +8,18 @@ from free_claude_code.core.openai_responses import (
     OpenAIResponsesAdapter,
     OpenAIResponsesRequest,
 )
+from free_claude_code.core.openai_responses.codex_lite import codex_model_profile
 from free_claude_code.core.openai_responses.errors import ResponsesConversionError
 from free_claude_code.core.openai_responses.provider_input import (
+    build_responses_lite_provider_request,
     build_responses_provider_request,
 )
 from free_claude_code.core.openai_responses.reasoning import reasoning_text_from_item
-from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 
 _KEEP_ALL_THINKING_EDIT = {
     "type": "clear_thinking_20251015",
@@ -45,6 +51,25 @@ def test_reasoning_item_deduplicates_identical_raw_content_and_summary() -> None
         )
         == "same"
     )
+
+
+def test_responses_lite_always_includes_turn_wide_reasoning_context() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-5.6-luna",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+    profile = codex_model_profile("gpt-5.6-luna")
+    assert profile is not None
+    body = build_responses_lite_provider_request(
+        request,
+        reasoning=DEFAULT_REASONING_POLICY,
+        profile=profile,
+    )
+
+    assert body["reasoning"] == {"context": "all_turns"}
 
 
 def test_build_responses_provider_request_preserves_multiturn_protocol() -> None:

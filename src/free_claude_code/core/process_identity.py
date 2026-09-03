@@ -5,7 +5,9 @@ import re
 
 import setproctitle
 
-_TITLE_PREFIX = "Harness"
+from free_claude_code.core.branding import PRODUCT_NAME
+
+_TITLE_PREFIX = PRODUCT_NAME
 _MAX_TITLE_LENGTH = 80
 _INVALID_TITLE_CHARACTERS = re.compile(r"[^A-Za-z0-9._ -]+")
 

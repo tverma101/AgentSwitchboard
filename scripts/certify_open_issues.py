@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from free_claude_code.core.branding import PRODUCT_NAME  # noqa: E402
 from smoke.lib.open_issue_certification import (  # noqa: E402
     CERTIFICATION_STEPS,
     CertificationStep,
@@ -22,8 +23,8 @@ from smoke.lib.open_issue_certification import (  # noqa: E402
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the existing shared smoke/contract machinery for remaining "
-            "Harness certification issues. Live steps are opt-in."
+            f"Run the existing shared smoke/contract machinery for remaining "
+            f"{PRODUCT_NAME} certification issues. Live steps are opt-in."
         )
     )
     parser.add_argument(

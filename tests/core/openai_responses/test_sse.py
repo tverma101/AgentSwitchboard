@@ -463,6 +463,54 @@ async def test_namespaced_anthropic_tool_stream_restores_responses_namespace() -
 
 
 @pytest.mark.asyncio
+async def test_additional_tools_restore_responses_lite_namespace() -> None:
+    text = await _collect_sse(
+        _responses_sse(
+            _aiter(_anthropic_tool_stream(tool_name="functions__exec")),
+            {
+                "model": "gpt-5.6-luna",
+                "stream": True,
+                "input": [
+                    {
+                        "type": "additional_tools",
+                        "role": "developer",
+                        "tools": [
+                            {
+                                "type": "namespace",
+                                "name": "functions",
+                                "description": "",
+                                "tools": [
+                                    {
+                                        "type": "function",
+                                        "name": "exec",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {},
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "run"}],
+                    },
+                ],
+            },
+        )
+    )
+
+    events = parse_sse_text(text)
+    completed = events[-1].data["response"]
+    function_call = completed["output"][0]
+    assert function_call["type"] == "function_call"
+    assert function_call["namespace"] == "functions"
+    assert function_call["name"] == "exec"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_custom_tool_stream_converts_to_custom_tool_call() -> None:
     text = await _collect_sse(
         _responses_sse(

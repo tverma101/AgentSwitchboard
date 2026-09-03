@@ -18,7 +18,10 @@ from ..ids import (
     new_response_id,
 )
 from ..models import OpenAIResponsesRequest
-from ..tools import responses_tool_identity_from_anthropic_name
+from ..tools import (
+    response_tools_for_request,
+    responses_tool_identity_from_anthropic_name,
+)
 from . import event_builders as events
 from .blocks import ReasoningBlockState, TextBlockState, ToolBlockState
 from .completion import ResponseBlockCompleter, reasoning_output_item, tool_item
@@ -35,6 +38,7 @@ class ResponsesStreamAssembler:
 
     def __init__(self, request: OpenAIResponsesRequest) -> None:
         self._request = request
+        self._request_tools = response_tools_for_request(request.tools, request.input)
         self._response_id = new_response_id()
         self._created_at = int(time.time())
         self._ledger = ResponsesOutputLedger()
@@ -301,7 +305,7 @@ class ResponsesStreamAssembler:
 
     def _start_tool_block(self, index: int, block: Mapping[str, Any]) -> list[str]:
         identity = responses_tool_identity_from_anthropic_name(
-            self._request.tools, _string_value(block.get("name"))
+            self._request_tools, _string_value(block.get("name"))
         )
         call_id = _string_value(block.get("id")) or new_call_id()
         chunks = self._complete_existing_block(index)

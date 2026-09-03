@@ -102,7 +102,7 @@ def _upstream_request(url: str) -> httpx.Request:
     return httpx.Request("POST", url)
 
 
-def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
+def test_go_protocol_manifest_matches_documented_2026_09_02_split() -> None:
     responses = {
         model
         for model, protocol in GO_MODEL_PROTOCOLS.items()
@@ -120,8 +120,10 @@ def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
     }
 
     assert responses == {
+        "grok-4.6",
         "grok-4.5",
         "gpt-5.6-luna",
+        "muse-spark-1.3-contributor",
         "muse-spark-1.2-contributor",
     }
     assert messages == {
@@ -129,26 +131,30 @@ def test_go_protocol_manifest_matches_documented_2026_08_23_split() -> None:
         "minimax-m2.7",
         "minimax-m2.5",
         "qwen3.8-max",
+        "qwen3.8-flash",
         "qwen3.7-max",
         "qwen3.7-plus",
         "qwen3.6-plus",
     }
     assert chat == {
+        "glm-5.3-flash",
         "glm-5.3",
         "glm-5.2",
         "glm-5.1",
         "kimi-k3",
         "kimi-k2.7-code",
         "kimi-k2.6",
+        "longcat-2.0",
         "deepseek-v4-pro",
         "deepseek-v4-flash",
         "deepseek-v4-flash-vision-exp",
         "mimo-v2.5",
         "mimo-v2.5-pro",
+        "hy4-preview",
         "hy3",
         "ox-alpha-free",
     }
-    assert len(GO_MODEL_PROTOCOLS) == 23
+    assert len(GO_MODEL_PROTOCOLS) == 29
 
 
 def test_unknown_go_model_fails_closed_without_protocol_probe() -> None:

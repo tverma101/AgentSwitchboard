@@ -20,10 +20,20 @@ from free_claude_code.core.diagnostics import (
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import (
+    CODEX_INSTALLATION_ID_HEADER,
+    CODEX_RESPONSES_LITE_HEADER,
+    CODEX_TURN_STATE_HEADER,
+    CodexModelProfile,
     ResponsesConversionError,
     ResponsesProviderStream,
     ResponsesStreamFailure,
+    build_responses_lite_provider_request,
     build_responses_provider_request,
+    codex_client_metadata,
+    codex_compatibility_headers,
+    codex_model_profile,
+    codex_session_headers,
+    load_or_create_installation_id,
 )
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
@@ -43,6 +53,8 @@ from free_claude_code.providers.stream_recovery import RecoveryController
 
 from .auth import OpenAIAccess, OpenAIAuthManager, OpenAIReconnectRequired
 from .login import OPENAI_CODEX_ORIGINATOR
+
+_MAX_CODEX_METADATA_IDENTIFIER_LENGTH = 256
 
 try:
     FCC_VERSION = version("free-claude-code")
@@ -65,6 +77,8 @@ class OpenAICodexProvider(BaseProvider):
         admission: ProviderAdmissionController,
         client: httpx.AsyncClient | None = None,
         supports_explicit_prompt_cache_breakpoints: bool = False,
+        responses_lite_enabled: bool = False,
+        installation_id: str | None = None,
     ) -> None:
         super().__init__(config)
         self._auth = auth
@@ -75,6 +89,16 @@ class OpenAICodexProvider(BaseProvider):
         # endpoint currently defaults to the conservative disabled path.
         self._supports_explicit_prompt_cache_breakpoints = (
             supports_explicit_prompt_cache_breakpoints
+        )
+        # This capability is deliberately injected by the composition root so
+        # the experimental dialect can be confined to the sandbox server.
+        self._responses_lite_enabled = responses_lite_enabled
+        # Native Codex keeps one installation id per machine. Minting a fresh
+        # UUID per provider instance broke session affinity on every config
+        # reload; persist one opaque id per FCC_CONFIG_DIR instead. Tests may
+        # inject a fixed id for determinism.
+        self._codex_installation_id = (
+            installation_id or load_or_create_installation_id()
         )
         self._client_headers = {
             "User-Agent": f"{OPENAI_CODEX_ORIGINATOR}/{FCC_VERSION}",
@@ -144,8 +168,44 @@ class OpenAICodexProvider(BaseProvider):
         """Stream Responses output in Anthropic Messages format."""
 
         tool_names = OpenAIToolNameCodec.from_request(request)
-        body = self._build_body(request, reasoning=reasoning)
+        profile = self._profile_for_model(request.model)
+        # Thread scope namespaces Lite prompt-only item IDs like native
+        # Uuid::new_v5 under the session thread. When a Claude session id is
+        # present it is known before the body is built; otherwise IDs use an
+        # empty scope (no affinity exists for session-less requests anyway).
+        thread_scope = (
+            request.claude_session_id.strip()
+            if isinstance(request.claude_session_id, str)
+            and request.claude_session_id.strip()
+            and len(request.claude_session_id.strip())
+            <= _MAX_CODEX_METADATA_IDENTIFIER_LENGTH
+            and all(
+                0x21 <= ord(character) <= 0x7E
+                for character in request.claude_session_id.strip()
+            )
+            else ""
+        )
+        body = self._build_body(request, reasoning=reasoning, thread_id=thread_scope)
         cache_session_id = body.get("prompt_cache_key")
+        session_id = (
+            cache_session_id
+            if isinstance(cache_session_id, str) and cache_session_id
+            else str(uuid.uuid4())
+        )
+        thread_id: str | None = None
+        if profile is not None:
+            thread_id = _safe_metadata_identifier(
+                request.claude_session_id,
+                fallback=session_id,
+            )
+            turn_id = _safe_metadata_identifier(request_id, fallback=str(uuid.uuid4()))
+            body["client_metadata"] = codex_client_metadata(
+                installation_id=self._codex_installation_id,
+                session_id=session_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                window_id=f"{thread_id}:0",
+            )
         return self._run_stream(
             body,
             input_tokens=input_tokens,
@@ -153,11 +213,9 @@ class OpenAICodexProvider(BaseProvider):
             response_model=response_model or request.model,
             tool_names=tool_names,
             reasoning=reasoning,
-            session_id=(
-                cache_session_id
-                if isinstance(cache_session_id, str) and cache_session_id
-                else None
-            ),
+            session_id=session_id,
+            thread_id=thread_id,
+            responses_lite=profile is not None,
         )
 
     def _build_body(
@@ -165,15 +223,25 @@ class OpenAICodexProvider(BaseProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        thread_id: str | None = None,
     ) -> dict[str, Any]:
+        profile = self._profile_for_model(request.model)
         try:
-            body = build_responses_provider_request(
-                request,
-                reasoning=reasoning,
-                explicit_prompt_cache_breakpoint=(
-                    self._supports_explicit_prompt_cache_breakpoints
-                ),
-            )
+            if profile is not None:
+                body = build_responses_lite_provider_request(
+                    request,
+                    reasoning=reasoning,
+                    profile=profile,
+                    thread_id=thread_id,
+                )
+            else:
+                body = build_responses_provider_request(
+                    request,
+                    reasoning=reasoning,
+                    explicit_prompt_cache_breakpoint=(
+                        self._supports_explicit_prompt_cache_breakpoints
+                    ),
+                )
         except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
         # The private Codex backend rejects these public Responses fields.
@@ -181,6 +249,11 @@ class OpenAICodexProvider(BaseProvider):
         body.pop("max_output_tokens", None)
         body.pop("metadata", None)
         return body
+
+    def _profile_for_model(self, model_id: str) -> CodexModelProfile | None:
+        if not self._responses_lite_enabled:
+            return None
+        return codex_model_profile(model_id)
 
     async def _run_stream(
         self,
@@ -192,11 +265,17 @@ class OpenAICodexProvider(BaseProvider):
         tool_names: OpenAIToolNameCodec,
         reasoning: ReasoningPolicy,
         session_id: str | None,
+        thread_id: str | None,
+        responses_lite: bool,
     ) -> AsyncIterator[str]:
         retry_session = self._admission.new_retry_session(request_id=request_id)
         recovery = RecoveryController()
         message_id = f"msg_{uuid.uuid4()}"
         session_id = session_id or str(uuid.uuid4())
+        # Native sticky routing replays x-codex-turn-state only within one
+        # turn for retries/continuations, never across turns. Keep it local
+        # to this stream call so concurrent turns cannot share routing state.
+        turn_state: str | None = None
         authentication_recovered = False
         prompt_cache_breakpoint_fallback_used = False
         trace_event(
@@ -208,7 +287,7 @@ class OpenAICodexProvider(BaseProvider):
             gateway_model=response_model,
             downstream_model=body.get("model"),
             item_count=len(body.get("input", [])),
-            tool_count=len(body.get("tools", [])),
+            tool_count=_wire_tool_count(body),
         )
 
         while retry_session.can_attempt:
@@ -230,21 +309,44 @@ class OpenAICodexProvider(BaseProvider):
             try:
                 access = await self._auth.access()
                 attempt = await self._admission.open_attempt(retry_session)
+                request_headers = {
+                    **self._client_headers,
+                    **_auth_headers(access),
+                    "Accept": "text/event-stream",
+                    **codex_session_headers(
+                        session_id=session_id,
+                        thread_id=thread_id or session_id,
+                    ),
+                    # Historical underscore alias retained for backend
+                    # compatibility; the dashed session-id/thread-id pair is
+                    # the canonical native contract.
+                    "session_id": session_id,
+                }
+                if responses_lite:
+                    request_headers.update(
+                        _responses_lite_transport_headers(
+                            body,
+                            installation_id=self._codex_installation_id,
+                        )
+                    )
+                if turn_state is not None:
+                    request_headers[CODEX_TURN_STATE_HEADER] = turn_state
                 response = await self._client.send(
                     self._client.build_request(
                         "POST",
                         "responses",
                         json=body,
-                        headers={
-                            **self._client_headers,
-                            **_auth_headers(access),
-                            "Accept": "text/event-stream",
-                            "session-id": session_id,
-                            "session_id": session_id,
-                        },
+                        headers=request_headers,
                     ),
                     stream=True,
                 )
+                incoming_turn_state = response.headers.get(CODEX_TURN_STATE_HEADER)
+                if isinstance(incoming_turn_state, str) and incoming_turn_state.strip():
+                    candidate = incoming_turn_state.strip()
+                    if len(candidate) <= _MAX_CODEX_METADATA_IDENTIFIER_LENGTH and all(
+                        0x21 <= ord(character) <= 0x7E for character in candidate
+                    ):
+                        turn_state = candidate
                 if response.status_code == 401 and not authentication_recovered:
                     await _read_bounded_body(response)
                     await self._auth.recover_unauthorized(access.access_token)
@@ -458,6 +560,61 @@ async def _read_bounded_body(
             break
     truncated = len(body) > limit
     return bytes(body[:limit]), truncated
+
+
+def _safe_metadata_identifier(value: str | None, *, fallback: str) -> str:
+    """Keep caller-provided IDs out of HTTP metadata when they are unsafe."""
+
+    if not isinstance(value, str) or not value.strip():
+        return fallback
+    candidate = value.strip()
+    if len(candidate) > _MAX_CODEX_METADATA_IDENTIFIER_LENGTH or any(
+        ord(character) < 0x21 or ord(character) > 0x7E for character in candidate
+    ):
+        return fallback
+    return candidate
+
+
+def _responses_lite_transport_headers(
+    body: dict[str, Any], *, installation_id: str
+) -> dict[str, str]:
+    """Return the bounded transport projections used by native Codex."""
+
+    headers: dict[str, str] = {CODEX_RESPONSES_LITE_HEADER: "true"}
+    if installation_id:
+        headers[CODEX_INSTALLATION_ID_HEADER] = installation_id
+    client_metadata = body.get("client_metadata")
+    if isinstance(client_metadata, dict):
+        # Native compatibility headers are window, bounded turn-metadata,
+        # parent-thread, and subagent. Thread/session identity travels in the
+        # caller's session headers.
+        headers.update(codex_compatibility_headers(client_metadata))
+    return headers
+
+
+def _wire_tool_count(body: dict[str, Any]) -> int:
+    """Count ordinary and Lite-namespaced tools for bounded trace metadata."""
+
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        return len(tools)
+    input_items = body.get("input")
+    if not isinstance(input_items, list):
+        return 0
+    count = 0
+    for item in input_items:
+        if not isinstance(item, dict) or item.get("type") != "additional_tools":
+            continue
+        additional = item.get("tools")
+        if not isinstance(additional, list):
+            continue
+        for tool in additional:
+            if isinstance(tool, dict) and tool.get("type") == "namespace":
+                nested = tool.get("tools")
+                count += len(nested) if isinstance(nested, list) else 0
+            else:
+                count += 1
+    return count
 
 
 def _auth_headers(access: OpenAIAccess) -> dict[str, str]:

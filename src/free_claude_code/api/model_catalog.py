@@ -25,6 +25,7 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
     no_thinking_gateway_model_id,
+    ultra_gateway_model_id,
 )
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
@@ -191,7 +192,7 @@ def build_models_list_response(
         )
 
     for model in SUPPORTED_CLAUDE_MODELS:
-        _append_unique_model(models, seen, model)
+        _append_unique_model(models, seen, model.model_copy(deep=True))
 
     _disambiguate_registry_display_names(models)
     return ModelsListResponse(
@@ -305,6 +306,19 @@ def _append_provider_model_variants(
             _discovered_model_response(
                 gateway_model_id(provider_model_ref),
                 display_name=display_name,
+                supports_vision=supports_vision,
+                accepted_image_types=accepted_image_types,
+                capability_evidence=capability_evidence,
+                reasoning=reasoning,
+                catalog_metadata=catalog_metadata,
+            ),
+        )
+        _append_unique_model(
+            models,
+            seen,
+            _discovered_model_response(
+                ultra_gateway_model_id(provider_model_ref),
+                display_name=f"{display_name} (maximum reasoning)",
                 supports_vision=supports_vision,
                 accepted_image_types=accepted_image_types,
                 capability_evidence=capability_evidence,

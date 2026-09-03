@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 import httpx
 from aiohttp import web
 
+from free_claude_code.core.branding import PRODUCT_NAME
+
 OPENAI_AUTH_ISSUER = "https://auth.openai.com"
 OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 OPENAI_CODEX_ORIGINATOR = "codex_cli_rs"
@@ -110,7 +112,8 @@ class BrowserAuthorization:
                     )
                 return _callback_page(
                     "Authorization received",
-                    "CodeSwitchyard is finishing sign-in. Return to the terminal for final connection status.",
+                    f"{PRODUCT_NAME} is finishing sign-in. Return to the terminal "
+                    "for final connection status.",
                     close_window=True,
                 )
 

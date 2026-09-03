@@ -11,7 +11,12 @@ from free_claude_code.application.helpers import (
     ApprovedHelperExecutor,
     ApprovedHelperRegistry,
 )
+from free_claude_code.config.custom_providers import (
+    ProviderRegistry,
+    provider_registry_for_settings,
+)
 from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
+from free_claude_code.config.provider_catalog import ProviderDescriptor
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.provider_policy import (
     ProviderEgressGuard,
@@ -52,6 +57,9 @@ class SessionExecutionPolicy:
             "provider_policy_mode": self.provider_policy.mode.value,
             "capability_routing_mode": self.routing_policy.mode.value,
             "allowed_helpers": sorted(self.allowed_helper_ids),
+            "allowed_provider_families": sorted(
+                self.provider_policy.allowed_provider_families
+            ),
             "paid_fallback": self.provider_policy.paid_fallback,
             "egress": self.egress_guard.receipt(),
         }
@@ -62,6 +70,7 @@ def build_session_execution_policy(
     registry: ApprovedHelperRegistry,
     *,
     allowed_helper_ids: Iterable[str] = (),
+    allowed_provider_families: Iterable[str] = (),
     provider_mode: ProviderPolicyMode = ProviderPolicyMode.STRICT,
     routing_mode: CapabilityRoutingMode = CapabilityRoutingMode.STRICT,
     paid_fallback: bool = False,
@@ -72,6 +81,11 @@ def build_session_execution_policy(
     controller_model = parse_model_name(controller_model_ref)
     allowed_ids = frozenset(
         helper_id.strip() for helper_id in allowed_helper_ids if helper_id.strip()
+    )
+    allowed_provider_ids = frozenset(
+        provider_id.strip().lower()
+        for provider_id in allowed_provider_families
+        if provider_id.strip()
     )
     _validate_allowed_helpers(registry, allowed_ids)
 
@@ -103,6 +117,7 @@ def build_session_execution_policy(
         primary_provider=controller_provider,
         primary_model=controller_model,
         allowed_helpers=frozenset(remote_provider_families),
+        allowed_provider_families=allowed_provider_ids,
         allowed_local_tools=frozenset(local_tool_families),
         forbidden_provider_families=frozenset(forbidden_families),
         mode=provider_mode,
@@ -140,14 +155,60 @@ def build_session_execution_policy_for_settings(
 ) -> SessionExecutionPolicy:
     """Build the launch policy from one immutable Settings snapshot."""
 
+    provider_registry = provider_registry_for_settings(settings)
     return build_session_execution_policy(
         settings.model,
         registry,
         allowed_helper_ids=parse_allowed_helper_ids(settings.allowed_helper_ids),
+        allowed_provider_families=_configured_provider_families(
+            settings, provider_registry
+        ),
         provider_mode=ProviderPolicyMode(settings.provider_policy_mode),
         routing_mode=CapabilityRoutingMode(settings.capability_routing_mode),
         paid_fallback=settings.paid_fallback,
     )
+
+
+def _configured_provider_families(
+    settings: Settings,
+    provider_registry: ProviderRegistry,
+) -> frozenset[str]:
+    """Return configured provider lanes eligible for model discovery/requests.
+
+    Discovery uses the same provider runtime and pre-network egress guard as
+    normal requests.  The guard therefore needs to know about every configured
+    remote lane, not only the primary route and custom providers.  Disabled
+    custom providers are absent from ``provider_registry``; built-ins are
+    included only when their required settings are present.  Local built-ins
+    remain opt-in through an explicit primary or model route and are not
+    treated as remote network lanes here.
+    """
+
+    return frozenset(
+        provider_id
+        for provider_id, descriptor in provider_registry.catalog.items()
+        if (not descriptor.local and _has_provider_configuration(descriptor, settings))
+    )
+
+
+def _has_provider_configuration(
+    descriptor: ProviderDescriptor, settings: Settings
+) -> bool:
+    """Mirror the provider-runtime configuration check without importing it.
+
+    Importing ``providers.runtime.config`` from this module would execute the
+    runtime package initializer and create a session-policy import cycle.
+    Keeping this small predicate local also makes policy composition independent
+    from provider runtime construction.
+    """
+
+    configuration_attrs = descriptor.configuration_attrs()
+    if configuration_attrs:
+        return all(
+            isinstance(value := getattr(settings, attr, ""), str) and value.strip()
+            for attr in configuration_attrs
+        )
+    return descriptor.static_credential is not None
 
 
 def _validate_allowed_helpers(

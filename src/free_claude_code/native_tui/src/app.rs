@@ -1,17 +1,28 @@
 use crate::api::{
-    AdminClient, ConfigField, ConfigOption, ConfigResponse, CustomProvider, CustomProviderPayload,
-    ModelsResponse, ProviderStatus, MASKED_SECRET,
+    AdminClient, BootstrapState, ConfigField, ConfigOption, ConfigResponse, CustomProvider,
+    CustomProviderPayload, ModelsResponse, ProviderStatus, RepositoriesResponse, Repository,
+    ServerIdentity, MASKED_SECRET,
+};
+use crate::models::{
+    verify_catalog_readback, CatalogSnapshot, ModelBrowser, ProviderFilterOption, MODEL_KEY,
 };
 use anyhow::Result;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
+use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+#[allow(dead_code)]
 pub const CONTEXT_KEY: &str = "FCC_CLAUDE_CONTEXT_TOKENS";
-pub const CONTEXT_MIN: u32 = 32_000;
-pub const CONTEXT_MAX: u32 = 1_000_000;
+const CONTEXT_WINDOWS_KEY: &str = "MODEL_CONTEXT_WINDOWS";
 const ROUTING_KEYS: &[&str] = &[
     "MODEL",
     "FCC_SUBAGENT_MODEL_INHERIT",
@@ -37,10 +48,12 @@ const LOCAL_KEYS: &[&str] = &[
     "OLLAMA_BASE_URL",
     "OLLAMA_API_KEY",
 ];
+const CUSTOM_PROVIDERS_KEY: &str = "CUSTOM_PROVIDERS_JSON";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Dashboard,
+    Repositories,
     Providers,
     Models,
     Routing,
@@ -52,8 +65,9 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Dashboard,
+        Self::Repositories,
         Self::Providers,
         Self::Models,
         Self::Routing,
@@ -67,12 +81,13 @@ impl Page {
     pub fn label(self) -> &'static str {
         match self {
             Self::Dashboard => "Dashboard",
+            Self::Repositories => "Repositories",
             Self::Providers => "Providers",
             Self::Models => "Models",
             Self::Routing => "Routing",
             Self::Context => "Context Window",
             Self::Local => "Local Setup",
-            Self::Settings => "Settings",
+            Self::Settings => "App Settings",
             Self::Usage => "Usage",
             Self::Diagnostics => "Diagnostics",
         }
@@ -86,12 +101,15 @@ impl Page {
 #[derive(Debug, Clone)]
 pub enum UiAction {
     Navigate(Page),
+    SelectRepository(usize),
     SelectProvider(usize),
     SelectModel(usize),
     SelectRouting(usize),
     SelectLocal(usize),
     SelectSetting(usize),
     Refresh,
+    UseRepository,
+    RefreshRepositories,
     ConfigureProvider,
     TestProvider,
     NewCustomProvider,
@@ -102,7 +120,18 @@ pub enum UiAction {
     EditField,
     ToggleAdvanced,
     AssignModel(String),
+    ConfigureContext,
     SearchModels,
+    OpenProviderFilter,
+    SelectProviderFilter(usize),
+    ToggleFreeFilter,
+    ToggleCatalogVisibility,
+    ToggleModelAccess,
+    DisableAllModels,
+    SaveModels,
+    DiscardModels,
+    StartServer,
+    AssignRoute(String),
     RunDiagnostic,
     LaunchClaude(bool),
 }
@@ -370,9 +399,6 @@ pub enum Modal {
         selected: usize,
         editing: Option<TextInput>,
     },
-    SearchModels {
-        input: TextInput,
-    },
     Confirm {
         title: String,
         body: String,
@@ -382,7 +408,40 @@ pub enum Modal {
         title: String,
         body: String,
     },
-    Help,
+    ProviderPicker {
+        options: Vec<ProviderFilterOption>,
+        selected: usize,
+    },
+    ContextChoice {
+        model_ref: String,
+        options: Vec<ConfigOption>,
+        selected: usize,
+    },
+    ContextInput {
+        model_ref: String,
+        input: TextInput,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionState {
+    Starting,
+    Running,
+    Degraded,
+    Offline,
+    Unknown,
+}
+
+impl ConnectionState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Starting => "STARTING",
+            Self::Running => "RUNNING",
+            Self::Degraded => "DEGRADED",
+            Self::Offline => "OFFLINE",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
 }
 
 pub struct App {
@@ -390,17 +449,23 @@ pub struct App {
     pub page: Page,
     pub config: ConfigResponse,
     pub status: Value,
+    pub server_identity: ServerIdentity,
+    pub connection_state: ConnectionState,
+    pub last_check_epoch: Option<u64>,
+    pub last_connection_error: Option<String>,
     pub models: ModelsResponse,
     pub custom_providers: Vec<CustomProvider>,
     pub local_status: Vec<ProviderStatus>,
     pub usage: Value,
     pub diagnostic: Value,
+    pub repositories: Vec<Repository>,
+    pub repository_selected: usize,
+    pub selected_repo_path: Option<String>,
     pub provider_selected: usize,
-    pub model_selected: usize,
     pub routing_selected: usize,
     pub local_selected: usize,
     pub setting_selected: usize,
-    pub model_query: String,
+    pub browser: ModelBrowser,
     pub show_advanced: bool,
     pub modal: Option<Modal>,
     pub notice: Option<String>,
@@ -409,6 +474,12 @@ pub struct App {
     pub hitboxes: Vec<Hitbox>,
     pub geometry: ChromeGeometry,
     pub mouse: Option<(u16, u16)>,
+    bootstrap_mode: bool,
+    staged_values: HashMap<String, Value>,
+    bootstrap_result_path: Option<PathBuf>,
+    bootstrap_launch_after_repository: bool,
+    bootstrap_launch_danger: bool,
+    pub start_server_requested: bool,
 }
 
 impl App {
@@ -450,22 +521,35 @@ impl App {
                 Value::Null
             }
         };
-        Ok(Self {
+        let repositories = match api.repositories(false) {
+            Ok(value) => value,
+            Err(error) => {
+                load_error.get_or_insert_with(|| error.to_string());
+                RepositoriesResponse::default()
+            }
+        };
+        let mut app = Self {
             api,
             page: Page::Dashboard,
             config,
+            server_identity: identity_from_status(&status),
+            connection_state: ConnectionState::Running,
+            last_check_epoch: Some(now_epoch()),
+            last_connection_error: None,
             status,
             models,
             custom_providers,
             local_status,
             usage,
             diagnostic: Value::Null,
+            repositories: Vec::new(),
+            repository_selected: 0,
+            selected_repo_path: None,
             provider_selected: 0,
-            model_selected: 0,
             routing_selected: 0,
             local_selected: 0,
             setting_selected: 0,
-            model_query: String::new(),
+            browser: ModelBrowser::default(),
             show_advanced: false,
             modal: None,
             notice,
@@ -474,10 +558,143 @@ impl App {
             hitboxes: Vec::new(),
             geometry: ChromeGeometry::default(),
             mouse: None,
-        })
+            bootstrap_mode: false,
+            staged_values: HashMap::new(),
+            bootstrap_result_path: None,
+            bootstrap_launch_after_repository: false,
+            bootstrap_launch_danger: false,
+            start_server_requested: false,
+        };
+        app.set_repository_response(repositories);
+        app.sync_model_browser();
+        Ok(app)
+    }
+
+    /// Build the control center from the serverless snapshot prepared by
+    /// `fcc-server`. No Admin request is attempted until the parent has
+    /// persisted this session and started the server.
+    pub fn from_bootstrap(
+        api: AdminClient,
+        state: BootstrapState,
+        notice: Option<String>,
+        result_path: PathBuf,
+    ) -> Self {
+        let launch_after_repository = state.launch_after_repository;
+        let launch_danger = state.launch_danger;
+        let mut app = Self {
+            api,
+            page: Page::Dashboard,
+            config: state.config,
+            server_identity: identity_from_status(&state.status),
+            connection_state: ConnectionState::Starting,
+            last_check_epoch: None,
+            last_connection_error: None,
+            status: state.status,
+            models: state.models,
+            custom_providers: state.custom_providers,
+            local_status: state.local_status,
+            usage: state.usage,
+            diagnostic: state.diagnostic,
+            repositories: Vec::new(),
+            repository_selected: 0,
+            selected_repo_path: None,
+            provider_selected: 0,
+            routing_selected: 0,
+            local_selected: 0,
+            setting_selected: 0,
+            browser: ModelBrowser::default(),
+            show_advanced: false,
+            modal: None,
+            notice,
+            error: None,
+            should_quit: false,
+            hitboxes: Vec::new(),
+            geometry: ChromeGeometry::default(),
+            mouse: None,
+            bootstrap_mode: true,
+            staged_values: HashMap::new(),
+            bootstrap_result_path: Some(result_path),
+            bootstrap_launch_after_repository: launch_after_repository,
+            bootstrap_launch_danger: launch_danger,
+            start_server_requested: false,
+        };
+        app.set_repository_response(state.repositories);
+        app.sync_model_browser();
+        app.set_notice(if launch_after_repository {
+            if launch_danger {
+                "Choose a model and repository, then use Launch danger.".to_string()
+            } else {
+                "Choose a model and repository, then use Launch Claude.".to_string()
+            }
+        } else {
+            "Prelaunch mode: choose models and repository, then press Start server.".to_string()
+        });
+        app
+    }
+
+    pub fn is_bootstrap(&self) -> bool {
+        self.bootstrap_mode
+    }
+
+    pub fn bootstrap_launch_after_repository(&self) -> bool {
+        self.bootstrap_launch_after_repository
+    }
+
+    pub fn bootstrap_repository_action_label(&self) -> &'static str {
+        if !self.bootstrap_launch_after_repository {
+            return "Use selected";
+        }
+        if self.bootstrap_launch_danger {
+            "Launch danger"
+        } else {
+            "Launch Claude"
+        }
+    }
+
+    pub fn refresh_health(&mut self) {
+        match self.api.health() {
+            Ok(identity) if identity.service == "agentswitchboard" && identity.protocol == 1 => {
+                self.server_identity = identity.clone();
+                self.connection_state =
+                    if identity.lifecycle == "running" || identity.status == "healthy" {
+                        ConnectionState::Running
+                    } else {
+                        ConnectionState::Degraded
+                    };
+                self.last_check_epoch = Some(now_epoch());
+                self.last_connection_error = None;
+                if let Ok(value) = serde_json::to_value(identity) {
+                    if let (Some(status), Some(identity)) =
+                        (self.status.as_object_mut(), value.as_object())
+                    {
+                        status.extend(identity.clone());
+                    }
+                }
+            }
+            Ok(identity) => {
+                self.connection_state = ConnectionState::Unknown;
+                self.last_check_epoch = Some(now_epoch());
+                self.last_connection_error = Some(format!(
+                    "foreign service at {}:{}",
+                    identity.host, identity.port
+                ));
+            }
+            Err(error) => {
+                self.connection_state = ConnectionState::Offline;
+                self.last_check_epoch = Some(now_epoch());
+                self.last_connection_error = Some(error.to_string());
+            }
+        }
     }
 
     pub fn refresh_all(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Live refresh starts after the server launches; this screen uses the prelaunch snapshot."
+                    .to_string(),
+            );
+            return;
+        }
         match self.api.config() {
             Ok(value) => self.config = value,
             Err(error) => self.set_error(error.to_string()),
@@ -502,6 +719,11 @@ impl App {
             Ok(value) => self.usage = value,
             Err(error) => self.set_error(error.to_string()),
         }
+        match self.api.repositories(false) {
+            Ok(value) => self.set_repository_response(value),
+            Err(error) => self.set_error(error.to_string()),
+        }
+        self.sync_model_browser();
         self.clamp_selections();
     }
 
@@ -520,19 +742,52 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
+            self.request_quit();
             return Ok(None);
         }
+        if self.page == Page::Models
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('s')
+        {
+            self.save_model_catalog();
+            return Ok(None);
+        }
+        if self.page == Page::Models && self.browser.search_focused {
+            return self.handle_model_search_key(key);
+        }
+
         match key.code {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('?') | KeyCode::F(1) => self.modal = Some(Modal::Help),
+            KeyCode::Char('q') => self.request_quit(),
             KeyCode::Tab => self.next_page(1),
             KeyCode::BackTab => self.next_page(-1),
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
             KeyCode::Char('r') => self.refresh_current(),
-            KeyCode::Char('c') => return Ok(Some(ExternalAction::LaunchClaude { danger: false })),
-            KeyCode::Enter => self.default_action()?,
+            KeyCode::Char('c') => {
+                if self.bootstrap_mode {
+                    if self.bootstrap_launch_after_repository && self.page == Page::Repositories {
+                        self.use_selected_repository();
+                    } else if self.bootstrap_launch_after_repository {
+                        self.page = Page::Repositories;
+                        self.set_notice(format!(
+                            "Choose a repository, then use {}.",
+                            self.bootstrap_repository_action_label()
+                        ));
+                    } else {
+                        self.start_server();
+                    }
+                    return Ok(None);
+                }
+                if self.page == Page::Repositories {
+                    self.use_selected_repository();
+                }
+                return Ok(Some(ExternalAction::LaunchClaude { danger: false }));
+            }
+            KeyCode::Enter => self.activate_selection()?,
+            KeyCode::Char('e') if self.page == Page::Models => self.toggle_selected_model_access(),
+            KeyCode::Char('C') if self.page == Page::Models => self.open_context_editor(),
+            KeyCode::Char(' ') if self.page == Page::Models => self.toggle_selected_model_access(),
+            KeyCode::Char('e') if self.page == Page::Context => self.open_context_editor(),
             KeyCode::Char('e') => self.edit_action()?,
             KeyCode::Char('t') if self.page == Page::Providers => self.test_selected_provider(),
             KeyCode::Char('n') if self.page == Page::Providers => self.new_custom_provider(),
@@ -540,24 +795,32 @@ impl App {
             KeyCode::Char('l') if self.page == Page::Providers => self.login_provider("browser"),
             KeyCode::Char('L') if self.page == Page::Providers => self.login_provider("device"),
             KeyCode::Char('D') if self.page == Page::Providers => self.disconnect_provider(),
-            KeyCode::Char('/') if self.page == Page::Models => {
-                self.modal = Some(Modal::SearchModels {
-                    input: TextInput::new(self.model_query.clone(), false, false),
-                });
-            }
-            KeyCode::Char('d') if self.page == Page::Models => self.assign_selected_model("MODEL"),
+            KeyCode::Char('/') if self.page == Page::Models => self.focus_model_search(),
+            KeyCode::Char('s') if self.page == Page::Models => self.save_model_catalog(),
             KeyCode::Char('f') if self.page == Page::Models => {
-                self.assign_selected_model("MODEL_FABLE")
+                let message = self.browser.toggle_free_filter();
+                self.set_notice(message);
             }
-            KeyCode::Char('o') if self.page == Page::Models => {
-                self.assign_selected_model("MODEL_OPUS")
+            KeyCode::Char('d') if self.page == Page::Routing => self.assign_selected_route("MODEL"),
+            KeyCode::Char('f') if self.page == Page::Routing => {
+                self.assign_selected_route("MODEL_FABLE")
             }
-            KeyCode::Char('s') if self.page == Page::Models => {
-                self.assign_selected_model("MODEL_SONNET")
+            KeyCode::Char('o') if self.page == Page::Routing => {
+                self.assign_selected_route("MODEL_OPUS")
             }
-            KeyCode::Char('h') if self.page == Page::Models => {
-                self.assign_selected_model("MODEL_HAIKU")
+            KeyCode::Char('s') if self.page == Page::Routing => {
+                self.assign_selected_route("MODEL_SONNET")
             }
+            KeyCode::Char('h') if self.page == Page::Routing => {
+                self.assign_selected_route("MODEL_HAIKU")
+            }
+            KeyCode::Char('a') if self.page == Page::Models => self.disable_all_models(),
+            KeyCode::Char('i') if self.page == Page::Models => {
+                let message = self.browser.toggle_catalog();
+                self.set_notice(message);
+            }
+            KeyCode::Char('P') if self.page == Page::Models => self.open_provider_filter(),
+            KeyCode::Char('u') if self.page == Page::Models => self.discard_model_changes(),
             KeyCode::Char('a') if self.page == Page::Settings => {
                 self.show_advanced = !self.show_advanced
             }
@@ -569,10 +832,108 @@ impl App {
             {
                 self.clear_selected_secret();
             }
-            KeyCode::Char('!') => return Ok(Some(ExternalAction::LaunchClaude { danger: true })),
+            KeyCode::Char('!') => {
+                if self.bootstrap_mode {
+                    if self.bootstrap_launch_after_repository && self.page == Page::Repositories {
+                        self.use_selected_repository();
+                    } else if self.bootstrap_launch_after_repository {
+                        self.page = Page::Repositories;
+                        self.set_notice(format!(
+                            "Choose a repository, then use {}.",
+                            self.bootstrap_repository_action_label()
+                        ));
+                    } else {
+                        self.start_server();
+                    }
+                    return Ok(None);
+                }
+                if self.page == Page::Repositories {
+                    self.use_selected_repository();
+                }
+                return Ok(Some(ExternalAction::LaunchClaude { danger: true }));
+            }
+            KeyCode::Char('S') if self.bootstrap_mode => self.start_server(),
             _ => {}
         }
         Ok(None)
+    }
+
+    fn handle_model_search_key(&mut self, key: KeyEvent) -> Result<Option<ExternalAction>> {
+        match key.code {
+            KeyCode::Esc => {
+                self.browser.search_focused = false;
+            }
+            KeyCode::Enter => {
+                self.browser.search_focused = false;
+            }
+            KeyCode::Up => self.move_selection(-1),
+            KeyCode::Down => self.move_selection(1),
+            KeyCode::Backspace => {
+                self.browser.query.pop();
+                self.browser.selected = 0;
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.browser.query.clear();
+                self.browser.selected = 0;
+            }
+            KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.browser.query.push(character);
+                self.browser.selected = 0;
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn focus_model_search(&mut self) {
+        self.browser.search_focused = true;
+    }
+
+    fn open_provider_filter(&mut self) {
+        let snapshot = self.catalog_snapshot();
+        let mut options = Vec::with_capacity(snapshot.provider_filter_options().len() + 1);
+        let known_refs = snapshot.known_refs();
+        let free_count = snapshot
+            .records
+            .iter()
+            .filter(|record| {
+                snapshot.provider_is_registered(&record.provider_id)
+                    && record.price == crate::models::PriceState::Free
+            })
+            .count();
+        options.push(ProviderFilterOption {
+            id: String::new(),
+            label: "Registered providers".to_string(),
+            status: "active".to_string(),
+            model_count: known_refs.len(),
+            free_count,
+        });
+        options.extend(snapshot.provider_filter_options());
+        let selected = self
+            .browser
+            .provider_filter
+            .as_deref()
+            .and_then(|provider| {
+                options
+                    .iter()
+                    .position(|option| option.id.eq_ignore_ascii_case(provider))
+            })
+            .unwrap_or(0);
+        self.modal = Some(Modal::ProviderPicker { options, selected });
+    }
+
+    fn select_provider_filter(&mut self, index: usize) {
+        let Some(Modal::ProviderPicker { options, .. }) = self.modal.take() else {
+            return;
+        };
+        let Some(option) = options.get(index) else {
+            self.set_error("Provider filter selection is out of range".to_string());
+            return;
+        };
+        let snapshot = self.catalog_snapshot();
+        let provider = (!option.id.is_empty()).then(|| option.id.clone());
+        let message = self.browser.set_provider_filter(provider, &snapshot);
+        self.set_notice(message);
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<Option<ExternalAction>> {
@@ -596,20 +957,38 @@ impl App {
             .find(|hitbox| contains(hitbox.rect, mouse.column, mouse.row))
             .map(|hitbox| hitbox.action.clone());
         if let Some(action) = action {
+            if let UiAction::SelectModel(index) = action {
+                self.browser.selected = index;
+                if mouse.modifiers.intersects(
+                    KeyModifiers::SHIFT
+                        | KeyModifiers::CONTROL
+                        | KeyModifiers::ALT
+                        | KeyModifiers::SUPER,
+                ) {
+                    self.toggle_selected_model_access();
+                }
+                return Ok(None);
+            }
             return self.invoke_ui_action(action);
         }
         Ok(None)
     }
 
     fn invoke_ui_action(&mut self, action: UiAction) -> Result<Option<ExternalAction>> {
+        if !matches!(action, UiAction::SearchModels) {
+            self.browser.search_focused = false;
+        }
         match action {
             UiAction::Navigate(page) => self.page = page,
+            UiAction::SelectRepository(index) => self.repository_selected = index,
             UiAction::SelectProvider(index) => self.provider_selected = index,
-            UiAction::SelectModel(index) => self.model_selected = index,
+            UiAction::SelectModel(index) => self.browser.selected = index,
             UiAction::SelectRouting(index) => self.routing_selected = index,
             UiAction::SelectLocal(index) => self.local_selected = index,
             UiAction::SelectSetting(index) => self.setting_selected = index,
             UiAction::Refresh => self.refresh_current(),
+            UiAction::UseRepository => self.use_selected_repository(),
+            UiAction::RefreshRepositories => self.refresh_repositories(true),
             UiAction::ConfigureProvider => self.configure_selected_provider(),
             UiAction::TestProvider => self.test_selected_provider(),
             UiAction::NewCustomProvider => self.new_custom_provider(),
@@ -619,12 +998,25 @@ impl App {
             UiAction::DisconnectProvider => self.disconnect_provider(),
             UiAction::EditField => self.edit_action()?,
             UiAction::ToggleAdvanced => self.show_advanced = !self.show_advanced,
-            UiAction::AssignModel(key) => self.assign_selected_model(&key),
-            UiAction::SearchModels => {
-                self.modal = Some(Modal::SearchModels {
-                    input: TextInput::new(self.model_query.clone(), false, false),
-                });
+            UiAction::AssignModel(key) => self.use_selected_model(&key),
+            UiAction::ConfigureContext => self.open_context_editor(),
+            UiAction::SearchModels => self.focus_model_search(),
+            UiAction::OpenProviderFilter => self.open_provider_filter(),
+            UiAction::SelectProviderFilter(index) => self.select_provider_filter(index),
+            UiAction::ToggleFreeFilter => {
+                let message = self.browser.toggle_free_filter();
+                self.set_notice(message);
             }
+            UiAction::ToggleCatalogVisibility => {
+                let message = self.browser.toggle_catalog();
+                self.set_notice(message);
+            }
+            UiAction::ToggleModelAccess => self.toggle_selected_model_access(),
+            UiAction::DisableAllModels => self.disable_all_models(),
+            UiAction::SaveModels => self.save_model_catalog(),
+            UiAction::DiscardModels => self.discard_model_changes(),
+            UiAction::StartServer => self.start_server(),
+            UiAction::AssignRoute(key) => self.assign_selected_route(&key),
             UiAction::RunDiagnostic => self.run_diagnostic(),
             UiAction::LaunchClaude(danger) => {
                 return Ok(Some(ExternalAction::LaunchClaude { danger }));
@@ -633,11 +1025,13 @@ impl App {
         Ok(None)
     }
 
-    fn default_action(&mut self) -> Result<()> {
+    fn activate_selection(&mut self) -> Result<()> {
         match self.page {
+            Page::Repositories => self.use_selected_repository(),
             Page::Providers => self.configure_selected_provider(),
-            Page::Models => self.assign_selected_model("MODEL"),
-            Page::Routing | Page::Context | Page::Local | Page::Settings => self.edit_action()?,
+            Page::Models => self.use_selected_model("MODEL"),
+            Page::Context => self.open_context_editor(),
+            Page::Routing | Page::Local | Page::Settings => self.edit_action()?,
             Page::Diagnostics => self.run_diagnostic(),
             _ => {}
         }
@@ -647,7 +1041,7 @@ impl App {
     fn edit_action(&mut self) -> Result<()> {
         match self.page {
             Page::Providers => self.edit_selected_custom_provider(),
-            Page::Routing | Page::Context | Page::Local | Page::Settings => {
+            Page::Routing | Page::Local | Page::Settings => {
                 if let Some(index) = self.selected_field_index() {
                     self.open_field_editor(index);
                 }
@@ -658,10 +1052,19 @@ impl App {
     }
 
     fn refresh_current(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Live refresh starts after the server launches; this screen uses the prelaunch snapshot."
+                    .to_string(),
+            );
+            return;
+        }
         match self.page {
+            Page::Repositories => self.refresh_repositories(true),
             Page::Models => match self.api.refresh_models() {
                 Ok(value) => {
                     self.models = value;
+                    self.sync_model_browser();
                     self.set_notice("Model catalog refreshed".to_string());
                 }
                 Err(error) => self.set_error(error.to_string()),
@@ -688,16 +1091,18 @@ impl App {
 
     fn move_selection(&mut self, delta: isize) {
         let len = match self.page {
+            Page::Repositories => self.repositories.len(),
             Page::Providers => self.config.provider_status.len(),
-            Page::Models => self.filtered_models().len(),
+            Page::Models | Page::Context => self.filtered_models().len(),
             Page::Routing => self.routing_field_indices().len(),
             Page::Local => self.local_field_indices().len(),
             Page::Settings => self.settings_field_indices().len(),
             _ => return,
         };
         let selection = match self.page {
+            Page::Repositories => &mut self.repository_selected,
             Page::Providers => &mut self.provider_selected,
-            Page::Models => &mut self.model_selected,
+            Page::Models | Page::Context => &mut self.browser.selected,
             Page::Routing => &mut self.routing_selected,
             Page::Local => &mut self.local_selected,
             Page::Settings => &mut self.setting_selected,
@@ -707,70 +1112,129 @@ impl App {
             *selection = 0;
             return;
         }
-        *selection = ((*selection as isize + delta).rem_euclid(len as isize)) as usize;
+        *selection = (*selection as isize + delta).clamp(0, len as isize - 1) as usize;
     }
 
     fn clamp_selections(&mut self) {
+        self.repository_selected = clamp(self.repository_selected, self.repositories.len());
         self.provider_selected = clamp(self.provider_selected, self.config.provider_status.len());
-        self.model_selected = clamp(self.model_selected, self.filtered_models().len());
+        let snapshot = self.catalog_snapshot();
+        self.browser.clamp_selection(&snapshot);
         self.routing_selected = clamp(self.routing_selected, self.routing_field_indices().len());
         self.local_selected = clamp(self.local_selected, self.local_field_indices().len());
         self.setting_selected = clamp(self.setting_selected, self.settings_field_indices().len());
     }
 
-    pub fn filtered_models(&self) -> Vec<String> {
-        let query = self.model_query.trim().to_ascii_lowercase();
-        self.model_inventory()
-            .iter()
-            .filter(|model| {
-                if query.is_empty() {
-                    return true;
-                }
-                let label = self.model_label(model);
-                model.to_ascii_lowercase().contains(&query)
-                    || label.to_ascii_lowercase().contains(&query)
-            })
-            .cloned()
-            .collect()
+    fn set_repository_response(&mut self, response: RepositoriesResponse) {
+        self.repositories = response.repositories;
+        self.selected_repo_path = response.selected_path.filter(|path| {
+            self.repositories
+                .iter()
+                .any(|repository| repository.path == *path)
+        });
+        if let Some(selected_path) = self.selected_repo_path.as_deref() {
+            self.repository_selected = self
+                .repositories
+                .iter()
+                .position(|repository| repository.path == selected_path)
+                .unwrap_or(0);
+        }
+        self.clamp_selections();
     }
 
-    pub fn model_inventory(&self) -> Vec<String> {
-        let mut models = if self.models.catalog_models.is_empty() {
-            self.models.models.clone()
-        } else {
-            self.models.catalog_models.clone()
-        };
-        for model in &self.models.models {
-            if !models.iter().any(|candidate| candidate == model) {
-                models.push(model.clone());
-            }
+    fn refresh_repositories(&mut self, refresh: bool) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Repository discovery is complete for this launch; refresh is available after the server starts."
+                    .to_string(),
+            );
+            return;
         }
-        models.sort_by_key(|model| model.to_ascii_lowercase());
-        models.dedup();
-        models
+        match self.api.repositories(refresh) {
+            Ok(value) => {
+                self.set_repository_response(value);
+                if refresh {
+                    self.set_notice("Repository inventory refreshed".to_string());
+                }
+            }
+            Err(error) => self.set_error(error.to_string()),
+        }
+    }
+
+    pub fn selected_repository(&self) -> Option<&Repository> {
+        self.repositories.get(self.repository_selected)
+    }
+
+    pub fn launch_repository_path(&self) -> Option<&str> {
+        self.selected_repository()
+            .map(|repository| repository.path.as_str())
+            .or(self.selected_repo_path.as_deref())
+    }
+
+    fn use_selected_repository(&mut self) {
+        let Some(repository) = self.selected_repository().cloned() else {
+            self.set_notice("No repository is selected. Press Refresh first.".to_string());
+            return;
+        };
+        if self.bootstrap_mode {
+            let previous = self.selected_repo_path.clone();
+            self.selected_repo_path = Some(repository.path.clone());
+            if !self.persist_bootstrap_result() {
+                self.selected_repo_path = previous;
+                return;
+            }
+            if self.bootstrap_launch_after_repository {
+                self.start_server();
+                return;
+            }
+            self.set_notice(format!(
+                "Repository selected: {} (saved for the next server launch)",
+                repository.identity
+            ));
+            return;
+        }
+        match self.api.select_repository(&repository.path) {
+            Ok(result) => {
+                self.selected_repo_path = Some(result.repository.path.clone());
+                if let Some(current) = self
+                    .repositories
+                    .iter_mut()
+                    .find(|candidate| candidate.path == result.repository.path)
+                {
+                    *current = result.repository;
+                }
+                self.set_notice(if result.persisted {
+                    format!("Repository selected: {}", repository.identity)
+                } else {
+                    format!(
+                        "Repository selected for this session; cache unavailable: {}",
+                        repository.identity
+                    )
+                });
+            }
+            Err(error) => self.set_error(error.to_string()),
+        }
+    }
+
+    pub fn catalog_snapshot(&self) -> CatalogSnapshot {
+        CatalogSnapshot::from_admin(&self.models, &self.config)
+    }
+
+    pub fn sync_model_browser(&mut self) {
+        let snapshot = self.catalog_snapshot();
+        self.browser.sync(&snapshot);
+    }
+
+    pub fn filtered_models(&self) -> Vec<String> {
+        let snapshot = self.catalog_snapshot();
+        self.browser.filtered_refs(&snapshot)
     }
 
     pub fn model_is_routable(&self, model: &str) -> bool {
-        self.models
-            .models
-            .iter()
-            .any(|candidate| candidate == model)
-    }
-
-    pub fn model_label(&self, model: &str) -> String {
-        self.models
-            .catalog_model_labels
-            .get(model)
-            .or_else(|| self.models.model_labels.get(model))
-            .cloned()
-            .unwrap_or_else(|| model.to_string())
-    }
-
-    pub fn model_evidence(&self, model: &str) -> Option<&Value> {
-        self.models
-            .catalog_model_evidence
-            .get(model)
-            .or_else(|| self.models.model_evidence.get(model))
+        self.catalog_snapshot()
+            .record(model)
+            .map(|record| record.routable)
+            .unwrap_or(false)
     }
 
     pub fn routing_field_indices(&self) -> Vec<usize> {
@@ -802,17 +1266,10 @@ impl App {
             .fields
             .iter()
             .enumerate()
-            .filter(|(_, field)| field.key != "CUSTOM_PROVIDERS_JSON")
+            .filter(|(_, field)| !field.section_id.eq_ignore_ascii_case("providers"))
             .filter(|(_, field)| self.show_advanced || !field.advanced)
             .map(|(index, _)| index)
             .collect()
-    }
-
-    pub fn context_field(&self) -> Option<&ConfigField> {
-        self.config
-            .fields
-            .iter()
-            .find(|field| field.key == CONTEXT_KEY)
     }
 
     pub fn selected_provider(&self) -> Option<&ProviderStatus> {
@@ -820,7 +1277,87 @@ impl App {
     }
 
     pub fn selected_model(&self) -> Option<String> {
-        self.filtered_models().get(self.model_selected).cloned()
+        let snapshot = self.catalog_snapshot();
+        self.browser.selected_ref(&snapshot)
+    }
+
+    fn configured_context_windows(&self) -> Map<String, Value> {
+        self.config
+            .fields
+            .iter()
+            .find(|field| field.key == "MODEL_CONTEXT_WINDOWS")
+            .and_then(|field| serde_json::from_str::<Value>(&field.value).ok())
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default()
+    }
+
+    fn current_context_window(&self, model_ref: &str) -> Option<u64> {
+        self.configured_context_windows()
+            .get(model_ref)
+            .and_then(Value::as_u64)
+    }
+
+    fn open_context_editor(&mut self) {
+        let Some(model_ref) = self.selected_model() else {
+            self.set_notice("Select a catalog model first".to_string());
+            return;
+        };
+        let current = self.current_context_window(&model_ref);
+        let selected = match current {
+            None => 0,
+            Some(value) => [128_000_u64, 200_000, 256_000, 500_000, 1_000_000]
+                .iter()
+                .position(|preset| *preset == value)
+                .map(|index| index + 1)
+                .unwrap_or(6),
+        };
+        let mut options = vec![ConfigOption {
+            value: String::new(),
+            label: "Clear override (client default)".to_string(),
+        }];
+        options.extend(
+            [
+                (128_000, "128K tokens"),
+                (200_000, "200K tokens"),
+                (256_000, "256K tokens"),
+                (500_000, "500K tokens"),
+                (1_000_000, "1M tokens"),
+            ]
+            .into_iter()
+            .map(|(value, label)| ConfigOption {
+                value: value.to_string(),
+                label: label.to_string(),
+            }),
+        );
+        options.push(ConfigOption {
+            value: "custom".to_string(),
+            label: "Custom token count...".to_string(),
+        });
+        self.modal = Some(Modal::ContextChoice {
+            model_ref,
+            options,
+            selected,
+        });
+    }
+
+    fn apply_context_window(&mut self, model_ref: &str, value: Option<u64>) {
+        let mut windows = self.configured_context_windows();
+        match value {
+            Some(tokens) if (32_000..=1_000_000).contains(&tokens) => {
+                windows.insert(model_ref.to_string(), Value::from(tokens));
+            }
+            Some(_) => {
+                self.set_error("Context size must be between 32K and 1M tokens".to_string());
+                return;
+            }
+            None => {
+                windows.remove(model_ref);
+            }
+        }
+        self.apply_field_value(
+            CONTEXT_WINDOWS_KEY,
+            Value::String(Value::Object(windows).to_string()),
+        );
     }
 
     pub fn selected_field_index(&self) -> Option<usize> {
@@ -829,11 +1366,9 @@ impl App {
                 .routing_field_indices()
                 .get(self.routing_selected)
                 .copied(),
-            Page::Context => self
-                .config
-                .fields
-                .iter()
-                .position(|field| field.key == CONTEXT_KEY),
+            // FCC context intervention is disabled. Keep the page available
+            // for an explicit status explanation, but never open an editor.
+            Page::Context => None,
             Page::Local => self.local_field_indices().get(self.local_selected).copied(),
             Page::Settings => self
                 .settings_field_indices()
@@ -971,12 +1506,33 @@ impl App {
     }
 
     fn apply_field_value(&mut self, key: &str, value: Value) {
-        if key == CONTEXT_KEY {
-            let candidate = value.as_str().unwrap_or_default();
-            if let Err(message) = validate_context(candidate) {
-                self.set_error(message);
+        if self.bootstrap_mode {
+            if key == CUSTOM_PROVIDERS_KEY {
+                self.set_notice(
+                    "Custom provider registration is available after the server starts; credentials are not staged here."
+                        .to_string(),
+                );
                 return;
             }
+            let Some(field) = self.config.fields.iter().find(|field| field.key == key) else {
+                self.set_error(format!("Unknown configuration field: {key}"));
+                return;
+            };
+            if field.locked {
+                self.set_notice(format!("{} is locked by {}", field.label, field.source));
+                return;
+            }
+            let previous_config = self.config.clone();
+            let previous_values = self.staged_values.clone();
+            let values = HashMap::from([(key.to_string(), value)]);
+            self.stage_values(&values);
+            if !self.persist_bootstrap_result() {
+                self.config = previous_config;
+                self.staged_values = previous_values;
+                return;
+            }
+            self.set_notice(format!("Saved {key} locally; Start server to apply it."));
+            return;
         }
         match self.api.apply_field(key, value) {
             Ok(result) if result.valid && result.applied => {
@@ -999,14 +1555,16 @@ impl App {
         }
     }
 
-    fn assign_selected_model(&mut self, key: &str) {
+    fn use_selected_model(&mut self, key: &str) {
         let Some(model) = self.selected_model() else {
             return;
         };
-        if !self.model_is_routable(&model) {
-            self.set_error(format!(
-                "{model} is cataloged but not currently routable; update the model catalog policy first"
-            ));
+        if key == MODEL_KEY {
+            let snapshot = self.catalog_snapshot();
+            match self.browser.select_model(&model, &snapshot) {
+                Some(message) => self.set_notice(message),
+                None => self.set_error("Select a catalog model first".to_string()),
+            }
             return;
         }
         self.apply_field_value(key, Value::String(model.clone()));
@@ -1015,7 +1573,224 @@ impl App {
         }
     }
 
+    fn assign_selected_route(&mut self, key: &str) {
+        let Some(model) = self.selected_model() else {
+            self.set_error("Choose a model on the Models tab first".to_string());
+            return;
+        };
+        self.apply_field_value(key, Value::String(model.clone()));
+        if self.error.is_none() {
+            self.set_notice(format!("{key} → {model}"));
+        }
+    }
+
+    fn toggle_selected_model_access(&mut self) {
+        let Some(model) = self.selected_model() else {
+            return;
+        };
+        let snapshot = self.catalog_snapshot();
+        match self.browser.toggle_access(&model, &snapshot) {
+            Ok(message) => self.set_notice(message),
+            Err(message) => self.set_error(message),
+        }
+    }
+
+    fn disable_all_models(&mut self) {
+        let message = self.browser.disable_all();
+        self.set_notice(message);
+    }
+
+    fn discard_model_changes(&mut self) {
+        self.browser.discard();
+        self.set_notice("Discarded unsaved model changes".to_string());
+    }
+
+    fn save_model_catalog(&mut self) {
+        let snapshot = self.catalog_snapshot();
+        if !self.browser.dirty() {
+            self.set_notice("No model changes to save".to_string());
+            return;
+        }
+        let payload = self.browser.save_payload();
+        let expected = self.browser.expected_readback(&snapshot);
+        if self.bootstrap_mode {
+            let previous_config = self.config.clone();
+            let previous_values = self.staged_values.clone();
+            self.stage_values(&payload);
+            if !self.persist_bootstrap_result() {
+                self.config = previous_config;
+                self.staged_values = previous_values;
+                return;
+            }
+            let snapshot = self.catalog_snapshot();
+            self.browser.commit(&snapshot);
+            self.set_notice(
+                "Saved model catalog locally; Start server to apply and verify it.".to_string(),
+            );
+            return;
+        }
+        match self.api.apply_fields(payload) {
+            Ok(result) if result.valid && result.applied => {
+                match self.api.config() {
+                    Ok(config) => {
+                        if let Err(message) = verify_catalog_readback(&expected, &config) {
+                            self.config = config;
+                            self.set_error(message);
+                            return;
+                        }
+                        self.config = config;
+                    }
+                    Err(error) => {
+                        self.set_error(format!(
+                            "Saved, but could not read Admin config back: {error}"
+                        ));
+                        return;
+                    }
+                }
+                match self.api.models() {
+                    Ok(models) => self.models = models,
+                    Err(error) => self.set_error(format!(
+                        "Saved, but could not reload the cached model catalog: {error}"
+                    )),
+                }
+                let snapshot = self.catalog_snapshot();
+                self.browser.commit(&snapshot);
+                if result.pending_fields.is_empty() {
+                    self.set_notice("Saved model catalog (read-back verified)".to_string());
+                } else {
+                    self.set_notice(format!(
+                        "Saved model catalog; restart/session boundary: {}",
+                        result.pending_fields.join(", ")
+                    ));
+                }
+            }
+            Ok(result) => self.set_error(if result.errors.is_empty() {
+                "Model catalog was not applied".to_string()
+            } else {
+                result.errors.join("\n")
+            }),
+            Err(error) => self.set_error(error.to_string()),
+        }
+    }
+
+    fn stage_values(&mut self, values: &HashMap<String, Value>) {
+        for (key, value) in values {
+            self.staged_values.insert(key.clone(), value.clone());
+            let raw = config_value_string(value);
+            if let Some(field) = self
+                .config
+                .fields
+                .iter_mut()
+                .find(|field| field.key == *key)
+            {
+                field.configured = !raw.trim().is_empty();
+                field.value = if field.secret && field.configured {
+                    MASKED_SECRET.to_string()
+                } else {
+                    raw
+                };
+            }
+        }
+    }
+
+    fn request_quit(&mut self) {
+        if self.bootstrap_mode && self.browser.dirty() {
+            self.save_model_catalog();
+            if self.error.is_some() {
+                return;
+            }
+        }
+        self.should_quit = true;
+    }
+
+    fn start_server(&mut self) {
+        if !self.bootstrap_mode {
+            self.set_notice("The server is already running.".to_string());
+            return;
+        }
+        if self.browser.dirty() {
+            self.save_model_catalog();
+            if self.error.is_some() {
+                return;
+            }
+        }
+        let previous = self.start_server_requested;
+        self.start_server_requested = true;
+        if !self.persist_bootstrap_result() {
+            self.start_server_requested = previous;
+            return;
+        }
+        self.set_notice(if self.bootstrap_launch_after_repository {
+            "Choices saved. Starting FCC server, then Claude…".to_string()
+        } else {
+            "Choices saved. Starting FCC server…".to_string()
+        });
+        self.should_quit = true;
+    }
+
+    fn persist_bootstrap_result(&mut self) -> bool {
+        match self.write_bootstrap_result() {
+            Ok(()) => true,
+            Err(error) => {
+                self.set_error(format!("Could not save prelaunch choices: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Persist the parent handoff atomically with owner-only permissions.
+    ///
+    /// The bootstrap snapshot is intentionally read-only from the TUI's
+    /// perspective. This result is the sole write handoff; the Python parent
+    /// validates and commits it before creating the server runtime.
+    pub fn write_bootstrap_result(&self) -> Result<()> {
+        if !self.bootstrap_mode {
+            return Ok(());
+        }
+        let path = self
+            .bootstrap_result_path
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("bootstrap result path is missing"))?;
+        let values = self
+            .staged_values
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Map<String, Value>>();
+        let payload = json!({
+            "version": 1,
+            "values": values,
+            "selected_repository": self.selected_repo_path,
+            "start_server": self.start_server_requested,
+        });
+        let encoded = serde_json::to_vec_pretty(&payload)
+            .map_err(|error| anyhow::anyhow!("could not encode prelaunch choices: {error}"))?;
+        let temporary = path.with_extension("tmp");
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
+            .open(&temporary)
+            .map_err(|error| anyhow::anyhow!("could not open result file: {error}"))?;
+        file.write_all(&encoded)
+            .map_err(|error| anyhow::anyhow!("could not write result file: {error}"))?;
+        file.sync_all()
+            .map_err(|error| anyhow::anyhow!("could not sync result file: {error}"))?;
+        #[cfg(unix)]
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+        fs::rename(&temporary, path)
+            .map_err(|error| anyhow::anyhow!("could not publish result file: {error}"))?;
+        Ok(())
+    }
+
     fn test_selected_provider(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Provider tests run after the server starts; configuration edits are saved now."
+                    .to_string(),
+            );
+            return;
+        }
         let Some(provider) = self.selected_provider().cloned() else {
             return;
         };
@@ -1031,6 +1806,12 @@ impl App {
     }
 
     fn new_custom_provider(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Custom provider registration is available after the server starts.".to_string(),
+            );
+            return;
+        }
         self.modal = Some(Modal::ProviderEditor {
             existing_id: None,
             draft: ProviderDraft::empty(),
@@ -1040,6 +1821,12 @@ impl App {
     }
 
     fn edit_selected_custom_provider(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Custom provider editing is available after the server starts.".to_string(),
+            );
+            return;
+        }
         let Some(status) = self.selected_provider() else {
             return;
         };
@@ -1064,6 +1851,12 @@ impl App {
     }
 
     fn delete_custom_provider(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Custom provider deletion is available after the server starts.".to_string(),
+            );
+            return;
+        }
         let Some(provider) = self.selected_provider() else {
             return;
         };
@@ -1081,6 +1874,12 @@ impl App {
     }
 
     fn login_provider(&mut self, mode: &str) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Connected-account sign-in is available after the server starts.".to_string(),
+            );
+            return;
+        }
         let Some(provider) = self.selected_provider().cloned() else {
             return;
         };
@@ -1102,6 +1901,12 @@ impl App {
     }
 
     fn disconnect_provider(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Connected-account disconnect is available after the server starts.".to_string(),
+            );
+            return;
+        }
         let Some(provider) = self.selected_provider() else {
             return;
         };
@@ -1116,6 +1921,13 @@ impl App {
     }
 
     fn run_diagnostic(&mut self) {
+        if self.bootstrap_mode {
+            self.set_notice(
+                "Route diagnostics run after the server starts; the prelaunch catalog is already populated."
+                    .to_string(),
+            );
+            return;
+        }
         let model = self
             .config
             .fields
@@ -1139,19 +1951,86 @@ impl App {
                     self.modal = Some(Modal::Message { title, body });
                 }
             }
-            Modal::Help => {
-                if !matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?')) {
-                    self.modal = Some(Modal::Help);
+            Modal::ProviderPicker {
+                options,
+                mut selected,
+            } => {
+                match key.code {
+                    KeyCode::Esc => return Ok(()),
+                    KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        selected = selected
+                            .saturating_add(1)
+                            .min(options.len().saturating_sub(1))
+                    }
+                    KeyCode::Enter => {
+                        if let Some(option) = options.get(selected) {
+                            let snapshot = self.catalog_snapshot();
+                            let provider = (!option.id.is_empty()).then(|| option.id.clone());
+                            let message = self.browser.set_provider_filter(provider, &snapshot);
+                            self.set_notice(message);
+                            return Ok(());
+                        }
+                    }
+                    _ => {}
                 }
+                self.modal = Some(Modal::ProviderPicker { options, selected });
             }
-            Modal::SearchModels { mut input } => match edit_input(&mut input, key) {
+            Modal::ContextInput {
+                model_ref,
+                mut input,
+            } => match edit_input(&mut input, key) {
                 InputOutcome::Cancel => {}
-                InputOutcome::Submit => {
-                    self.model_query = input.value.trim().to_string();
-                    self.model_selected = 0;
+                InputOutcome::Submit => match input.value.trim().parse::<u64>() {
+                    Ok(tokens) => self.apply_context_window(&model_ref, Some(tokens)),
+                    Err(_) => self.set_error("Enter a whole number of tokens".to_string()),
+                },
+                InputOutcome::Continue => {
+                    self.modal = Some(Modal::ContextInput { model_ref, input })
                 }
-                InputOutcome::Continue => self.modal = Some(Modal::SearchModels { input }),
             },
+            Modal::ContextChoice {
+                model_ref,
+                options,
+                mut selected,
+            } => {
+                match key.code {
+                    KeyCode::Esc => return Ok(()),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected = wrap_index(selected, options.len(), -1)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        selected = wrap_index(selected, options.len(), 1)
+                    }
+                    KeyCode::Enter => {
+                        if let Some(option) = options.get(selected) {
+                            if option.value == "custom" {
+                                self.modal = Some(Modal::ContextInput {
+                                    model_ref: model_ref.clone(),
+                                    input: TextInput::new(
+                                        self.current_context_window(&model_ref)
+                                            .map(|value| value.to_string())
+                                            .unwrap_or_default(),
+                                        false,
+                                        false,
+                                    ),
+                                });
+                            } else if option.value.is_empty() {
+                                self.apply_context_window(&model_ref, None);
+                            } else if let Ok(tokens) = option.value.parse::<u64>() {
+                                self.apply_context_window(&model_ref, Some(tokens));
+                            }
+                            return Ok(());
+                        }
+                    }
+                    _ => {}
+                }
+                self.modal = Some(Modal::ContextChoice {
+                    model_ref,
+                    options,
+                    selected,
+                });
+            }
             Modal::EditField { field, mut input } => match edit_input(&mut input, key) {
                 InputOutcome::Cancel => {}
                 InputOutcome::Submit => {
@@ -1294,6 +2173,13 @@ impl App {
     }
 
     fn save_provider(&mut self, existing_id: Option<String>, draft: ProviderDraft) {
+        if self.bootstrap_mode {
+            let _ = (existing_id, draft);
+            self.set_notice(
+                "Custom provider changes are available after the server starts.".to_string(),
+            );
+            return;
+        }
         let payload = draft.payload(existing_id.is_some());
         let result = if let Some(existing_id) = existing_id.as_deref() {
             self.api.update_custom_provider(existing_id, &payload)
@@ -1364,25 +2250,27 @@ impl App {
     }
 
     pub fn status_text(&self) -> String {
-        let status = self
-            .status
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("offline");
-        let host = self
-            .status
-            .get("host")
-            .and_then(Value::as_str)
-            .unwrap_or("127.0.0.1");
-        let port = self.status.get("port").and_then(Value::as_u64).unwrap_or(0);
-        format!("{status} · {host}:{port}")
+        let host = if self.server_identity.host.is_empty() {
+            self.status
+                .get("host")
+                .and_then(Value::as_str)
+                .unwrap_or("127.0.0.1")
+        } else {
+            self.server_identity.host.as_str()
+        };
+        let port = if self.server_identity.port == 0 {
+            self.status.get("port").and_then(Value::as_u64).unwrap_or(0) as u16
+        } else {
+            self.server_identity.port
+        };
+        format!("{} · {host}:{port}", self.connection_state.label())
     }
 
-    pub fn current_context(&self) -> String {
-        self.context_field()
-            .map(|field| field.value.clone())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "256000".to_string())
+    pub fn last_check_label(&self) -> String {
+        match self.last_check_epoch {
+            Some(epoch) => format!("{}s ago", now_epoch().saturating_sub(epoch)),
+            None => "never".to_string(),
+        }
     }
 
     pub fn set_notice(&mut self, message: String) {
@@ -1409,7 +2297,7 @@ impl App {
             description: "New FCC-launched Claude sessions.".to_string(),
             ..ConfigField::default()
         };
-        Self {
+        let mut app = Self {
             api,
             page: Page::Dashboard,
             config: ConfigResponse {
@@ -1417,17 +2305,29 @@ impl App {
                 ..ConfigResponse::default()
             },
             status: json!({"status":"running","host":"127.0.0.1","port":8082,"model":"demo/model"}),
+            server_identity: ServerIdentity {
+                service: "agentswitchboard".to_string(),
+                protocol: 1,
+                mode: "standard".to_string(),
+                status: "healthy".to_string(),
+                ..ServerIdentity::default()
+            },
+            connection_state: ConnectionState::Running,
+            last_check_epoch: Some(now_epoch()),
+            last_connection_error: None,
             models: ModelsResponse::default(),
             custom_providers: Vec::new(),
             local_status: Vec::new(),
             usage: Value::Null,
             diagnostic: Value::Null,
+            repositories: Vec::new(),
+            repository_selected: 0,
+            selected_repo_path: None,
             provider_selected: 0,
-            model_selected: 0,
             routing_selected: 0,
             local_selected: 0,
             setting_selected: 0,
-            model_query: String::new(),
+            browser: ModelBrowser::default(),
             show_advanced: false,
             modal: None,
             notice: None,
@@ -1436,8 +2336,27 @@ impl App {
             hitboxes: Vec::new(),
             geometry: ChromeGeometry::default(),
             mouse: None,
-        }
+            bootstrap_mode: false,
+            staged_values: HashMap::new(),
+            bootstrap_result_path: None,
+            bootstrap_launch_after_repository: false,
+            bootstrap_launch_danger: false,
+            start_server_requested: false,
+        };
+        app.sync_model_browser();
+        app
     }
+}
+
+fn now_epoch() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn identity_from_status(status: &Value) -> ServerIdentity {
+    serde_json::from_value(status.clone()).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1489,17 +2408,14 @@ fn edit_input(input: &mut TextInput, key: KeyEvent) -> InputOutcome {
     }
 }
 
-fn validate_context(value: &str) -> std::result::Result<u32, String> {
-    let parsed = value
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| "Context window must be an integer token count".to_string())?;
-    if !(CONTEXT_MIN..=CONTEXT_MAX).contains(&parsed) {
-        return Err(format!(
-            "Context window must be between {CONTEXT_MIN} and {CONTEXT_MAX} tokens"
-        ));
+fn config_value_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        other => other.to_string(),
     }
-    Ok(parsed)
 }
 
 fn wrap_index(current: usize, len: usize, delta: isize) -> usize {
@@ -1533,12 +2449,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn context_window_is_hard_bounded() {
-        assert_eq!(validate_context("32000"), Ok(32_000));
-        assert_eq!(validate_context("1000000"), Ok(1_000_000));
-        assert!(validate_context("31999").is_err());
-        assert!(validate_context("1000001").is_err());
-        assert!(validate_context("banana").is_err());
+    fn connection_state_labels_and_status_text_show_liveness() {
+        assert_eq!(ConnectionState::Starting.label(), "STARTING");
+        assert_eq!(ConnectionState::Running.label(), "RUNNING");
+        assert_eq!(ConnectionState::Degraded.label(), "DEGRADED");
+        assert_eq!(ConnectionState::Offline.label(), "OFFLINE");
+        assert_eq!(ConnectionState::Unknown.label(), "UNKNOWN");
+
+        let mut app = App::fixture();
+        app.connection_state = ConnectionState::Offline;
+        app.server_identity.host = "127.0.0.1".to_string();
+        app.server_identity.port = 8083;
+        assert_eq!(app.status_text(), "OFFLINE · 127.0.0.1:8083");
+    }
+
+    #[test]
+    fn offline_state_retains_last_server_identity_for_diagnostics() {
+        let mut app = App::fixture();
+        app.server_identity.instance_id = "0123456789abcdef".to_string();
+        app.server_identity.pid = 12345;
+        app.server_identity.uptime_seconds = 3661.0;
+        app.connection_state = ConnectionState::Offline;
+        app.last_connection_error = Some("connection refused".to_string());
+
+        assert_eq!(app.server_identity.instance_id, "0123456789abcdef");
+        assert_eq!(app.server_identity.pid, 12345);
+        assert_eq!(app.server_identity.uptime_seconds, 3661.0);
+        assert_eq!(
+            app.last_connection_error.as_deref(),
+            Some("connection refused")
+        );
     }
 
     #[test]
@@ -1552,6 +2492,44 @@ mod tests {
         let rendered = App::display_field_value(&field);
         assert!(!rendered.contains(MASKED_SECRET));
         assert!(rendered.contains("configured"));
+    }
+
+    #[test]
+    fn app_settings_exclude_provider_registration_fields() {
+        let mut app = App::fixture();
+        app.config.fields.extend([
+            ConfigField {
+                key: "BAI_API_KEY".to_string(),
+                label: "B.AI API Key".to_string(),
+                section_id: "providers".to_string(),
+                secret: true,
+                configured: true,
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "BAI_BASE_URL".to_string(),
+                label: "B.AI Base URL".to_string(),
+                section_id: "providers".to_string(),
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "FCC_PROVIDER_POLICY_MODE".to_string(),
+                label: "Provider Policy Mode".to_string(),
+                section_id: "runtime".to_string(),
+                ..ConfigField::default()
+            },
+        ]);
+
+        let settings = app.settings_field_indices();
+        assert!(!settings
+            .iter()
+            .any(|index| app.config.fields[*index].key == "BAI_API_KEY"));
+        assert!(!settings
+            .iter()
+            .any(|index| app.config.fields[*index].key == "BAI_BASE_URL"));
+        assert!(settings
+            .iter()
+            .any(|index| app.config.fields[*index].key == "FCC_PROVIDER_POLICY_MODE"));
     }
 
     #[test]
@@ -1598,28 +2576,37 @@ mod tests {
             "provider/hidden-free".to_string(),
             "Hidden Free".to_string(),
         );
+        app.sync_model_browser();
+        app.browser.toggle_catalog();
 
-        assert_eq!(
-            app.filtered_models(),
-            ["provider/free", "provider/hidden-free"]
-        );
+        let visible = app.filtered_models();
+        assert!(visible.contains(&"provider/free".to_string()));
+        assert!(visible.contains(&"provider/hidden-free".to_string()));
         app.handle_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
             .unwrap();
-        assert_eq!(app.model_selected, 1);
-        assert_eq!(
-            app.selected_model().as_deref(),
-            Some("provider/hidden-free")
-        );
+        assert_eq!(app.browser.selected, 1);
+        assert_eq!(app.selected_model().as_deref(), Some(visible[1].as_str()));
         assert!(!app.model_is_routable("provider/hidden-free"));
 
-        app.model_query = "hidden".to_string();
-        app.clamp_selections();
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        for character in ['h', 'i', 'd', 'd', 'e', 'n'] {
+            app.handle_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        }
         assert_eq!(app.filtered_models(), ["provider/hidden-free"]);
-        assert_eq!(app.model_selected, 0);
+        assert_eq!(app.browser.selected, 0);
+        assert!(app.browser.search_focused);
     }
 
     #[test]
-    fn hidden_catalog_model_cannot_be_assigned_without_policy_change() {
+    fn blocked_catalog_model_can_be_enabled_and_selected_as_active() {
         let mut app = App::fixture();
         app.page = Page::Models;
         app.models.models = vec!["provider/routable".to_string()];
@@ -1627,18 +2614,50 @@ mod tests {
             "provider/routable".to_string(),
             "provider/hidden".to_string(),
         ];
-        app.model_query = "hidden".to_string();
+        app.config.fields.push(ConfigField {
+            key: MODEL_KEY.to_string(),
+            value: "provider/routable".to_string(),
+            ..ConfigField::default()
+        });
+        app.sync_model_browser();
+        app.browser.toggle_catalog();
+        app.browser.query = "hidden".to_string();
+        app.clamp_selections();
 
         app.handle_event(Event::Key(KeyEvent::new(
-            KeyCode::Char('d'),
+            KeyCode::Enter,
             KeyModifiers::NONE,
         )))
         .unwrap();
 
-        assert!(app
-            .error
-            .as_deref()
-            .is_some_and(|message| message.contains("not currently routable")));
+        assert!(app.error.is_none());
+        assert_eq!(app.browser.pending_model(), "provider/hidden");
+        assert!(app.browser.is_enabled("provider/hidden"));
+        assert!(app.browser.dirty());
+        let payload = app.browser.save_payload();
+        assert_eq!(
+            payload.get(MODEL_KEY),
+            Some(&Value::String("provider/hidden".to_string()))
+        );
+    }
+
+    #[test]
+    fn unavailable_configured_model_stays_visible_in_chrome() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/alpha".to_string()];
+        app.models.catalog_models = vec!["provider/alpha".to_string()];
+        app.config.fields.push(ConfigField {
+            key: MODEL_KEY.to_string(),
+            value: "gateway/missing".to_string(),
+            ..ConfigField::default()
+        });
+        app.sync_model_browser();
+        let snapshot = app.catalog_snapshot();
+        assert_eq!(app.browser.pending_model(), "gateway/missing");
+        assert!(app.browser.active_model_unavailable(&snapshot));
+        assert!(!app.browser.dirty());
+        assert_eq!(app.filtered_models(), ["provider/alpha"]);
     }
 
     #[test]
@@ -1650,6 +2669,7 @@ mod tests {
         app.page = Page::Models;
         app.models.models = vec!["provider/one".to_string(), "provider/two".to_string()];
         app.models.catalog_models = app.models.models.clone();
+        app.sync_model_browser();
         let backend = TestBackend::new(160, 50);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -1672,7 +2692,267 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(app.model_selected, 1);
+        assert_eq!(app.browser.selected, 1);
         assert_eq!(app.selected_model().as_deref(), Some("provider/two"));
+    }
+
+    #[test]
+    fn bootstrap_model_save_writes_a_private_parent_handoff() {
+        use std::fs;
+
+        let result_path = std::env::temp_dir().join(format!(
+            "fcc-control-center-test-{}-result.json",
+            std::process::id()
+        ));
+        let state = BootstrapState {
+            config: ConfigResponse {
+                fields: vec![
+                    ConfigField {
+                        key: MODEL_KEY.to_string(),
+                        value: "provider/one".to_string(),
+                        configured: true,
+                        ..ConfigField::default()
+                    },
+                    ConfigField {
+                        key: crate::models::CATALOG_MODE_KEY.to_string(),
+                        value: "all".to_string(),
+                        ..ConfigField::default()
+                    },
+                    ConfigField {
+                        key: crate::models::CATALOG_ALLOWLIST_KEY.to_string(),
+                        ..ConfigField::default()
+                    },
+                ],
+                ..ConfigResponse::default()
+            },
+            models: ModelsResponse {
+                models: vec!["provider/one".to_string(), "provider/two".to_string()],
+                catalog_models: vec!["provider/one".to_string(), "provider/two".to_string()],
+                ..ModelsResponse::default()
+            },
+            status: json!({"status": "prelaunch", "host": "127.0.0.1", "port": 8082}),
+            ..BootstrapState::default()
+        };
+        let api = AdminClient::new("http://127.0.0.1:8082").unwrap();
+        let mut app = App::from_bootstrap(api, state, None, result_path.clone());
+        app.page = Page::Models;
+        app.browser.selected = 1;
+
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+
+        let result: Value = serde_json::from_str(
+            &fs::read_to_string(&result_path).expect("bootstrap result should exist"),
+        )
+        .unwrap();
+        assert_eq!(result["values"][MODEL_KEY], "provider/two");
+        assert_eq!(result["start_server"], false);
+        assert!(!app.browser.dirty());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&result_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let _ = fs::remove_file(result_path);
+    }
+
+    #[test]
+    fn bootstrap_quit_auto_saves_pending_model_change() {
+        use std::fs;
+
+        let result_path = std::env::temp_dir().join(format!(
+            "fcc-control-center-test-{}-quit.json",
+            std::process::id()
+        ));
+        let state = BootstrapState {
+            config: ConfigResponse {
+                fields: vec![ConfigField {
+                    key: MODEL_KEY.to_string(),
+                    value: "provider/one".to_string(),
+                    configured: true,
+                    ..ConfigField::default()
+                }],
+                ..ConfigResponse::default()
+            },
+            models: ModelsResponse {
+                models: vec!["provider/one".to_string(), "provider/two".to_string()],
+                ..ModelsResponse::default()
+            },
+            ..BootstrapState::default()
+        };
+        let api = AdminClient::new("http://127.0.0.1:8082").unwrap();
+        let mut app = App::from_bootstrap(api, state, None, result_path.clone());
+        app.page = Page::Models;
+        app.browser.selected = 1;
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        let result: Value =
+            serde_json::from_str(&fs::read_to_string(&result_path).unwrap()).unwrap();
+        assert_eq!(result["values"][MODEL_KEY], "provider/two");
+        assert_eq!(result["start_server"], false);
+        assert!(app.should_quit);
+        let _ = fs::remove_file(result_path);
+    }
+
+    #[test]
+    fn launch_path_follows_highlighted_repository_not_stale_persisted_path() {
+        let mut app = App::fixture();
+        app.repositories = vec![
+            Repository {
+                path: "/sandbox/first".to_string(),
+                ..Repository::default()
+            },
+            Repository {
+                path: "/sandbox/selected".to_string(),
+                ..Repository::default()
+            },
+        ];
+        app.repository_selected = 1;
+        app.selected_repo_path = Some("/sandbox/first".to_string());
+
+        assert_eq!(app.launch_repository_path(), Some("/sandbox/selected"));
+    }
+
+    #[test]
+    fn direct_bootstrap_uses_repository_selection_as_final_launch_handoff() {
+        use std::fs;
+
+        let result_path = std::env::temp_dir().join(format!(
+            "fcc-control-center-test-{}-direct.json",
+            std::process::id()
+        ));
+        let repository_path = std::env::temp_dir().join(format!(
+            "fcc-control-center-test-{}-repository",
+            std::process::id()
+        ));
+        let state = BootstrapState {
+            models: ModelsResponse {
+                models: vec!["provider/one".to_string()],
+                ..ModelsResponse::default()
+            },
+            repositories: RepositoriesResponse {
+                repositories: vec![Repository {
+                    path: repository_path.to_string_lossy().into_owned(),
+                    identity: "owner/repository".to_string(),
+                    ..Repository::default()
+                }],
+                ..RepositoriesResponse::default()
+            },
+            launch_after_repository: true,
+            launch_danger: true,
+            ..BootstrapState::default()
+        };
+        let api = AdminClient::new("http://127.0.0.1:8082").unwrap();
+        let mut app = App::from_bootstrap(api, state, None, result_path.clone());
+
+        assert_eq!(app.bootstrap_repository_action_label(), "Launch danger");
+        app.page = Page::Repositories;
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        let result: Value =
+            serde_json::from_str(&fs::read_to_string(&result_path).unwrap()).unwrap();
+        assert_eq!(
+            result["selected_repository"],
+            repository_path.to_string_lossy().as_ref()
+        );
+        assert_eq!(result["start_server"], true);
+        assert!(app.should_quit);
+
+        let _ = fs::remove_file(result_path);
+    }
+
+    #[test]
+    fn modified_model_click_toggles_access_but_plain_click_only_selects() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/one".to_string(), "provider/two".to_string()];
+        app.models.catalog_models = app.models.models.clone();
+        app.config.fields.extend([
+            ConfigField {
+                key: "MODEL_CATALOG_MODE".to_string(),
+                value: "curated".to_string(),
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "MODEL_CATALOG_ALLOWLIST".to_string(),
+                value: "provider/one".to_string(),
+                ..ConfigField::default()
+            },
+        ]);
+        app.sync_model_browser();
+        app.browser.toggle_catalog();
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &mut app))
+            .unwrap();
+        let rect = app
+            .hitboxes
+            .iter()
+            .find_map(|hitbox| match &hitbox.action {
+                UiAction::SelectModel(1) => Some(hitbox.rect),
+                _ => None,
+            })
+            .expect("second model row should have a hitbox");
+
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        assert!(!app.browser.is_enabled("provider/two"));
+
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::SHIFT,
+        }))
+        .unwrap();
+        assert!(app.browser.is_enabled("provider/two"));
+    }
+
+    #[test]
+    fn list_navigation_stops_at_model_edges() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["provider/one".to_string(), "provider/two".to_string()];
+        app.models.catalog_models = app.models.models.clone();
+        app.sync_model_browser();
+
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)))
+            .unwrap();
+        assert_eq!(app.browser.selected, 0);
+
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+            .unwrap();
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+            .unwrap();
+        assert_eq!(app.browser.selected, 1);
     }
 }

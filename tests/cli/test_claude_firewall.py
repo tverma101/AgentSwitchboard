@@ -41,8 +41,6 @@ def test_process_wrapper_is_private_silent_and_reexecs(tmp_path) -> None:
         **os.environ,
         "ANTHROPIC_BASE_URL": "http://127.0.0.1:8082",
         "ANTHROPIC_AUTH_TOKEN": "fcc-no-auth",
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "256000",
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "256000",
     }
     result = subprocess.run(
         [str(wrapper), sys.executable, "-c", "print('wrapper-ok')"],
@@ -67,6 +65,45 @@ def test_process_wrapper_fails_closed_when_proxy_env_is_missing(tmp_path) -> Non
     )
     assert result.returncode == 78
     assert result.stdout == ""
+
+
+def test_legacy_context_wrapper_is_migrated_without_context_variables(tmp_path) -> None:
+    wrapper = tmp_path / "wrapper"
+    wrapper.write_text(
+        """#!/bin/sh
+# FCC-generated Claude Code self-spawn firewall. Keep this script silent.
+set -eu
+: \"${ANTHROPIC_BASE_URL:-}\"
+: \"${ANTHROPIC_AUTH_TOKEN:?FCC proxy auth is missing}\"
+: \"${CLAUDE_CODE_MAX_CONTEXT_TOKENS:?FCC context cap is missing}\"
+: \"${CLAUDE_CODE_AUTO_COMPACT_WINDOW:?FCC auto-compact policy is missing}\"
+exec \"$@\"
+""",
+        encoding="utf-8",
+    )
+    wrapper.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+
+    migrated = ensure_process_wrapper(wrapper)
+
+    assert migrated == wrapper
+    body = wrapper.read_text(encoding="utf-8")
+    assert "proxy-transport-v2" in body
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in body
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in body
+
+    result = subprocess.run(
+        [str(wrapper), sys.executable, "-c", "print('migrated-ok')"],
+        capture_output=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:8082",
+            "ANTHROPIC_AUTH_TOKEN": "fcc-no-auth",
+        },
+        text=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "migrated-ok"
 
 
 def test_exact_known_good_version_is_certified(tmp_path) -> None:

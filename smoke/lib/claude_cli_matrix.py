@@ -184,7 +184,7 @@ def _build_claude_cli_env(
     config: SmokeConfig,
     context_cap_tokens: int | None,
     env_overrides: Mapping[str, str] | None,
-) -> tuple[dict[str, str], int]:
+) -> tuple[dict[str, str], int | None]:
     """Build the exact environment for foreground and attached CLI sessions."""
 
     base_env = os.environ.copy()
@@ -200,7 +200,8 @@ def _build_claude_cli_env(
     env["TERM"] = "dumb"
     env["NO_COLOR"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    return env, int(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+    compact_window = env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+    return env, int(compact_window) if compact_window is not None else None
 
 
 def _extract_background_session_id(run: ClaudeCliRun) -> str | None:

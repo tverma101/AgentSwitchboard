@@ -73,18 +73,14 @@ safe to include when inspecting the matching local server receipt.
 
 ## Compact or resume fails
 
-Keep the client context cap within the supported range and retry with a normal
-multi-turn conversation. FCC launches Claude with an explicit auto-compact
-window and a 75% default threshold, while removing inherited `DISABLE_COMPACT`
-and `DISABLE_AUTO_COMPACT`, plus the legacy unknown-model wait override.
-Provider completion receipts are reconciled to the same governed input estimate
-including cache-read and cache-write buckets. Restart `fcc-claude` after
-changing the launcher or environment; an already-running Claude process cannot inherit
-the corrected boundary. A single huge message is not a valid compaction proof;
-Claude requires enough distinct conversation groups before `/compact` can run.
-The release receipt requires an actual compact success/boundary event and a
-continuation marker. The global context policy is advisory, while the launcher
-context cap is the enforced client budget.
+FCC's client context/compaction intervention is disabled on standard launches
+because it is not certified against the active Claude Code client. Standard FCC
+does not set the context window, auto-compact threshold, MCP output cap, or
+compaction flags; Claude Code and the user's environment own those values. The
+sandbox intentionally sets only its bounded 256K context/auto-compact pair.
+If the user explicitly enables `FCC_CONTEXT_GOVERNOR_ENABLED=true` for a
+broader bounded experiment, restart the server before interpreting artifact or
+count-token behavior. A running Claude process keeps its own existing policy.
 
 ## Provider authentication or usage limit failures
 

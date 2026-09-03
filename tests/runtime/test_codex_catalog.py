@@ -71,7 +71,9 @@ def test_publisher_projects_the_application_catalog_without_compatibility_ids(
 
     assert _catalog_slugs(catalog_path) == [
         "nvidia_nim/configured",
+        "claude-3-freecc-ultra/nvidia_nim/configured",
         "open_router/discovered",
+        "claude-3-freecc-ultra/open_router/discovered",
     ]
 
 
@@ -84,7 +86,9 @@ def test_startup_publication_creates_missing_catalog_and_preserves_existing(
     publisher.ensure_exists(_runtime())
     assert _catalog_slugs(catalog_path) == [
         "nvidia_nim/configured",
+        "claude-3-freecc-ultra/nvidia_nim/configured",
         "open_router/discovered",
+        "claude-3-freecc-ultra/open_router/discovered",
     ]
 
     catalog_path.write_text("complete prior catalog\n", encoding="utf-8")

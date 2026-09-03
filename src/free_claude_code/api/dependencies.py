@@ -48,25 +48,27 @@ def require_proxy_auth(
     request: Request,
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Require the configured proxy token as HTTP bearer authorization."""
+    """Require the configured proxy token using bearer or Anthropic API-key auth."""
     anthropic_auth_token = settings.anthropic_auth_token.strip()
     if not anthropic_auth_token:
         return
 
     authorization = request.headers.get("authorization")
-    if not authorization:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing proxy authentication token",
-        )
-
-    parts = authorization.strip().split(maxsplit=1)
-    if len(parts) != 2 or parts[0].casefold() != "bearer":
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid proxy authentication token",
-        )
-    token = parts[1].strip()
+    if authorization:
+        parts = authorization.strip().split(maxsplit=1)
+        if len(parts) != 2 or parts[0].casefold() != "bearer":
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid proxy authentication token",
+            )
+        token = parts[1].strip()
+    else:
+        token = request.headers.get("x-api-key", "").strip()
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing proxy authentication token",
+            )
 
     if not token or not secrets.compare_digest(
         token.encode("utf-8"),

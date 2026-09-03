@@ -1,5 +1,6 @@
 """Shared process helpers for installed client CLI launchers."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -15,21 +16,46 @@ from free_claude_code.cli.process_registry import (
     unregister_pid,
 )
 from free_claude_code.core.process_identity import set_process_identity
+from free_claude_code.core.server_identity import (
+    SERVER_HEALTH_PROTOCOL,
+    SERVER_SERVICE_NAME,
+)
 
 PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
 
 
-class ClientLaunchError(RuntimeError):
-    """A client launch failed while called from an interactive control surface."""
+class ServerProbeResult:
+    """Credential-free result of probing one local FCC health endpoint."""
 
-    def __init__(self, message: str, exit_code: int) -> None:
-        super().__init__(message)
-        self.exit_code = exit_code
+    def __init__(
+        self,
+        *,
+        healthy: bool,
+        error: str | None = None,
+        payload: Mapping[str, object] | None = None,
+    ) -> None:
+        self.healthy = healthy
+        self.error = error
+        self.payload = payload or {}
+
+    @property
+    def foreign(self) -> bool:
+        """Whether a responsive endpoint failed FCC identity validation."""
+
+        return (
+            not self.healthy
+            and self.error is not None
+            and self.error.startswith("foreign service")
+        )
 
 
-def preflight_proxy(proxy_root_url: str) -> str | None:
-    """Return an error message when the local proxy health check is unreachable."""
+def probe_server(
+    proxy_root_url: str,
+    *,
+    expected_mode: str | None = None,
+) -> ServerProbeResult:
+    """Probe and validate the FCC health identity at a local URL."""
 
     url = f"{proxy_root_url.rstrip('/')}{PROXY_PREFLIGHT_PATH}"
     request = Request(url, method="GET")
@@ -38,16 +64,82 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
             request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
         ) as response:
             status_code = response.getcode()
+            raw_body = response.read()
     except HTTPError as exc:
-        return f"returned HTTP {exc.code}"
+        return ServerProbeResult(healthy=False, error=f"returned HTTP {exc.code}")
     except URLError as exc:
-        return str(exc.reason)
+        return ServerProbeResult(healthy=False, error=str(exc.reason))
     except OSError as exc:
-        return str(exc)
+        return ServerProbeResult(healthy=False, error=str(exc))
 
     if not 200 <= status_code < 300:
-        return f"returned HTTP {status_code}"
-    return None
+        return ServerProbeResult(healthy=False, error=f"returned HTTP {status_code}")
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except UnicodeDecodeError, json.JSONDecodeError:
+        return ServerProbeResult(
+            healthy=False,
+            error="foreign service: health response was not FCC JSON",
+        )
+    if not isinstance(payload, dict):
+        return ServerProbeResult(
+            healthy=False, error="foreign service: health response was not an object"
+        )
+    if (
+        payload.get("service") != SERVER_SERVICE_NAME
+        or payload.get("protocol") != SERVER_HEALTH_PROTOCOL
+    ):
+        return ServerProbeResult(
+            healthy=False,
+            error="foreign service: FCC identity is missing or unsupported",
+            payload=payload,
+        )
+    if expected_mode is not None and payload.get("mode") != expected_mode:
+        return ServerProbeResult(
+            healthy=False,
+            error=(
+                f"foreign service: expected FCC mode {expected_mode!r}, "
+                f"found {payload.get('mode', 'unknown')!r}"
+            ),
+            payload=payload,
+        )
+    return ServerProbeResult(healthy=True, payload=payload)
+
+
+def preflight_proxy(
+    proxy_root_url: str,
+    *,
+    expected_mode: str | None = None,
+) -> str | None:
+    """Return an error message when the local proxy health check is unreachable."""
+
+    if expected_mode is None:
+        # Preserve the lightweight compatibility probe for client launchers that
+        # only need to know whether an HTTP listener is accepting requests.
+        url = f"{proxy_root_url.rstrip('/')}{PROXY_PREFLIGHT_PATH}"
+        request = Request(url, method="GET")
+        try:
+            with open_local_request(
+                request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
+            ) as response:
+                status_code = response.getcode()
+        except HTTPError as exc:
+            return f"returned HTTP {exc.code}"
+        except URLError as exc:
+            return str(exc.reason)
+        except OSError as exc:
+            return str(exc)
+        return None if 200 <= status_code < 300 else f"returned HTTP {status_code}"
+    result = probe_server(proxy_root_url, expected_mode=expected_mode)
+    return None if result.healthy else result.error
+
+
+class ClientLaunchError(RuntimeError):
+    """A client launch failed while called from an interactive control surface."""
+
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
 
 
 def resolve_client_binary(

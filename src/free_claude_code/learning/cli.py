@@ -46,6 +46,15 @@ from .stop_hook import drain_queue
 from .store import LearningStore, learning_home, project_identity
 
 
+def _fcc_config_dir_path() -> Path:
+    """Mirror the shared config override without crossing the package boundary."""
+
+    override = os.environ.get("FCC_CONFIG_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".fcc"
+
+
 def _cwd(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cwd", default=os.getcwd(), help="project directory for scoped state"
@@ -392,7 +401,7 @@ def _reviewer_command(args: argparse.Namespace) -> dict[str, object]:
 def _context_artifact_root() -> str:
     configured = os.environ.get("FCC_CONTEXT_GOVERNOR_ARTIFACT_DIR", "").strip()
     if not configured:
-        env_files = [Path(".env"), Path.home() / ".fcc" / ".env"]
+        env_files = [Path(".env"), _fcc_config_dir_path() / ".env"]
         if explicit := os.environ.get("FCC_ENV_FILE"):
             env_files.append(Path(explicit).expanduser())
         for env_file in env_files:
@@ -402,7 +411,7 @@ def _context_artifact_root() -> str:
                 continue
             if isinstance(value, str) and value.strip():
                 configured = value.strip()
-    return configured or str(Path.home() / ".fcc" / "context-artifacts")
+    return configured or str(_fcc_config_dir_path() / "context-artifacts")
 
 
 def main() -> None:

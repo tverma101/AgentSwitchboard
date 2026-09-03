@@ -1,5 +1,5 @@
 // Adapted from OpenAI's Codex screenshot skill (Apache-2.0).
-// Harness narrows the helper to exactly one frontmost layer-0 window by PID.
+// AgentSwitchboard narrows the helper to exactly one frontmost layer-0 window by PID.
 
 import AppKit
 import CoreGraphics

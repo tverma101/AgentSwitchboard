@@ -17,6 +17,7 @@ from free_claude_code.application.model_metadata import (
     ProviderModelInfo,
     ProviderModelRefreshResult,
 )
+from free_claude_code.cli.repo_picker import RepoEntry
 from free_claude_code.config.admin.values import MASKED_SECRET
 from free_claude_code.config.model_catalog import ModelCatalogMode
 from free_claude_code.config.server_urls import local_admin_url
@@ -48,6 +49,7 @@ def _clear_process_config(monkeypatch) -> None:
         "ANTHROPIC_AUTH_TOKEN",
         "TELEGRAM_PROXY_URL",
         "FCC_ENV_FILE",
+        "FCC_SERVER_MODE",
         "CLOUDFLARE_API_TOKEN",
         "CLOUDFLARE_ACCOUNT_ID",
         "GITHUB_MODELS_TOKEN",
@@ -256,6 +258,39 @@ def test_admin_connected_account_routes_are_safe_loopback_only_and_uncached(
     assert account.cancelled is True
     remote = TestClient(app, client=("203.0.113.10", 50000))
     assert remote.get("/admin/api/providers/openai/auth").status_code == 403
+
+
+def test_admin_provider_inventory_reflects_live_connected_account_state(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    account = _FakeConnectedAccount()
+    account.connected = True
+    account.revision = 1
+    app = create_test_app(connected_accounts={"openai": account})
+    client = _local_client(app)
+
+    status = client.get("/admin/api/status").json()
+    config = client.get("/admin/api/config").json()
+    models = client.get("/admin/api/models").json()
+
+    status_provider = next(
+        item for item in status["provider_status"] if item["provider_id"] == "openai"
+    )
+    config_provider = next(
+        item for item in config["provider_status"] if item["provider_id"] == "openai"
+    )
+    models_provider = next(
+        item for item in models["provider_status"] if item["provider_id"] == "openai"
+    )
+
+    for provider in (status_provider, config_provider, models_provider):
+        assert provider["status"] == "connected"
+        assert provider["label"] == "Connected"
+    assert status_provider["connected"] is True
+    assert status_provider["state"] == "connected"
+    assert "email" not in config_provider
+    assert "authorization_url" not in config_provider
 
 
 def test_admin_rejects_auth_routes_for_non_connected_provider(monkeypatch, tmp_path):
@@ -473,6 +508,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         {"value": "high", "label": "High"},
         {"value": "xhigh", "label": "X-High"},
         {"value": "max", "label": "Max"},
+        {"value": "ultracode", "label": "Ultracode (→ xhigh)"},
     ]
     route_reasoning = next(
         field for field in body["fields"] if field["key"] == "REASONING_FABLE"
@@ -523,6 +559,42 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     } <= restart_required
 
 
+def test_admin_manifest_exposes_ultracode_for_all_model_routes(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+
+    response = _local_client(create_test_app()).get("/admin/api/config")
+
+    assert response.status_code == 200
+    body = response.json()
+    reasoning_policy = next(
+        field for field in body["fields"] if field["key"] == "REASONING_POLICY"
+    )
+    expected_ultracode = {
+        "value": "ultracode",
+        "label": "Ultracode (→ xhigh)",
+    }
+    assert reasoning_policy["options"][-1] == expected_ultracode
+    for field in body["fields"]:
+        if field["key"].startswith("REASONING_"):
+            assert field["options"][-1] == expected_ultracode
+
+
+def test_admin_accepts_ultracode_update_on_standard_server(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+
+    response = _local_client(create_test_app()).post(
+        "/admin/api/config/validate",
+        json={"values": {"REASONING_POLICY": "ultracode"}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is True
+    assert body["errors"] == []
+
+
 def test_admin_models_include_configured_and_cached_canonical_slugs():
     settings = Settings()
     settings.model = "nvidia_nim/configured-model"
@@ -559,6 +631,70 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
         "confidence": "unknown",
         "source": "unknown",
     }
+
+
+def test_admin_repositories_returns_only_sanitized_local_inventory(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    repo = RepoEntry(
+        name="switchboard",
+        path=str(tmp_path / "switchboard"),
+        branch="main",
+        remote="tverma101/AgentSwitchboard",
+    )
+    with patch(
+        "free_claude_code.api.admin_routes.load_repository_inventory",
+        return_value=([repo], repo.path),
+    ):
+        response = _local_client(create_test_app()).get("/admin/api/repositories")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "repositories": [
+            {
+                "name": "switchboard",
+                "path": str(tmp_path / "switchboard"),
+                "branch": "main",
+                "remote": "tverma101/AgentSwitchboard",
+                "last_used": 0.0,
+                "display_path": repo.display_path,
+                "repository_name": "AgentSwitchboard",
+                "identity": "tverma101/AgentSwitchboard",
+                "selection_detail": (
+                    f"checkout switchboard · branch main · {repo.display_path}"
+                ),
+            }
+        ],
+        "selected_path": repo.path,
+    }
+
+
+def test_admin_repository_selection_uses_canonical_validation_and_reports_cache_state(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    repo = RepoEntry(
+        name="switchboard",
+        path=str(tmp_path / "switchboard"),
+        branch="main",
+        remote="tverma101/AgentSwitchboard",
+    )
+    with patch(
+        "free_claude_code.api.admin_routes.select_local_repository",
+        return_value=(repo, True),
+    ) as select:
+        response = _local_client(create_test_app()).post(
+            "/admin/api/repositories/select",
+            json={"path": repo.path},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["repository"]["identity"] == "tverma101/AgentSwitchboard"
+    assert response.json()["persisted"] is True
+    select.assert_called_once_with(repo.path)
 
 
 def test_admin_models_expose_configured_provider_before_first_discovery(
@@ -612,6 +748,33 @@ def test_admin_models_keep_the_picker_catalog_separate_from_visible_models() -> 
         "open_router/hidden-model",
         "open_router/visible-model",
     ]
+
+
+def test_admin_models_expose_the_exact_claude_registry_for_tui_sync() -> None:
+    settings = Settings()
+    settings.anthropic_auth_token = ""
+    settings.model = "open_router/visible-model"
+    settings.open_router_api_key = "open-router-key"
+    app = create_test_app(settings)
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {ProviderModelInfo("visible-model")},
+    )
+    client = _local_client(app)
+
+    admin = client.get("/admin/api/models")
+    claude = client.get("/v1/models")
+
+    assert admin.status_code == 200
+    assert claude.status_code == 200
+    admin_body = admin.json()
+    claude_models = claude.json()["data"]
+    assert admin_body["claude_models"] == [model["id"] for model in claude_models]
+    assert admin_body["claude_model_labels"] == {
+        model["id"]: model["display_name"] for model in claude_models
+    }
+    assert "anthropic/open_router/visible-model" in admin_body["claude_models"]
+    assert "open_router/visible-model" in admin_body["catalog_models"]
 
 
 def test_admin_models_expose_capability_evidence_provenance() -> None:

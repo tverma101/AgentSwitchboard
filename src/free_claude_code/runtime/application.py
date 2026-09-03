@@ -17,6 +17,7 @@ import free_claude_code.messaging.workflow as messaging_workflow_module
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
     ConnectedAccountPort,
+    ConnectedAccountState,
     ConnectedAccountStatus,
 )
 from free_claude_code.application.errors import ApplicationUnavailableError
@@ -50,6 +51,7 @@ from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.server_identity import server_identity_payload
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
 from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
 from free_claude_code.messaging.platforms.ports import (
@@ -61,6 +63,18 @@ from free_claude_code.messaging.voice import Transcriber
 from .provider_manager import ProviderRuntimeManager
 
 RestartCallback = Callable[[], Awaitable[None] | None]
+
+
+def _connected_account_label(status: ConnectedAccountStatus) -> str:
+    """Return a short live label without exposing account metadata."""
+
+    if status.state is ConnectedAccountState.CONNECTING:
+        return "Connecting"
+    if status.state is ConnectedAccountState.ERROR:
+        return "Needs attention"
+    if status.connected:
+        return "Connected"
+    return "Not connected"
 
 
 async def best_effort(
@@ -245,22 +259,62 @@ class ApplicationRuntime:
     def admin_status(self) -> dict[str, Any]:
         settings = self.settings
         session_policy = self.provider_manager.current_session_policy()
-        return {
-            "status": "running",
-            "host": settings.host,
-            "port": settings.port,
-            "model": settings.model,
-            "provider": parse_provider_type(settings.model),
-            "pending_fields": list(self._pending_fields),
-            "provider_status": provider_config_status(load_value_state()),
-            "session_policy": (
-                session_policy.receipt() if session_policy is not None else None
-            ),
-            "cached_models": {
-                provider_id: sorted(model_ids)
-                for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
-            },
+        status = server_identity_payload(settings)
+        status.update(
+            {
+                "status": "running",
+                "model": settings.model,
+                "provider": parse_provider_type(settings.model),
+            }
+        )
+        status.update(
+            {
+                "pending_fields": list(self._pending_fields),
+                "provider_status": self._provider_status(),
+                "session_policy": (
+                    session_policy.receipt() if session_policy is not None else None
+                ),
+                "cached_models": {
+                    provider_id: sorted(model_ids)
+                    for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
+                },
+            }
+        )
+        return status
+
+    def _provider_status(self) -> list[dict[str, Any]]:
+        """Overlay live connected-account state on the config-only inventory.
+
+        ``provider_config_status`` deliberately does not perform I/O and therefore
+        cannot know whether a connected-account provider has usable credentials.
+        The runtime owns those account managers, so this is the single place where
+        the safe, credential-free live state is merged into Admin responses.
+        """
+
+        statuses = provider_config_status(load_value_state())
+        by_provider_id = {
+            str(status["provider_id"]): status
+            for status in statuses
+            if "provider_id" in status
         }
+        for provider_id, manager in self._connected_accounts.items():
+            status = by_provider_id.get(provider_id)
+            if status is None:
+                continue
+
+            live = manager.status()
+            state = live.state.value
+            status.update(
+                {
+                    "connected": live.connected,
+                    "state": state,
+                    # A reconnect can be in progress while the previously saved
+                    # credentials remain usable. Keep that provider registered.
+                    "status": ("connected" if live.connected else state),
+                    "label": _connected_account_label(live),
+                }
+            )
+        return statuses
 
     async def test_provider(self, provider_id: str) -> dict[str, Any]:
         lease = await self.provider_manager.acquire()

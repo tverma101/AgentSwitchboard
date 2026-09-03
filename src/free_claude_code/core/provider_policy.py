@@ -24,6 +24,10 @@ class ProviderPolicy:
     primary_provider: str
     primary_model: str
     allowed_helpers: frozenset[str] = frozenset()
+    # Configured providers are additional model lanes. They are not helper
+    # providers and must not require the broader allow-listed mode merely
+    # because the user configured them in FCC.
+    allowed_provider_families: frozenset[str] = frozenset()
     allowed_local_tools: frozenset[str] = frozenset({"computer", "browser"})
     forbidden_provider_families: frozenset[str] = frozenset(
         {"anthropic", "openai", "codex", "chatgpt"}
@@ -54,7 +58,10 @@ class ProviderEgressGuard:
         destination_host: str | None = None,
     ) -> bool:
         family = provider_family.strip().lower()
-        allowed = family == self.policy.primary_provider.lower()
+        allowed = family in {
+            self.policy.primary_provider.lower(),
+            *(provider.lower() for provider in self.policy.allowed_provider_families),
+        }
         if category == "local_tool":
             allowed = family == "local" or family in {
                 tool.lower() for tool in self.policy.allowed_local_tools
@@ -111,9 +118,17 @@ class ProviderEgressGuard:
             if category != "local_tool" and (
                 provider_family is None
                 or provider_family.strip().lower()
-                != self.policy.primary_provider.lower()
+                not in {
+                    self.policy.primary_provider.lower(),
+                    *(
+                        provider.lower()
+                        for provider in self.policy.allowed_provider_families
+                    ),
+                }
             ):
-                raise ProviderPolicyError("local URL is only valid for local tools")
+                raise ProviderPolicyError(
+                    "local URL is only valid for the primary or explicitly registered provider"
+                )
             if category != "local_tool":
                 return self.authorize(
                     provider_family or self.policy.primary_provider,
@@ -137,6 +152,7 @@ class ProviderEgressGuard:
             "primary_model": self.policy.primary_model,
             "mode": self.policy.mode.value,
             "paid_fallback": self.policy.paid_fallback,
+            "allowed_provider_families": sorted(self.policy.allowed_provider_families),
             "counts": dict(sorted(self._counts.items())),
             "blocked_counts": dict(sorted(self._blocked_counts.items())),
         }

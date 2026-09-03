@@ -10,8 +10,8 @@ Every Claude-facing capability belongs to one of three categories:
 | TUI / composer / live input queue | **DELEGATE** | Claude Code owns queueing and steering UX; FCC preserves resulting message semantics. |
 | Built-in subagent orchestration | **DELEGATE** | Claude owns orchestration; FCC only contains inherited provider/policy routing. |
 | Permissions and session UX | **DELEGATE** | Do not recreate Claude permission/session machinery. |
-| Hook lifecycle | **DELEGATE** | Use supported hooks; FCC may attach bounded context but does not replace the lifecycle. |
-| Client compaction decision and UI | **DELEGATE** | Preserve Claude's supported compaction path; adapt only provider/context limits that cross the gateway. |
+| Hook lifecycle | **DELEGATE** | Use supported hooks; FCC does not inject context into the lifecycle by default. |
+| Client compaction decision and UI | **DELEGATE** | Preserve Claude's supported compaction path; standard FCC's former context intervention is disabled, while sandbox exposes only its bounded 256K window contract. |
 | MCP registration/loading | **DELEGATE** where Claude supports it | Register compatible MCP surfaces and let Claude own discovery/loading. |
 | Model/provider IDs | **TRANSLATE** | Map the Claude-facing model choice to the selected provider route. |
 | Anthropic Messages to provider protocol | **TRANSLATE** | Preserve semantics for Responses/Chat/native Messages. |

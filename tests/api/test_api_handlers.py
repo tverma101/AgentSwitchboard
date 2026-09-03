@@ -14,6 +14,7 @@ from free_claude_code.api.handlers import (
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.routing import ParentRouteRegistry
+from free_claude_code.config.provider_catalog import SUPPORTED_PROVIDER_IDS
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.content import get_block_attr
 from free_claude_code.core.anthropic.models import (
@@ -132,6 +133,34 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider_id", SUPPORTED_PROVIDER_IDS)
+async def test_messages_proxy_dispatches_exact_registered_provider_route(
+    provider_id: str,
+) -> None:
+    """Every catalog provider reaches the selected provider with its exact model."""
+    provider = FakeProvider()
+    provider_resolver = MagicMock(return_value=provider)
+    handler = MessagesHandler(Settings(), provider_resolver=provider_resolver)
+    model_ref = f"{provider_id}/registered-model/with-slash"
+
+    response = await handler.create(
+        MessagesRequest(
+            model=model_ref,
+            max_tokens=100,
+            stream=True,
+            messages=[Message(role="user", content="proxy contract")],
+        )
+    )
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
+
+    provider_resolver.assert_called_once_with(provider_id)
+    assert provider.preflight_calls[0][0].model == "registered-model/with-slash"
+    assert provider.requests[0].model == "registered-model/with-slash"
+    assert provider.stream_kwargs[0]["response_model"] == model_ref
+
+
+@pytest.mark.asyncio
 async def test_messages_handler_keeps_session_affinity_metadata_internal() -> None:
     provider = FakeProvider()
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
@@ -198,7 +227,10 @@ async def test_messages_handler_inherits_parent_route_for_logical_child_models()
 async def test_messages_handler_governs_large_tool_result_before_provider() -> None:
     provider = FakeProvider()
     settings = Settings().model_copy(
-        update={"context_governor_tool_result_max_bytes": 4096}
+        update={
+            "context_governor_enabled": True,
+            "context_governor_tool_result_max_bytes": 4096,
+        }
     )
     handler = MessagesHandler(
         settings,
@@ -312,7 +344,10 @@ async def test_messages_handler_preserves_the_complete_image_by_default() -> Non
 
     provider = FakeProvider()
     settings = Settings().model_copy(
-        update={"context_governor_tool_result_max_bytes": 512}
+        update={
+            "context_governor_enabled": True,
+            "context_governor_tool_result_max_bytes": 512,
+        }
     )
     handler = MessagesHandler(settings, provider_resolver=lambda _: provider)
     image = {
@@ -348,7 +383,10 @@ async def test_messages_handler_preserves_large_image_tool_result_for_vision_mod
 ):
     provider = FakeProvider()
     settings = Settings().model_copy(
-        update={"context_governor_tool_result_max_bytes": 4096}
+        update={
+            "context_governor_enabled": True,
+            "context_governor_tool_result_max_bytes": 4096,
+        }
     )
     handler = MessagesHandler(
         settings,
@@ -1049,6 +1087,7 @@ def test_token_count_handler_counts_the_governed_payload(tmp_path) -> None:
     seen_messages: list[list[Message]] = []
     settings = Settings().model_copy(
         update={
+            "context_governor_enabled": True,
             "context_governor_tool_result_max_bytes": 4096,
             "context_governor_artifact_dir": str(tmp_path),
         }
@@ -1092,6 +1131,7 @@ def test_token_count_handler_reports_unsafe_structured_results_as_bad_request(
 ) -> None:
     settings = Settings().model_copy(
         update={
+            "context_governor_enabled": True,
             "context_governor_tool_result_max_bytes": 4096,
             "context_governor_artifact_dir": str(tmp_path),
         }

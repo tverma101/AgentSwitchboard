@@ -1,8 +1,12 @@
 """Provider-prefixed model reference helpers."""
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Protocol
+
+MODEL_CONTEXT_WINDOW_MIN = 32_000
+MODEL_CONTEXT_WINDOW_MAX = 1_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +51,50 @@ def normalize_model_ref(model_ref: str) -> NormalizedModelRef:
         model_ref=match.group("model"),
         virtual_context_window=amount * multiplier,
     )
+
+
+def parse_model_context_windows(value: str) -> dict[str, int]:
+    """Parse a bounded manual per-model context-window mapping.
+
+    Accepted shape is a JSON object mapping exact ``provider/model`` refs to
+    token counts from 32K through 1M, e.g.
+    ``{"opencode_go/muse-spark": 1000000}``. Blank input means no overrides.
+    Anything else raises ``ValueError`` so a typo or unsafe window fails fast
+    at settings validation instead of silently misrouting a session's context
+    budget.
+    """
+
+    if not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"MODEL_CONTEXT_WINDOWS must be a JSON object: {exc.msg}"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("MODEL_CONTEXT_WINDOWS must be a JSON object")
+    windows: dict[str, int] = {}
+    for key, tokens in parsed.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("MODEL_CONTEXT_WINDOWS keys must be non-empty strings")
+        ref = key.strip()
+        if "/" not in ref:
+            raise ValueError(
+                f"MODEL_CONTEXT_WINDOWS key {ref!r} must be a provider/model ref"
+            )
+        if not isinstance(tokens, int) or isinstance(tokens, bool):
+            raise ValueError(
+                f"MODEL_CONTEXT_WINDOWS value for {ref!r} must be an integer "
+                f"between {MODEL_CONTEXT_WINDOW_MIN} and {MODEL_CONTEXT_WINDOW_MAX}"
+            )
+        if not MODEL_CONTEXT_WINDOW_MIN <= tokens <= MODEL_CONTEXT_WINDOW_MAX:
+            raise ValueError(
+                f"MODEL_CONTEXT_WINDOWS value for {ref!r} must be between "
+                f"{MODEL_CONTEXT_WINDOW_MIN} and {MODEL_CONTEXT_WINDOW_MAX}"
+            )
+        windows[ref] = tokens
+    return windows
 
 
 class ChatModelConfig(Protocol):

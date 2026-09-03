@@ -44,6 +44,8 @@ class TestSettings:
         monkeypatch.delenv("VERTEX_LOCATION", raising=False)
         monkeypatch.delenv("HTTP_READ_TIMEOUT", raising=False)
         monkeypatch.delenv("HTTP_CONNECT_TIMEOUT", raising=False)
+        monkeypatch.delenv("ENABLE_WEB_SERVER_TOOLS", raising=False)
+        monkeypatch.delenv("ENABLE_LOCAL_A3S_SEARCH", raising=False)
         monkeypatch.setitem(Settings.model_config, "env_file", ())
         settings = Settings()
         assert settings.model == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -52,9 +54,11 @@ class TestSettings:
         assert isinstance(settings.nim.temperature, float)
         assert isinstance(settings.fast_prefix_detection, bool)
         assert settings.reasoning_policy is ReasoningPreference.CLIENT
+        assert settings.context_governor_enabled is False
         assert settings.http_read_timeout == 120.0
         assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
         assert settings.enable_web_server_tools is False
+        assert settings.enable_local_a3s_search is False
         assert settings.log_raw_api_payloads is False
         assert settings.log_raw_sse_events is False
         assert settings.debug_platform_edits is False
@@ -344,6 +348,18 @@ class TestSettings:
         monkeypatch.setenv("REASONING_POLICY", "off")
         settings = Settings()
         assert settings.reasoning_policy is ReasoningPreference.OFF
+
+    def test_ultracode_reasoning_policy_is_loadable_for_local_routing(
+        self, monkeypatch
+    ):
+        """The local FCC alias is loaded as a typed reasoning preference."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("REASONING_POLICY", "ultracode")
+
+        settings = Settings()
+
+        assert settings.reasoning_policy is ReasoningPreference.ULTRACODE
 
     def test_root_reasoning_policy_cannot_inherit(self, monkeypatch):
         """Only route overrides may inherit."""
@@ -1212,6 +1228,47 @@ class TestPerModelMapping:
             == "Meta-Llama-3.3-70B-Instruct"
         )
         assert parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
+
+    def test_model_context_windows_from_env(self, monkeypatch):
+        """MODEL_CONTEXT_WINDOWS env var loads a manual per-model map."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv(
+            "MODEL_CONTEXT_WINDOWS",
+            '{"opencode_go/muse-spark-1.2-contributor": 1000000}',
+        )
+        s = Settings()
+        assert s.model_context_windows == (
+            '{"opencode_go/muse-spark-1.2-contributor": 1000000}'
+        )
+
+    def test_model_context_windows_rejects_malformed_map(self, monkeypatch):
+        """Malformed maps fail at settings validation, not at request time."""
+        from pydantic import ValidationError
+
+        from free_claude_code.config.settings import Settings
+
+        for bad in (
+            "not-json",
+            "[1, 2]",
+            '{"bare-model": 1000}',
+            '{"opencode_go/model": -5}',
+            '{"opencode_go/model": "1m"}',
+            '{"opencode_go/model": true}',
+        ):
+            monkeypatch.setenv("MODEL_CONTEXT_WINDOWS", bad)
+            with pytest.raises(ValidationError):
+                Settings()
+
+    def test_parse_model_context_windows_accepts_blank_and_valid_map(self):
+        from free_claude_code.config.model_refs import parse_model_context_windows
+
+        assert parse_model_context_windows("") == {}
+        assert parse_model_context_windows("   ") == {}
+        assert parse_model_context_windows('{"a/b": 32000, "c/d/e": 1000000}') == {
+            "a/b": 32_000,
+            "c/d/e": 1_000_000,
+        }
 
     def test_configured_chat_model_refs_collects_unique_models(self, monkeypatch):
         """Model discovery is limited to configured chat references."""

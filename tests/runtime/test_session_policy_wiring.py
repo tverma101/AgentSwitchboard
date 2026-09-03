@@ -1,5 +1,6 @@
 """Acceptance tests for launch-time session policy composition."""
 
+import json
 import threading
 from collections.abc import AsyncIterator, Mapping
 from typing import Any, cast
@@ -131,6 +132,7 @@ def _settings() -> Settings:
             "anthropic_auth_token": "unrelated-credential",
             "azure_openai_api_key": "unrelated-credential",
             "open_router_api_key": "unrelated-credential",
+            "nvidia_nim_api_key": "",
         }
     )
 
@@ -276,12 +278,18 @@ async def test_admin_status_publishes_generation_policy_receipt() -> None:
         "provider_policy_mode": "strict",
         "capability_routing_mode": "smart_local",
         "allowed_helpers": ["codex-computer-use"],
+        "allowed_provider_families": ["open_router", "opencode_go", "opencode_zen"],
         "paid_fallback": False,
         "egress": {
             "primary_model": "muse-spark-1.2-contributor",
             "primary_provider": "opencode_go",
             "mode": "strict",
             "paid_fallback": False,
+            "allowed_provider_families": [
+                "open_router",
+                "opencode_go",
+                "opencode_zen",
+            ],
             "counts": {},
             "blocked_counts": {},
         },
@@ -299,3 +307,60 @@ def test_settings_policy_builder_parses_admin_allowlist() -> None:
 
     assert policy.allowed_helper_ids == frozenset({"codex-computer-use"})
     assert policy.routing_policy.mode is CapabilityRoutingMode.SMART_LOCAL
+
+
+def test_settings_policy_allows_enabled_custom_provider_without_merging_provider_identity() -> (
+    None
+):
+    settings = _settings().model_copy(
+        update={
+            "custom_providers_json": json.dumps(
+                {
+                    "providers": [
+                        {
+                            "id": "cline",
+                            "display_name": "Cline",
+                            "base_url": "https://api.cline.bot/api/v1",
+                            "api_key": "test-token",
+                            "models": ["z-ai/glm-5.2:free"],
+                            "enabled": True,
+                        },
+                        {
+                            "id": "disabled-lane",
+                            "display_name": "Disabled lane",
+                            "base_url": "https://disabled.example.test/v1",
+                            "api_key": "test-token",
+                            "enabled": False,
+                        },
+                    ]
+                }
+            )
+        }
+    )
+
+    policy = build_session_execution_policy_for_settings(settings, _registry())
+
+    assert policy.provider_policy.primary_provider == "opencode_go"
+    assert policy.provider_policy.allowed_provider_families == frozenset(
+        {"cline", "open_router", "opencode_go", "opencode_zen"}
+    )
+    assert policy.egress_guard.authorize("cline") is True
+    assert policy.egress_guard.authorize("open_router") is True
+    with pytest.raises(ProviderPolicyError):
+        policy.egress_guard.authorize("nvidia_nim")
+    with pytest.raises(ProviderPolicyError):
+        policy.egress_guard.authorize("disabled-lane")
+
+
+def test_settings_policy_allows_configured_nvidia_nim_lane() -> None:
+    settings = _settings().model_copy(
+        update={
+            "nvidia_nim_api_key": "nvidia-test-key",
+            "model": "opencode_go/muse-spark-1.2-contributor",
+        }
+    )
+
+    policy = build_session_execution_policy_for_settings(settings, _registry())
+
+    assert "nvidia_nim" in policy.provider_policy.allowed_provider_families
+    assert policy.egress_guard.authorize("nvidia_nim") is True

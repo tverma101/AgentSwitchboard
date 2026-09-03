@@ -1,7 +1,7 @@
 """Direct bridge to OpenAI's signed Codex Computer Use host.
 
 Transport adapted from tmustier/codex-computer-use-mcp @ e90efa7b and
-manaflow-ai/codex-cua @ 3073c1f8 (both MIT). Harness does not reimplement
+manaflow-ai/codex-cua @ 3073c1f8 (both MIT). AgentSwitchboard does not reimplement
 macOS automation: it asks signed Codex ``app-server`` to dispatch the signed
 ``computer-use`` MCP tools, with model paths disabled.
 """

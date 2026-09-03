@@ -35,6 +35,41 @@ def test_think_tag_parser_streaming():
     assert chunks[0].content == "reasoning"
 
 
+def test_think_tag_parser_strips_summary_pair_as_thinking():
+    parser = ThinkTagParser()
+    chunks = list(parser.feed("Hello <summary>reasoning</summary> world"))
+
+    assert len(chunks) == 3
+    assert chunks[0].type == ContentType.TEXT
+    assert chunks[0].content == "Hello "
+    assert chunks[1].type == ContentType.THINKING
+    assert chunks[1].content == "reasoning"
+    assert chunks[2].type == ContentType.TEXT
+    assert chunks[2].content == " world"
+
+
+def test_think_tag_parser_strips_orphan_summary_close():
+    parser = ThinkTagParser()
+    chunks = list(parser.feed("answer text</summary> more text"))
+
+    assert "".join(chunk.content for chunk in chunks) == "answer text more text"
+    assert all(chunk.type == ContentType.TEXT for chunk in chunks)
+    assert "</summary>" not in "".join(chunk.content for chunk in chunks)
+
+
+def test_think_tag_parser_streams_partial_summary_tag():
+    parser = ThinkTagParser()
+
+    chunks = list(parser.feed("Hello <summ"))
+    assert len(chunks) == 1
+    assert chunks[0].content == "Hello "
+
+    chunks = list(parser.feed("ary>reasoning</summary> done"))
+    assert [chunk.content for chunk in chunks] == ["reasoning", " done"]
+    assert chunks[0].type == ContentType.THINKING
+    assert chunks[1].type == ContentType.TEXT
+
+
 def test_heuristic_tool_parser_basic():
     parser = HeuristicToolParser()
     text = "Let's call a tool. ● <function=Grep><parameter=pattern>hello</parameter><parameter=path>.</parameter>"

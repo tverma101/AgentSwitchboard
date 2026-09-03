@@ -12,7 +12,7 @@ AgentSwitchboard is the current product name. The `fcc*`, `FCC_*`, and
 `free_claude_code` names that appear in commands, configuration, imports, and
 receipts are retained compatibility identifiers, not a competing product brand.
 
-**Catalogue audit:** 2026-08-30. Every tracked Markdown file is listed below.
+**Catalogue audit:** 2026-09-01. Every tracked Markdown file is listed below.
 
 ## Start here
 
@@ -37,12 +37,15 @@ prerequisites, copyable commands, expected results, and a bounded recovery path.
 | `docs/CONFIGURATION.md` | Users and operators | Environment variables, settings precedence, provider/model values, and local state | Current | A setting, default, provider/model value, precedence rule, or state path changes |
 | `docs/TROUBLESHOOTING.md` | Users and operators | Diagnose and recover from server, route, model, compact/resume, and authentication failures | Current | A user-visible failure or recovery step changes |
 | `docs/ADMIN_TERMINAL_BROWSER.md` | Operators | Start and administer `fcc-server` while preserving the terminal-only browser policy | Current | Launcher lifecycle, terminal startup, or no-browser behavior changes |
-| `docs/RUST_CONTROL_CENTER.md` | Users and maintainers | Explain the native Ratatui control center, Admin API boundary, model/provider controls, and installation contract | Current; installed visual acceptance is separate | Native TUI controls, API boundary, geometry, launcher, or CI contract changes |
+| `docs/RUST_CONTROL_CENTER.md` | Users and maintainers | Explain the native `fcc-server`/`fcc-tui` control center, Admin API boundary, model/provider controls, and installation contract | Current; installed visual acceptance is separate | Native TUI controls, API boundary, geometry, launcher, or CI contract changes |
 | `docs/DIAGNOSTICS.md` | Users and maintainers | Run zero-network diagnostics and interpret synthetic route/capability output | Current | Diagnostic commands, output fields, or safety boundaries change |
-| `docs/CLAUDE_CONTEXT_POLICY.md` | Users and maintainers | Explain client context caps, advisory leashes, artifact-backed governance, and compact receipts | Current; boundary-specific live evidence | Context policy, compaction behavior, or receipt interpretation changes |
+| `docs/CLAUDE_CONTEXT_POLICY.md` | Users and maintainers | Explain the inactive FCC context intervention, client ownership, sandbox reasoning alias, and future opt-in boundary | Current; intervention disabled pending certification | Context policy, compaction behavior, or receipt interpretation changes |
 | `docs/CLAUDE_LEARNING.md` | Users and maintainers | Explain learning hooks, local state, safety rails, and CLI controls | Current; optional integration | Learning lifecycle, state, privacy, or controls change |
 | `docs/TERMINAL_VISUAL_UX.md` | Users and maintainers | Define bounded image attachment cards, previews, and local source handling | Current; local presentation only | Terminal presentation or local media-source behavior changes |
 | `docs/troubleshooting/tui-hardening.md` | Maintainers and contributors | Record TUI/repository-picker failure classes, recovery behavior, and validation boundaries | Current incident record | TUI state, picker persistence, discovery, or cache behavior changes |
+| `docs/troubleshooting/chatgpt-provider-status.md` | Maintainers and contributors | Record connected ChatGPT provider status, config inventory, and named-model validation | Current incident record | Connected-account lifecycle or ChatGPT provider inventory changes |
+| `docs/troubleshooting/claude-catalog-sync.md` | Maintainers and contributors | Record Claude `/v1/models` versus native TUI parity and dangerous-launch recovery | Current incident record | Claude model registry, native model inspector, or Claude launch controls change |
+| `docs/troubleshooting/claude-stale-plan.md` | Maintainers and contributors | Record Claude `ExitPlanMode` stale-state ownership, FCC prompt-shape risks, and discriminating validation | Current incident record | Claude plan lifecycle, FCC prompt conversion, or compaction-boundary evidence changes |
 | `docs/troubleshooting/usage-attribution.md` | Maintainers and contributors | Record FCC usage source, account attribution, legacy migration, and labeling boundaries | Current incident record | Usage schema, attribution, or usage-surface labeling changes |
 
 ## Architecture and active contracts
@@ -59,8 +62,8 @@ claim that every optional or live acceptance path is complete.
 | `docs/CLAUDE_PROXY_RETRY_OWNERSHIP.md` | Maintainers | Define retry ownership between Claude Code and the FCC proxy/provider transport | Active contract; implementation decision | Retry, streaming fallback, commit-boundary, or fault-attribution behavior changes |
 | `docs/CAPABILITY_ROUTING.md` | Maintainers | Define request-derived capability truth, controller/helper policy, and provider isolation | Active contract; semantic extensions may be planned | Capability detection, routing, helper ownership, or provider isolation changes |
 | `docs/REASONING_PRESENTATION_CONFORMANCE.md` | Maintainers | Preserve reasoning usage, visible summaries, opaque continuation state, and UI semantics | Active contract; live acceptance is boundary-specific | Reasoning translation, thinking blocks, summaries, or presentation behavior changes |
-| `docs/COMPACTION_CONFORMANCE.md` | Maintainers | Define effective-window, compact/resume, semantic continuity, inheritance, and economic acceptance | Active contract; evidence is scoped | Compaction, resume, fork, child/subagent inheritance, or cache economics changes |
-| `docs/CONTEXT_PRESSURE_LEASH.md` | Maintainers | Define managed guidance, hard artifact-backed result governance, and efficacy evidence | Active contract; efficacy receipt unverified where stated | Context-pressure policy, artifact governance, or effectiveness evidence changes |
+| `docs/COMPACTION_CONFORMANCE.md` | Maintainers | Define future acceptance for client-owned compact/resume, semantic continuity, inheritance, and economics | Historical contract; FCC intervention disabled pending certification | Compaction, resume, fork, child/subagent inheritance, or cache economics changes |
+| `docs/CONTEXT_PRESSURE_LEASH.md` | Maintainers | Define the disabled context intervention, explicit opt-in governor, and efficacy evidence | Retained contract; intervention disabled pending certification | Context-pressure policy, artifact governance, or effectiveness evidence changes |
 | `docs/CODEX_SUBSCRIPTION_BRIDGE.md` | Maintainers | Preserve subscription/provider bridge behavior and its compatibility boundary | Active contract; provider acceptance is scoped | Subscription bridge, provider routing, or continuation behavior changes |
 | `smoke/README.md` | Maintainers and operators | Define deterministic/live smoke targets, fixtures, receipt schemas, prerequisites, and failure classes | Operational reference | A smoke target, receipt schema, evidence class, or live prerequisite changes |
 

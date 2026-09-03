@@ -29,6 +29,16 @@ class ContextGovernanceError(ValueError):
     """A tool result cannot be safely reduced under the active policy."""
 
 
+def _default_artifact_dir() -> Path:
+    """Return the artifact root inside FCC's user-private config directory."""
+
+    # Mirrors config.paths.FCC_CONFIG_DIR so sandbox runs stay out of ~/.fcc;
+    # core stays dependency-neutral and must not import the config package.
+    override = os.environ.get("FCC_CONFIG_DIR", "").strip()
+    root = Path(override).expanduser() if override else Path.home() / ".fcc"
+    return root / "context-artifacts"
+
+
 @dataclass(frozen=True, slots=True)
 class ContextGovernorConfig:
     """Runtime policy for reducing model-visible tool-result payloads."""
@@ -38,9 +48,7 @@ class ContextGovernorConfig:
     # Media is protocol-significant input. Preserve it unless a caller
     # explicitly opts into strict oversized-media rejection.
     preserve_media: bool = True
-    artifact_dir: Path = field(
-        default_factory=lambda: Path.home() / ".fcc" / "context-artifacts"
-    )
+    artifact_dir: Path = field(default_factory=lambda: _default_artifact_dir())
 
     def __post_init__(self) -> None:
         if not 512 <= self.tool_result_max_bytes <= MAX_TOOL_RESULT_MAX_BYTES:
