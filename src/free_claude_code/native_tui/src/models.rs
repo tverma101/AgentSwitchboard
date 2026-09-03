@@ -787,9 +787,9 @@ fn claude_route_ref(model_id: &str) -> Option<&str> {
         "claude-3-freecc-no-thinking/",
         "claude-3-freecc-ultra/",
     ]
-        .iter()
-        .find_map(|prefix| model_id.strip_prefix(prefix))
-        .filter(|model_ref| model_ref.contains('/'))
+    .iter()
+    .find_map(|prefix| model_id.strip_prefix(prefix))
+    .filter(|model_ref| model_ref.contains('/'))
 }
 
 fn model_evidence<'a>(models: &'a ModelsResponse, model_ref: &str) -> Option<&'a Value> {
