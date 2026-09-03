@@ -1265,9 +1265,7 @@ class TestPerModelMapping:
 
         assert parse_model_context_windows("") == {}
         assert parse_model_context_windows("   ") == {}
-        assert parse_model_context_windows(
-            '{"a/b": 32000, "c/d/e": 1000000}'
-        ) == {
+        assert parse_model_context_windows('{"a/b": 32000, "c/d/e": 1000000}') == {
             "a/b": 32_000,
             "c/d/e": 1_000_000,
         }
