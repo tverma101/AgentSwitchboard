@@ -11,7 +11,13 @@ from free_claude_code.application.helpers import (
     ApprovedHelperExecutor,
     ApprovedHelperRegistry,
 )
-from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
+from free_claude_code.config.custom_providers import provider_registry_for_settings
+from free_claude_code.config.model_refs import (
+    configured_chat_model_refs,
+    parse_model_name,
+    parse_provider_type,
+)
+from free_claude_code.config.provider_catalog import has_provider_configuration
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.provider_policy import (
     ProviderEgressGuard,
@@ -62,6 +68,7 @@ def build_session_execution_policy(
     registry: ApprovedHelperRegistry,
     *,
     allowed_helper_ids: Iterable[str] = (),
+    model_discovery_providers: Iterable[str] = (),
     provider_mode: ProviderPolicyMode = ProviderPolicyMode.STRICT,
     routing_mode: CapabilityRoutingMode = CapabilityRoutingMode.STRICT,
     paid_fallback: bool = False,
@@ -107,6 +114,11 @@ def build_session_execution_policy(
         forbidden_provider_families=frozenset(forbidden_families),
         mode=provider_mode,
         paid_fallback=paid_fallback,
+        discovery_provider_families=frozenset(
+            provider.strip().lower()
+            for provider in model_discovery_providers
+            if provider.strip()
+        ),
     )
     routing_policy = CapabilityRoutingPolicy(
         mode=routing_mode,
@@ -137,6 +149,8 @@ def parse_allowed_helper_ids(value: str) -> tuple[str, ...]:
 def build_session_execution_policy_for_settings(
     settings: Settings,
     registry: ApprovedHelperRegistry,
+    *,
+    connected_provider_ids: Iterable[str] = (),
 ) -> SessionExecutionPolicy:
     """Build the launch policy from one immutable Settings snapshot."""
 
@@ -144,9 +158,42 @@ def build_session_execution_policy_for_settings(
         settings.model,
         registry,
         allowed_helper_ids=parse_allowed_helper_ids(settings.allowed_helper_ids),
+        model_discovery_providers=model_discovery_provider_ids_for_settings(
+            settings,
+            connected_provider_ids,
+        ),
         provider_mode=ProviderPolicyMode(settings.provider_policy_mode),
         routing_mode=CapabilityRoutingMode(settings.capability_routing_mode),
         paid_fallback=settings.paid_fallback,
+    )
+
+
+def model_discovery_provider_ids_for_settings(
+    settings: Settings,
+    connected_provider_ids: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Return configured providers whose read-only model lists may be queried.
+
+    Model discovery is a separate, metadata-only egress category. The caller
+    may add providers backed by a connected account, while ordinary configured
+    providers are admitted only when their defining settings are present.
+    Local providers are included only when referenced by a configured chat
+    model, matching the runtime's existing discovery behavior.
+    """
+    registry = provider_registry_for_settings(settings)
+    catalog = registry.catalog
+    configured = {
+        provider_id
+        for provider_id, descriptor in catalog.items()
+        if has_provider_configuration(descriptor, settings)
+    }
+    available = configured | set(connected_provider_ids)
+    referenced = {ref.provider_id for ref in configured_chat_model_refs(settings)}
+    return tuple(
+        provider_id
+        for provider_id, descriptor in catalog.items()
+        if provider_id in available
+        and (not descriptor.local or provider_id in referenced)
     )
 
 
@@ -167,5 +214,6 @@ __all__ = [
     "SessionExecutionPolicy",
     "build_session_execution_policy",
     "build_session_execution_policy_for_settings",
+    "model_discovery_provider_ids_for_settings",
     "parse_allowed_helper_ids",
 ]

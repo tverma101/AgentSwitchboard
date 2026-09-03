@@ -12,17 +12,20 @@ from free_claude_code.application.model_metadata import (
     ProviderModelInfo,
     ProviderModelRefreshResult,
 )
+from free_claude_code.application.session_policy import (
+    model_discovery_provider_ids_for_settings,
+)
 from free_claude_code.config.custom_providers import provider_registry_for_settings
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.model_visibility import (
     filter_discovered_model_infos,
 )
+from free_claude_code.config.provider_catalog import has_provider_configuration
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
 
-from .config import has_provider_configuration
 from .model_cache import ProviderModelCache
 from .model_metadata_catalog import ModelMetadataCatalog
 
@@ -69,15 +72,7 @@ def model_list_provider_ids_for_settings(
     connected_provider_ids: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     """Return providers worth discovering for this process configuration."""
-    catalog = provider_registry_for_settings(settings).catalog
-    referenced_ids = referenced_provider_ids(settings)
-    return tuple(
-        provider_id
-        for provider_id in model_cache_provider_ids_for_settings(
-            settings, connected_provider_ids
-        )
-        if not catalog[provider_id].local or provider_id in referenced_ids
-    )
+    return model_discovery_provider_ids_for_settings(settings, connected_provider_ids)
 
 
 class ProviderModelDiscovery:

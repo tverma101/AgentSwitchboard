@@ -89,6 +89,25 @@ class ProviderDescriptor:
         return ()
 
 
+def has_provider_configuration(
+    descriptor: ProviderDescriptor, settings: object
+) -> bool:
+    """Return whether all provider-defining settings are present.
+
+    This belongs beside the neutral provider descriptors so application policy
+    composition and provider construction share the same configuration rule
+    without making the application layer import a provider runtime module.
+    """
+    attrs = descriptor.configuration_attrs()
+    if attrs:
+        return all(
+            isinstance(value := getattr(settings, attr, ""), str)
+            and bool(value.strip())
+            for attr in attrs
+        )
+    return descriptor.static_credential is not None
+
+
 PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     "nvidia_nim": ProviderDescriptor(
         provider_id="nvidia_nim",

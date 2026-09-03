@@ -5,6 +5,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
@@ -256,7 +257,19 @@ impl AdminClient {
     pub fn apply_field(&self, key: &str, value: Value) -> Result<ApplyResponse> {
         let mut values = HashMap::new();
         values.insert(key.to_string(), value);
-        let payload = json!({ "values": values });
+        self.apply_values(&values)
+    }
+
+    /// Validate and apply a group of settings as one Admin transaction.
+    ///
+    /// Model catalog changes must update the mode and allowlist together. A
+    /// one-field-at-a-time update can leave the server briefly in a policy
+    /// state that rejects the model the user just selected.
+    pub fn apply_values(&self, values: &HashMap<String, Value>) -> Result<ApplyResponse> {
+        if values.is_empty() {
+            bail!("at least one setting is required");
+        }
+        let payload = apply_payload(values);
         let validation: ApplyResponse = self.post("admin/api/config/validate", &payload)?;
         if !validation.valid {
             return Ok(validation);
@@ -373,14 +386,20 @@ impl AdminClient {
     }
 }
 
+fn apply_payload(values: &HashMap<String, Value>) -> Value {
+    json!({ "values": values })
+}
+
 fn decode_response<T: DeserializeOwned>(response: Response) -> Result<T> {
     let status = response.status();
     if !status.is_success() {
-        let detail = response
-            .json::<Value>()
+        let mut body_bytes = Vec::new();
+        let _ = response.take(64 * 1024).read_to_end(&mut body_bytes);
+        let body = String::from_utf8_lossy(&body_bytes);
+        let detail = serde_json::from_str::<Value>(&body)
             .ok()
-            .and_then(|value| value.get("detail").cloned())
-            .and_then(|value| value.as_str().map(str::to_owned));
+            .and_then(|value| response_error_detail(&value))
+            .or_else(|| bounded_error_detail(&body));
         if let Some(detail) = detail {
             bail!("FCC Admin returned HTTP {status}: {detail}");
         }
@@ -389,6 +408,40 @@ fn decode_response<T: DeserializeOwned>(response: Response) -> Result<T> {
     response
         .json::<T>()
         .context("FCC Admin response was not valid JSON")
+}
+
+/// Preserve structured server errors in the UI instead of reducing an object
+/// or validation list to the unhelpful status-only message. The bound keeps a
+/// hostile or misbehaving endpoint from flooding the TUI with an unbounded
+/// response body.
+fn response_error_detail(value: &Value) -> Option<String> {
+    let candidate = value
+        .as_object()
+        .and_then(|object| {
+            ["detail", "error", "message"]
+                .iter()
+                .find_map(|key| object.get(*key).filter(|value| !value.is_null()))
+        })
+        .unwrap_or(value);
+    let text = match candidate {
+        Value::String(value) => value.clone(),
+        Value::Null => return None,
+        _ => serde_json::to_string(candidate).ok()?,
+    };
+    bounded_error_detail(&text)
+}
+
+fn bounded_error_detail(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= 500 {
+        return Some(normalized);
+    }
+    let prefix = normalized.chars().take(497).collect::<String>();
+    Some(format!("{prefix}…"))
 }
 
 fn safe_path_id(value: &str) -> Result<&str> {
@@ -411,6 +464,21 @@ mod tests {
         assert!(AdminClient::new("https://example.com:8082").is_err());
         assert!(AdminClient::new("http://127.0.0.1:8082").is_ok());
         assert!(AdminClient::new("http://localhost:8082").is_ok());
+    }
+
+    #[test]
+    fn structured_admin_errors_are_preserved_and_bounded() {
+        let detail = serde_json::json!({
+            "detail": {"MODEL": ["is not routable", "choose another model"]}
+        });
+        let rendered = response_error_detail(&detail).expect("structured detail");
+        assert!(rendered.contains("is not routable"));
+        assert!(rendered.contains("choose another model"));
+
+        let long = "x".repeat(700);
+        let rendered = bounded_error_detail(&long).expect("long detail");
+        assert_eq!(rendered.chars().count(), 498);
+        assert!(rendered.ends_with('…'));
     }
 
     #[test]
@@ -464,5 +532,25 @@ mod tests {
         assert_eq!(status.provider_id, "open_router");
         assert_eq!(status.api_key_configured, None);
         assert_eq!(status.proxy_configured, None);
+    }
+
+    #[test]
+    fn grouped_apply_payload_keeps_model_policy_changes_together() {
+        let values = HashMap::from([
+            (
+                "MODEL_CATALOG_MODE".to_string(),
+                Value::String("curated".to_string()),
+            ),
+            (
+                "MODEL_CATALOG_ALLOWLIST".to_string(),
+                Value::String("bai/free-model, cline/fast-model".to_string()),
+            ),
+        ]);
+        let payload = apply_payload(&values);
+        assert_eq!(payload["values"]["MODEL_CATALOG_MODE"], "curated");
+        assert_eq!(
+            payload["values"]["MODEL_CATALOG_ALLOWLIST"],
+            "bai/free-model, cline/fast-model"
+        );
     }
 }

@@ -39,6 +39,7 @@ class OpenRouterProvider(OpenAIChatProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Advertise OpenRouter tool models with reasoning capability metadata."""
+        self._authorize_egress(self._base_url, category="model_discovery")
         payload = await self._list_models_payload()
         return extract_tool_capable_model_infos(
             payload, provider_name=self._provider_name

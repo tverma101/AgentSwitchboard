@@ -1,6 +1,7 @@
 """Single production composition root for the FCC server."""
 
 import os
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
@@ -58,6 +59,7 @@ def build_asgi_app(
         _build_provider_runtime,
         openai_factory=openai_factory,
         helper_registry=helper_registry,
+        connected_provider_ids=openai_auth.connected_provider_ids,
     )
     provider_manager = ProviderRuntimeManager(
         settings,
@@ -108,10 +110,15 @@ def _build_provider_runtime(
     *,
     openai_factory: ProviderFactory,
     helper_registry: ApprovedHelperRegistry,
+    connected_provider_ids: Callable[[], tuple[str, ...]] = tuple,
 ) -> ProviderRuntime:
     """Build one provider generation with its shared policy guard."""
 
-    policy = build_session_execution_policy_for_settings(settings, helper_registry)
+    policy = build_session_execution_policy_for_settings(
+        settings,
+        helper_registry,
+        connected_provider_ids=connected_provider_ids(),
+    )
     provider_constructor = partial(
         create_provider,
         injected_factories={"openai": openai_factory},

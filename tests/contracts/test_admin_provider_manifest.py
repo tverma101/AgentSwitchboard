@@ -105,6 +105,7 @@ def test_provider_catalog_display_names_are_admin_status_source() -> None:
     status_by_provider = {
         entry["provider_id"]: entry
         for entry in provider_config_status(load_value_state())
+        if not entry.get("custom")
     }
 
     assert set(status_by_provider) == set(PROVIDER_CATALOG)

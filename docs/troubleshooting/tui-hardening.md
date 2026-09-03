@@ -105,11 +105,13 @@ not claimed by local tests.
 
 ## Residual risks
 
-No known residual defect remains in the covered local TUI paths. A real macOS
-session is still required to confirm visual layout at every terminal size and
-the behavior of external GitHub authentication/remote probes. Distinct local
-clones of the same GitHub repository are intentionally retained because they are
-different launchable checkouts; they are not duplicate rows for the same path.
+At the time of this earlier checkpoint, no known residual defect remained in
+the covered local TUI paths. That statement is historical and is superseded by
+the later native audit sections below. A real macOS session is still required
+to confirm visual layout at every terminal size and the behavior of external
+GitHub authentication/remote probes. Distinct local clones of the same GitHub
+repository are intentionally retained because they are different launchable
+checkouts; they are not duplicate rows for the same path.
 
 ## PR #210 native control center audit
 
@@ -129,3 +131,161 @@ and a filtered `openrouter/free` row as routable/free, while the Providers page
 showed B.AI as a separate provider. A PTY-compatible startup path avoids a cursor
 position query during alternate-screen setup because some local terminal wrappers
 do not answer that query.
+
+## 2026-09-03 — native model-picker recovery
+
+### Symptoms
+
+The native Models page opened with a catalog dump, hid the distinction between
+active and catalog-only models, exposed routing shortcuts on the wrong page,
+showed misleading price metadata, and made bulk enable/disable and exact model
+selection difficult. A configured provider with no discovery result could also
+look absent.
+
+### Root cause
+
+The page treated the discovery catalog as the primary selection list and used
+the same row state for display, routing, and pending policy edits. Provider
+metadata was not scoped to the registered provider inventory, and catalog policy
+updates were sent as independent fields. The visible footer also advertised a
+help modal that did not improve the actual workflow.
+
+### Recovery
+
+The native page now starts with active/routable models, keeps the full cached
+catalog behind an explicit View toggle, filters by registered provider and
+All/Free-only pricing, and preserves exact provider/model references in the
+inspector. Enabled custom-provider model IDs are visible in Catalog before
+discovery fills the server cache. Space or Shift/Ctrl-click creates a pending
+multi-selection; `Toggle selected` inverts the actual ON/OFF state of those
+exact rows and `Disable all` clears the active allowlist in one validated
+Admin transaction. Model-policy saves run off the input thread and trigger a
+full snapshot refresh before success is shown. `Show catalog` and `Active
+only` are explicit page actions. Only Enter/Set MODEL assigns `MODEL`.
+Routing shortcuts and the decorative help affordance were removed from Models.
+
+### Validation
+
+Native Rust tests: 48 passed; Clippy with warnings denied: passed; optimized
+release build: passed; Rust-TUI Python contract tests: 35 passed; full Python
+suite: 3881 passed and 152 skipped. The installed binary was exercised in a
+160x50 PTY against the live loopback server: active-only showed 2 rows, Catalog
+showed 399 rows, Free-only showed 18 rows, Space selected both active rows, and
+the registered B.AI filter displayed an actionable no-cached-model state.
+
+### Residual boundary
+
+The live server snapshot may still have cached model rows for OpenAI, OpenRouter,
+and OpenCode Go only; B.AI, Cline, and NVIDIA NIM can be registered/configured
+without discovery rows. The native Catalog now supplements that cache from
+enabled custom-provider model lists, but refreshing provider discovery and
+proving authenticated upstream proxy requests remain separate live provider
+evidence. A running old TUI process is not changed by installing a new binary;
+the next launch must resolve to the recorded installed release hash.
+
+## 2026-09-03 — remove the editor-workbench shell
+
+The visible native TUI is an AgentSwitchboard control center, not a VS Code
+replacement. The render path now draws one direct page-navigation sidebar and
+one FCC page surface. It does not draw an activity rail, fake traffic-light
+controls, file tabs, Explorer/Search/Source Control destinations, or a
+permanent keyboard-help legend. The command palette exposes FCC pages and
+actions only; retained path/diff/review flags are CLI conveniences and do not
+reintroduce editor chrome.
+
+The page sidebar also owns its keyboard focus now: `Ctrl+0`, `↑↓`/`j`/`k`, and
+`Enter` move through and open FCC pages rather than dispatching to a hidden
+workspace view. A zero-sized geometry assertion protects the removed tab and
+activity regions, and a rendered-shell regression rejects the old labels and
+fake controls.
+
+## 2026-09-03 — bounded navigation and dashboard reorganization (superseded shell)
+
+### Symptoms
+
+The native workbench still made finite editor lists feel infinite because
+vertical selection wrapped from the last row to the first. The activity rail
+also exposed icons without names, and the Dashboard spent most of its space on
+generic architecture prose instead of the exact launch route and current
+runtime state.
+
+### Recovery
+
+Main page/list navigation now clamps at the first and last row. Page and popup
+choice controls retain intentional cycling. Model-only shortcuts and the
+model search key require editor focus on the Models page, so sidebar navigation
+cannot accidentally change model policy. The Dashboard is a responsive
+operational grid showing server/API state, exact `MODEL` and active routes,
+model inventory and free counts, provider health, catalog policy, workspace/git
+state, pending fields, and normal/danger Claude launch actions. Narrow terminals
+collapse the grid into one dense card. The temporary labeled activity rail from
+this checkpoint was removed by the direct-shell repair above.
+
+### Validation boundary
+
+Rust unit and render coverage now includes list-edge behavior, focus-gated
+model controls, and the concrete Dashboard.
+The optimized release was rebuilt and installed at the same SHA256 as the
+source artifact. A fresh installed-binary PTY pass at compact and reference
+sizes confirmed the Dashboard cards/actions, exact model-route display, and
+bounded model cursor. Live provider discovery and
+authenticated upstream proxy behavior remain separate evidence from this
+UI-only change.
+
+## 2026-09-03 — senior hostile-UI and launch-boundary audit
+
+### Symptoms
+
+The remaining hostile paths were not cosmetic: the provider picker could omit
+models explicitly registered on an enabled custom provider, a single modal
+click only moved a cursor instead of committing the choice, mouse scrolling a
+file viewer silently changed it back to the page surface, edge keys could act
+against the wrong focused region, partial refresh errors could be overwritten by
+success notices, and a direct launch could start Claude before the user reached
+the control center.
+
+### Root cause
+
+The frontend had separate selection and activation semantics for keyboard and
+mouse, used discovery cache state as the only custom-provider catalog source,
+and treated refresh as an unobservable side effect. The Python owner also
+invoked the pending client before handing the terminal to the native frontend,
+and did not carry the caller's working directory into that launch.
+
+### Recovery
+
+The native catalog now merges enabled custom-provider model IDs using exact
+`provider/model` references and recognizes explicit `:free` IDs across
+providers. Modal option clicks activate in one step; modal misses cannot reach
+the page below. Mouse and keyboard motion preserve the focused page/file/list,
+and Home/End/PageUp/PageDown clamp to the current finite control. Tab and
+Shift-Tab now move focus without cycling pages, and collapsing the sidebar
+returns focus to the visible page. Page refreshes run in one background task
+and apply only when complete, so the TUI remains navigable while discovery is
+in flight. Mutation refreshes cancel an older snapshot before applying the
+mutation, and refresh success/failure is returned to callers so a partial
+snapshot cannot be hidden by a later green notice.
+Usage/Diagnostics scrolling uses Ratatui's rendered wrapped-line count, so
+long JSON cannot stop early on narrow terminals. Structured Admin error bodies
+are preserved but bounded before entering the TUI. Direct `fcc`/`fccdanger`
+launches now hold their args, working directory, and original danger intent
+until the user chooses Normal or Danger after server readiness.
+
+### Validation boundary
+
+Rust unit/render tests cover the catalog merge, free-ID evidence, provider
+filter strictness, modal activation, file-viewer mouse scrolling, finite
+navigation, contrast/focus colors, and bounded Admin errors. Python tests cover
+pending launch context and the native command boundary. Release build,
+installed-binary PTY smoke, and full Python-suite results are recorded in the
+turn log for the exact commit; they do not prove authenticated upstream
+provider requests or macOS visual confirmation.
+
+### Residual boundary
+
+The native frontend still launches the installed `fcc-claude`/`fccdanger`
+commands as a separate child process; proxy/provider behavior remains owned by
+the Python backend. Repository discovery remains a separate `fcc-repos` path,
+which intentionally excludes linked worktrees and non-GitHub remotes. No
+GitHub Actions or PR merge is performed by this audit; the verified topic
+branch is the only publication boundary.

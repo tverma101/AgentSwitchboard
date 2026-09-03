@@ -82,6 +82,7 @@ class VertexProvider(GoogleOpenAIProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """List Vertex publisher models and translate their resource names."""
+        self._authorize_egress(self._models_url, category="model_discovery")
         model_ids: set[str] = set()
         page_token: str | None = None
         seen_page_tokens: set[str] = set()

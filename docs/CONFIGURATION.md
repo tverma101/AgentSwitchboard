@@ -27,24 +27,28 @@ Start the server in a terminal:
 fcc-server
 ```
 
-The command opens the native Rust/Ratatui control center. Use Tab or
-Shift-Tab (or the sidebar with the mouse) to move between Dashboard, Providers,
+The command opens the native Rust/Ratatui control center. Use the direct page
+sidebar (or `Ctrl+0` then `↑↓`/`j`/`k`) to move between Dashboard, Providers,
 Models, Routing, Context, Local Setup, Settings, Usage, and Diagnostics. `R`
 refreshes the current server snapshot; `C` launches `fcc-claude`; `!` launches
 `fccdanger`; and `Q` exits. Providers support status, tests, connected-account
-actions, and custom-provider CRUD. Models show the complete catalog plus
-routable status; `/` filters and `D/F/O/S/H` assign the selected routable model
-to the default or Claude tier route. Settings and local/provider fields use
-the canonical Admin API, and blank configured secret/proxy edits preserve the
-existing value. If FCC is already healthy, the control center attaches without
-claiming its lifecycle. Use `fcc-tui` from another terminal to attach directly,
+actions, and custom-provider CRUD. Models open on active/routable models; the
+registered-provider picker, All/Free-only filter, and Active/Catalog controls
+make the full cache an explicit choice. Enabled custom-provider model lists are
+shown in Catalog even before discovery. `/` searches, `Space` or
+`Shift/Ctrl-click` selects rows, `T` toggles the selected models' actual ON/OFF
+state, `Shift-X` disables all, and `Enter` assigns exactly the highlighted
+routable model as `MODEL`. Settings and
+local/provider fields use the canonical Admin API, and blank configured
+secret/proxy edits preserve the existing value. `Tab`/`Shift-Tab` move focus
+between the page sidebar and the selected page without cycling pages. If FCC is already healthy, the
+control center attaches without claiming its lifecycle. Use `fcc-tui` from another terminal to attach directly,
 or `fcc-server --headless` for a blocking server-only process. `fcc-tui`
-accepts a `tode`-style workspace surface (`[path]`, `--goto <file:line:col>`,
+accepts bounded path/review conveniences (`[path]`, `--goto <file:line:col>`,
 `--diff <a> <b>`, `--review`, `--split`, `--theme`, `--timing`,
-`--shortcut-setup`, `--list-commands`); workspace selections arrive as a local
-notice and every verb stays inside the native UI and loopback Admin API. See
-[terminal-code transplant](TERMINAL_CODE_TRANSPLANT.md) for the verb mapping
-and the fail-closed `--ssh`/extension guidance.
+`--shortcut-setup`, `--list-commands`); these do not add an editor/workbench
+shell to the visible control center. Every mutation remains inside the native
+UI and loopback Admin API.
 
 Repository selection is a separate `fcc-repos` picker. It shows existing local
 checkout folders only when their live Git metadata has a configured GitHub
@@ -87,29 +91,40 @@ requests retain the exact provider/model reference. `MODEL_CATALOG_MODE=all`
 exposes discovered models; `curated` applies the exact references and wildcard
 rules in [model_visibility.py](../src/free_claude_code/config/model_visibility.py).
 
-The loopback Admin model picker keeps the full cached discovery inventory
-separate from the client-visible list. It never treats every discovered model
-as user-selected: checkboxes are pending selections for the explicit
-allowlist, and `Enable selected`/`Disable selected` change only those rows.
-`Disable all` writes an empty curated allowlist while retaining the cached
-inventory, so disabled discoveries remain available to search and re-enable.
-Search and price/provider filters operate on that in-memory inventory without
+The loopback Admin model picker opens on active/routable models and keeps the
+full cached discovery inventory behind the explicit `Catalog` view. Provider
+filters are built from registered providers (configured, connected, or
+not-yet-checked), not from every metadata provider in the cache. It never
+treats every discovered model as user-selected: checkboxes are pending
+selections for the explicit allowlist. `Toggle selected` inverts the actual
+ON/OFF state of the selected rows, and `Disable all` clears the active
+allowlist without deleting the cached inventory, so disabled discoveries
+remain available to search and re-enable.
+Search and provider filters operate on that in-memory inventory without
 re-querying providers; use the page's `Refresh` action when a new discovery
 snapshot is wanted. The same response carries a sanitized provider-status
 inventory, so a registered provider remains visible in the filter before its
-first discovery completes and its empty state points to `Refresh`.
-The Models page also provides `Free first`, `Free only`, and `All prices`
-views. Free/paid state comes from explicit provider or catalog pricing; an
+first discovery completes and its empty state points to `Refresh`. The
+provider status inventory is live: connected-account state is overlaid by the
+running server, so `Configured`, `Signing in`, `Connected`, and `Not
+connected` are not stale dotenv labels. Catalog refresh can query configured
+providers for read-only model metadata under strict inference policy; a failed
+provider is reported as a refresh error instead of a successful empty result.
+Model-policy changes are applied as one background Admin transaction and are
+followed by a full snapshot refresh, so a slow save cannot freeze the picker
+or leave the visible model state stale.
+The Models page provides an `All` view and a `Free only` view. Free/paid state
+comes from explicit provider or catalog pricing; an
 OpenRouter `:free` variant is the narrow fallback when no price map is
-available. Missing pricing stays unknown and is never treated as free. These
-views only filter or order the display; they do not enable models or change
-the allowlist.
+available. Missing pricing stays unknown, has no misleading price badge, and
+is never treated as free. These views only filter the display; they do not
+enable models or change the allowlist.
 
 B.AI uses `BAI_API_KEY` and the OpenAI-compatible `https://api.b.ai/v1`
 endpoint. Its `/v1/models` response is the source of truth for exact model
 IDs. B.AI may return model IDs without optional pricing or capability fields;
-those models remain `PRICE?`/unknown and are excluded from `Free only` until
-explicit zero-price or `is_free` metadata is available. Current promotional
+those models remain unknown and are excluded from `Free only` until explicit
+zero-price or `is_free` metadata is available. Current promotional
 offers are not hardcoded because they can expire or vary by eligibility.
 
 The provider table and credential names are maintained in

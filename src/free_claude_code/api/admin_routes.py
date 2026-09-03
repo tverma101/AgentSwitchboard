@@ -157,9 +157,20 @@ async def admin_asset(filename: str, request: Request):
 
 
 @router.get("/admin/api/config")
-async def get_admin_config(request: Request):
+async def get_admin_config(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
     require_loopback_admin(request)
-    return load_config_response()
+    config = load_config_response()
+    # Configuration fields remain a pure manifest response, but provider
+    # lifecycle state belongs to the live runtime (for example OpenAI can be
+    # connected or signing in without any dotenv value changing). Overlay the
+    # safe runtime inventory so every Admin client sees the same state.
+    runtime_status = services.admin.admin_status().get("provider_status")
+    if isinstance(runtime_status, list):
+        config["provider_status"] = runtime_status
+    return config
 
 
 @router.post("/admin/api/config/validate")

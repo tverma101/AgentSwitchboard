@@ -1,127 +1,624 @@
 use crate::api::{ConfigField, ProviderStatus};
 use crate::app::{
-    match_palette, pretty, App, ChromeGeometry, Hitbox, Modal, Page, UiAction, CONTEXT_MAX,
-    CONTEXT_MIN,
+    match_palette, pretty, Activity, App, ChromeGeometry, EditorFocus, Focus, Hitbox, Modal, Page,
+    TextInput, UiAction, CONTEXT_MAX, CONTEXT_MIN,
 };
+use crate::theme::Colors;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 use serde_json::Value;
-
-const BG: Color = Color::Rgb(15, 17, 21);
-const PANEL: Color = Color::Rgb(22, 25, 31);
-const PANEL_2: Color = Color::Rgb(28, 32, 40);
-const BORDER: Color = Color::Rgb(53, 59, 72);
-const TEXT: Color = Color::Rgb(224, 228, 236);
-const MUTED: Color = Color::Rgb(137, 145, 160);
-const ACCENT: Color = Color::Rgb(103, 132, 255);
-const ACCENT_DIM: Color = Color::Rgb(35, 45, 78);
-const GOOD: Color = Color::Rgb(97, 203, 137);
-const WARN: Color = Color::Rgb(241, 190, 75);
-const BAD: Color = Color::Rgb(239, 101, 101);
+use std::collections::HashMap;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
+    let c = app.colors;
     app.hitboxes.clear();
     let area = frame.area();
-    frame.render_widget(Block::default().style(Style::default().bg(BG)), area);
+    frame.render_widget(Block::default().style(Style::default().bg(c.bg)), area);
 
+    // The native TUI is a control center, not a code editor. Its shell has one
+    // direct page navigator and one page surface; files opened from an
+    // explicit CLI request may still use the read-only viewer, but they never
+    // add editor tabs or a second navigation rail to the default UI.
+    let mut constraints = vec![Constraint::Length(3), Constraint::Min(10)];
+    // A seven-row status panel is useful at a normal terminal size, but it
+    // must not consume the page surface on a compact terminal. Keep the
+    // toggle state so it comes back when the terminal is enlarged.
+    let panel_open = app.panel_open && area.height >= 30;
+    if panel_open {
+        constraints.push(Constraint::Length(7));
+    }
+    constraints.push(Constraint::Length(1));
+    constraints.push(Constraint::Length(1));
     let vertical = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(12),
-            Constraint::Length(2),
-        ])
+        .constraints(constraints)
         .split(area);
-    let body = Layout::default()
+    let (body, panel, statusbar, footer) = if panel_open {
+        (vertical[1], Some(vertical[2]), vertical[3], vertical[4])
+    } else {
+        (vertical[1], None, vertical[2], vertical[3])
+    };
+
+    let mut side = Vec::new();
+    if app.sidebar_open {
+        let width = if body.width >= 90 {
+            30
+        } else if body.width >= 64 {
+            24
+        } else {
+            20
+        };
+        side.push(Constraint::Length(width.min(body.width.saturating_sub(20))));
+    }
+    side.push(Constraint::Min(20));
+    let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(28), Constraint::Min(48)])
-        .split(vertical[1]);
+        .constraints(side)
+        .split(body);
+    let (sidebar, editor) = if app.sidebar_open {
+        (Some(cols[0]), cols[1])
+    } else {
+        (None, cols[0])
+    };
 
     app.geometry = ChromeGeometry {
         top: vertical[0],
-        sidebar: body[0],
-        main: body[1],
-        footer: vertical[2],
+        // Kept as zero-sized compatibility fields for callers that inspect
+        // the old geometry struct. No tab strip or activity gutter is drawn.
+        tabs: Rect::default(),
+        gutter: Rect::default(),
+        sidebar: sidebar.unwrap_or_default(),
+        main: editor,
+        editor,
+        panel: panel.unwrap_or_default(),
+        statusbar,
+        footer,
     };
 
     render_topbar(frame, app, vertical[0]);
-    render_sidebar(frame, app, body[0]);
-    render_page(frame, app, body[1]);
-    render_footer(frame, app, vertical[2]);
+    if let Some(sidebar) = sidebar {
+        render_page_nav(frame, app, sidebar);
+    }
+    render_editor(frame, app, editor);
+    if let Some(panel) = panel {
+        render_panel(frame, app, panel);
+    }
+    render_statusbar(frame, app, statusbar);
+    render_footer(frame, app, footer);
     render_modal(frame, app, area);
 }
 
 fn render_topbar(frame: &mut Frame, app: &App, area: Rect) {
+    let c = app.colors;
+    let (brand_width, status_width) = if area.width >= 90 {
+        (28, 34)
+    } else {
+        let slot = (area.width / 3).max(1);
+        (slot, slot)
+    };
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(14),
-            Constraint::Length(24),
-            Constraint::Min(20),
-            Constraint::Length(34),
+            Constraint::Length(brand_width.min(area.width)),
+            Constraint::Min(1),
+            Constraint::Length(status_width.min(area.width)),
         ])
         .split(area);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("●", Style::default().fg(Color::Rgb(255, 95, 87))),
-            Span::raw("  "),
-            Span::styled("●", Style::default().fg(Color::Rgb(254, 188, 46))),
-            Span::raw("  "),
-            Span::styled("●", Style::default().fg(Color::Rgb(40, 200, 64))),
-        ]))
-        .style(Style::default().bg(PANEL))
-        .block(bottom_border()),
+        Paragraph::new(trim_to("AgentSwitchboard", chunks[0].width as usize))
+            .style(
+                Style::default()
+                    .fg(c.text)
+                    .bg(c.panel)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .block(bottom_border(c)),
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new("AgentSwitchboard")
-            .style(
-                Style::default()
-                    .fg(TEXT)
-                    .bg(PANEL)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .block(bottom_border()),
-        chunks[1],
-    );
-    frame.render_widget(
-        Paragraph::new(app.page.label())
+        Paragraph::new(trim_to(app.page.label(), chunks[1].width as usize))
             .alignment(ratatui::layout::Alignment::Center)
             .style(
                 Style::default()
-                    .fg(TEXT)
-                    .bg(PANEL)
+                    .fg(c.text)
+                    .bg(c.panel)
                     .add_modifier(Modifier::BOLD),
             )
-            .block(bottom_border()),
-        chunks[2],
+            .block(bottom_border(c)),
+        chunks[1],
     );
     let state = if app.error.is_some() {
-        Span::styled("● ERROR", Style::default().fg(BAD))
+        Span::styled("● ERROR", Style::default().fg(c.bad))
     } else {
-        Span::styled("● FCC LOCAL", Style::default().fg(GOOD))
+        Span::styled("● FCC LOCAL", Style::default().fg(c.good))
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             state,
             Span::raw("  "),
-            Span::styled(app.status_text(), Style::default().fg(MUTED)),
+            Span::styled(
+                trim_to(
+                    &app.status_text(),
+                    chunks[2].width.saturating_sub(10) as usize,
+                ),
+                Style::default().fg(c.muted),
+            ),
         ]))
         .alignment(ratatui::layout::Alignment::Right)
-        .style(Style::default().bg(PANEL))
-        .block(bottom_border()),
-        chunks[3],
+        .style(Style::default().bg(c.panel))
+        .block(bottom_border(c)),
+        chunks[2],
     );
 }
 
-fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
+// Retained only for explicit-file compatibility tests; the direct FCC shell
+// never calls this renderer.
+#[allow(dead_code)]
+fn render_tabs(frame: &mut Frame, app: &mut App, area: Rect) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let c = app.colors;
+    frame.render_widget(Block::default().style(Style::default().bg(c.panel)), area);
+    let mut x = area.x;
+    // FCC pages are selected by the sidebar. Only open workspace files get a
+    // tab, so the shell never shows two competing selections.
+    let mut tabs: Vec<(String, bool, UiAction, Option<UiAction>)> = Vec::new();
+    for (index, file) in app.files.iter().enumerate() {
+        let active = matches!(app.editor_focus, EditorFocus::File(pos) if pos == index);
+        tabs.push((
+            format!("  {}", file.title()),
+            active,
+            UiAction::ActivateTab(index),
+            Some(UiAction::CloseFile(index)),
+        ));
+    }
+    for (label, active, action, close) in tabs {
+        let mut width = label.chars().count() as u16 + 2;
+        if close.is_some() {
+            width += 3;
+        }
+        let remaining = area.right().saturating_sub(x);
+        if remaining < 8 || x >= area.right() {
+            break;
+        }
+        width = width.min(remaining);
+        let rect = Rect {
+            x,
+            y: area.y,
+            width,
+            height: 1,
+        };
+        let style = if active {
+            Style::default()
+                .fg(c.text)
+                .bg(c.accent_dim)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(c.muted).bg(c.panel)
+        };
+        frame.render_widget(
+            Paragraph::new(trim_to(&label, width as usize - 1)).style(style),
+            rect,
+        );
+        app.hitboxes.push(Hitbox { rect, action });
+        x += width;
+        if let Some(close) = close {
+            if x + 3 <= area.right() {
+                let close_rect = Rect {
+                    x,
+                    y: area.y,
+                    width: 3,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(" x ").style(Style::default().fg(c.muted).bg(if active {
+                        c.accent_dim
+                    } else {
+                        c.panel
+                    })),
+                    close_rect,
+                );
+                app.hitboxes.push(Hitbox {
+                    rect: close_rect,
+                    action: close,
+                });
+                x += 3;
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn render_activity_bar(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
     let block = Block::default()
         .borders(Borders::RIGHT)
-        .border_style(Style::default().fg(BORDER))
-        .style(Style::default().bg(PANEL));
+        .border_style(Style::default().fg(c.border))
+        .style(Style::default().bg(c.panel));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let (errors, warnings) = app.problem_counts();
+    let problems = errors + warnings;
+    let mut y = inner.y;
+    for activity in Activity::ALL {
+        if y >= inner.bottom() {
+            break;
+        }
+        let cell = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        let label = if activity == Activity::Diagnostics && problems > 0 {
+            format!(
+                "{} {} {}",
+                activity.icon(),
+                activity.label(),
+                problems.min(99)
+            )
+        } else {
+            format!("{} {}", activity.icon(), activity.label())
+        };
+        let active = app.activity == activity;
+        let style = if active {
+            Style::default()
+                .fg(c.accent)
+                .bg(c.accent_dim)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(c.muted).bg(c.panel)
+        };
+        frame.render_widget(
+            Paragraph::new(trim_to(&label, inner.width as usize)).style(style),
+            cell,
+        );
+        app.hitboxes.push(Hitbox {
+            rect: cell,
+            action: UiAction::Activity(activity),
+        });
+        y += 1;
+    }
+}
+
+#[allow(dead_code)]
+fn sidebar_chrome(frame: &mut Frame, c: Colors, area: Rect) -> Rect {
+    let block = Block::default()
+        .borders(Borders::RIGHT)
+        .border_style(Style::default().fg(c.border))
+        .style(Style::default().bg(c.panel));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    inner
+}
+
+#[allow(dead_code)]
+fn sidebar_header(frame: &mut Frame, c: Colors, inner: Rect, title: &str, subtitle: &str) {
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            title,
+            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
+        ))),
+        Rect {
+            x: inner.x + 1,
+            y: inner.y,
+            width: inner.width.saturating_sub(2),
+            height: 1,
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(trim_to(subtitle, inner.width.saturating_sub(2) as usize))
+            .style(Style::default().fg(c.text)),
+        Rect {
+            x: inner.x + 1,
+            y: inner.y + 1,
+            width: inner.width.saturating_sub(2),
+            height: 1,
+        },
+    );
+}
+
+#[allow(dead_code)]
+fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
+    match app.activity {
+        Activity::Explorer => render_explorer(frame, app, area),
+        Activity::Search => render_search_panel(frame, app, area),
+        Activity::SourceControl => render_git_panel(frame, app, area),
+        Activity::Providers | Activity::Models | Activity::Diagnostics => {
+            render_page_nav(frame, app, area)
+        }
+    }
+}
+
+fn workspace_name(app: &App) -> String {
+    app.workspace
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| app.workspace.to_string_lossy().into_owned())
+}
+
+fn relative_path(app: &App, path: &std::path::Path) -> String {
+    path.strip_prefix(&app.workspace)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[allow(dead_code)]
+fn render_explorer(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+    let inner = sidebar_chrome(frame, c, area);
+    sidebar_header(frame, c, inner, "EXPLORER", &workspace_name(app));
+    let top = inner.y + 2;
+    let height = inner.bottom().saturating_sub(top) as usize;
+    if height == 0 {
+        return;
+    }
+    if app.tree.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Empty folder").style(Style::default().fg(c.muted).bg(c.panel)),
+            Rect {
+                x: inner.x + 1,
+                y: top,
+                width: inner.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+        return;
+    }
+    let start = if app.tree_cursor >= height {
+        app.tree_cursor - height + 1
+    } else {
+        0
+    };
+    let open_paths: std::collections::HashSet<String> = app
+        .files
+        .iter()
+        .map(|file| file.path.to_string_lossy().into_owned())
+        .collect();
+    for (offset, entry) in app.tree.iter().enumerate().skip(start).take(height) {
+        let y = top + offset as u16 - start as u16;
+        let row = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        let indent = "  ".repeat(entry.depth.min(6));
+        let max_name = inner
+            .width
+            .saturating_sub((indent.chars().count() as u16) + 5) as usize;
+        let (icon, mut style) = if entry.is_dir {
+            let open = app.expanded.contains(&entry.path);
+            (
+                if open { "▾" } else { "▸" },
+                Style::default().fg(c.text).bg(c.panel),
+            )
+        } else {
+            (" ", Style::default().fg(c.muted).bg(c.panel))
+        };
+        if !entry.is_dir && open_paths.contains(&entry.path.to_string_lossy().into_owned()) {
+            style = style.fg(c.accent);
+        }
+        if offset == app.tree_cursor && app.focus == Focus::Sidebar {
+            style = Style::default()
+                .fg(c.text)
+                .bg(c.accent_dim)
+                .add_modifier(Modifier::BOLD);
+        }
+        let text = format!("{indent}{icon} {}", trim_to(&entry.name, max_name.max(1)));
+        frame.render_widget(Paragraph::new(text).style(style), row);
+        app.hitboxes.push(Hitbox {
+            rect: row,
+            action: UiAction::ActivateTree(offset),
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn render_search_panel(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+    let inner = sidebar_chrome(frame, c, area);
+    let subtitle = if app.search_query.is_empty() {
+        "Press / to search".to_string()
+    } else {
+        format!("{} · {} hits", app.search_query, app.search_hits.len())
+    };
+    sidebar_header(frame, c, inner, "SEARCH", &subtitle);
+    let top = inner.y + 2;
+    let height = inner.bottom().saturating_sub(top) as usize;
+    if height == 0 {
+        return;
+    }
+    if app.search_hits.is_empty() {
+        let hint = if app.search_query.is_empty() {
+            "Type / to search the workspace"
+        } else {
+            "No results"
+        };
+        frame.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(c.muted).bg(c.panel)),
+            Rect {
+                x: inner.x + 1,
+                y: top,
+                width: inner.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+        return;
+    }
+    // Flatten grouped hits so the cursor row stays visible.
+    enum SearchRow {
+        Header(String),
+        Hit(usize),
+    }
+    let mut rows: Vec<SearchRow> = Vec::new();
+    let mut last_path: Option<&std::path::Path> = None;
+    for (index, hit) in app.search_hits.iter().enumerate() {
+        if last_path != Some(hit.path.as_path()) {
+            last_path = Some(hit.path.as_path());
+            rows.push(SearchRow::Header(relative_path(app, &hit.path)));
+        }
+        rows.push(SearchRow::Hit(index));
+    }
+    let cursor_row = rows
+        .iter()
+        .position(|row| matches!(row, SearchRow::Hit(index) if *index == app.sidebar_cursor))
+        .unwrap_or(0);
+    let start = cursor_row.saturating_sub(height.saturating_sub(1));
+    for (offset, row) in rows.iter().enumerate().skip(start).take(height) {
+        let y = top + offset as u16 - start as u16;
+        let row_rect = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        match row {
+            SearchRow::Header(label) => {
+                frame.render_widget(
+                    Paragraph::new(trim_to(label, inner.width.saturating_sub(2) as usize))
+                        .style(Style::default().fg(c.muted).bg(c.panel)),
+                    Rect {
+                        x: row_rect.x + 1,
+                        y,
+                        width: row_rect.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
+            }
+            SearchRow::Hit(index) => {
+                let Some(hit) = app.search_hits.get(*index) else {
+                    continue;
+                };
+                let selected = *index == app.sidebar_cursor && app.focus == Focus::Sidebar;
+                let style = if selected {
+                    Style::default()
+                        .fg(c.text)
+                        .bg(c.accent_dim)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(c.muted).bg(c.panel)
+                };
+                let text = format!(
+                    "  {}: {}",
+                    hit.line,
+                    trim_to(&hit.text, inner.width.saturating_sub(8) as usize)
+                );
+                frame.render_widget(Paragraph::new(text).style(style), row_rect);
+                app.hitboxes.push(Hitbox {
+                    rect: row_rect,
+                    action: UiAction::OpenSearchHit(*index),
+                });
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn git_change_style(c: Colors, staged: char, unstaged: char) -> Style {
+    let base = Style::default().bg(c.panel);
+    if staged == '?' || unstaged == '?' {
+        base.fg(c.muted)
+    } else if unstaged == 'D' || staged == 'D' {
+        base.fg(c.bad)
+    } else if unstaged != ' ' {
+        base.fg(c.warn)
+    } else {
+        base.fg(c.good)
+    }
+}
+
+#[allow(dead_code)]
+fn render_git_panel(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+    let inner = sidebar_chrome(frame, c, area);
+    let subtitle = if app.git_branch.is_empty() {
+        "not a git checkout".to_string()
+    } else {
+        format!("⑂ {}", app.git_branch)
+    };
+    sidebar_header(frame, c, inner, "SOURCE CONTROL", &subtitle);
+    let top = inner.y + 2;
+    let height = inner.bottom().saturating_sub(top) as usize;
+    if height == 0 {
+        return;
+    }
+    if let Some(error) = app.git_error.clone() {
+        frame.render_widget(
+            Paragraph::new(trim_to(&error, inner.width.saturating_sub(2) as usize))
+                .style(Style::default().fg(c.muted).bg(c.panel)),
+            Rect {
+                x: inner.x + 1,
+                y: top,
+                width: inner.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+        return;
+    }
+    if app.git_changes.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Working tree clean").style(Style::default().fg(c.good).bg(c.panel)),
+            Rect {
+                x: inner.x + 1,
+                y: top,
+                width: inner.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+        return;
+    }
+    let start = if app.sidebar_cursor >= height {
+        app.sidebar_cursor - height + 1
+    } else {
+        0
+    };
+    for (offset, change) in app.git_changes.iter().enumerate().skip(start).take(height) {
+        let y = top + offset as u16 - start as u16;
+        let row = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        let mut style = git_change_style(c, change.staged, change.unstaged);
+        if offset == app.sidebar_cursor && app.focus == Focus::Sidebar {
+            style = style.bg(c.accent_dim).add_modifier(Modifier::BOLD);
+        }
+        let text = format!(
+            "{}{} {}",
+            change.staged,
+            change.unstaged,
+            trim_to(&change.path, inner.width.saturating_sub(5) as usize)
+        );
+        frame.render_widget(
+            Paragraph::new(text).style(style),
+            Rect {
+                x: row.x + 1,
+                y,
+                width: row.width.saturating_sub(1),
+                height: 1,
+            },
+        );
+        app.hitboxes.push(Hitbox {
+            rect: row,
+            action: UiAction::OpenGitChange(offset),
+        });
+    }
+}
+
+fn render_page_nav(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+    let block = Block::default()
+        .borders(Borders::RIGHT)
+        .border_style(Style::default().fg(c.border))
+        .style(Style::default().bg(c.panel));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -133,75 +630,198 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("CONTROL", Style::default().fg(MUTED)),
+            Span::styled("CONTROL", Style::default().fg(c.muted)),
             Span::raw("  "),
             Span::styled(
                 "CENTER",
-                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                Style::default().fg(c.text).add_modifier(Modifier::BOLD),
             ),
         ])),
         title,
     );
 
-    let mut y = inner.y + 4;
-    for page in Page::ALL {
-        if y >= inner.bottom().saturating_sub(7) {
-            break;
-        }
+    // Use the whole sidebar for the finite FCC page list. The old layout
+    // reserved six rows for a repeated active-model/context summary, which
+    // hid pages on 80x24 terminals and made focused pages disappear.
+    let nav_top = inner.y + 4;
+    let nav_height = inner.bottom().saturating_sub(nav_top) as usize;
+    let offset = list_offset(app.sidebar_cursor, Page::ALL.len(), nav_height);
+    for (visible, page) in Page::ALL.iter().skip(offset).take(nav_height).enumerate() {
+        let index = offset + visible;
+        let y = nav_top + visible as u16;
         let row = Rect {
             x: inner.x + 1,
-            y,
+            y: y.min(inner.bottom().saturating_sub(1)),
             width: inner.width.saturating_sub(2),
-            height: 2,
+            height: 1,
         };
-        let selected = app.page == page;
+        let selected = index == app.sidebar_cursor;
         let hovered = app.mouse.map(|(x, y)| contains(row, x, y)).unwrap_or(false);
-        let style = if selected {
+        let focused = selected && app.focus == Focus::Sidebar;
+        let style = if focused {
             Style::default()
-                .fg(TEXT)
-                .bg(ACCENT_DIM)
+                .fg(c.text)
+                .bg(c.accent_dim)
+                .add_modifier(Modifier::BOLD)
+        } else if selected {
+            Style::default()
+                .fg(c.text)
+                .bg(c.panel2)
                 .add_modifier(Modifier::BOLD)
         } else if hovered {
-            Style::default().fg(TEXT).bg(PANEL_2)
+            Style::default().fg(c.text).bg(c.panel2)
         } else {
-            Style::default().fg(MUTED).bg(PANEL)
+            Style::default().fg(c.muted).bg(c.panel)
         };
-        let marker = if selected { "▌ " } else { "  " };
+        let marker = if focused {
+            "▌ "
+        } else if selected {
+            "· "
+        } else {
+            "  "
+        };
         frame.render_widget(
-            Paragraph::new(format!("{marker}{}", page.label())).style(style),
+            Paragraph::new(format!(
+                "{marker}{}",
+                trim_to(page.label(), row.width.saturating_sub(2) as usize)
+            ))
+            .style(style),
             row,
         );
         app.hitboxes.push(Hitbox {
             rect: row,
-            action: UiAction::Navigate(page),
+            action: UiAction::Navigate(*page),
         });
-        y += 2;
     }
+}
 
-    let context = Rect {
-        x: inner.x + 2,
-        y: inner.bottom().saturating_sub(6),
-        width: inner.width.saturating_sub(4),
-        height: 5,
+fn render_editor(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Snapshot the visible file window first so rendering can push hitboxes.
+    let snapshot = match app.editor_focus {
+        EditorFocus::File(position) => app.files.get(position).map(|file| {
+            let height = area.height.saturating_sub(1) as usize;
+            let scroll = file.scroll.min(file.lines.len().saturating_sub(1).max(0));
+            let end = (scroll + height.max(1)).min(file.lines.len());
+            (
+                relative_path(app, &file.path),
+                scroll,
+                file.lines.len(),
+                file.truncated,
+                file.lines[scroll..end].to_vec(),
+                app.find_needle.clone(),
+            )
+        }),
+        EditorFocus::Page => None,
     };
+    let Some((relpath, scroll, total, truncated, window, needle)) = snapshot else {
+        render_page(frame, app, area);
+        return;
+    };
+    let c = app.colors;
+    let crumbs = Rect {
+        x: area.x + 1,
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: 1,
+    };
+    let mut crumb = trim_to(&relpath, crumbs.width as usize);
+    if truncated {
+        crumb.push_str("  … truncated (e opens externally)");
+    }
     frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::from(Span::styled("ACTIVE MODEL", Style::default().fg(MUTED))),
-            Line::from(Span::styled(
-                trim_to(&app.status_model(), 22),
-                Style::default().fg(TEXT),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("CONTEXT  ", Style::default().fg(MUTED)),
-                Span::styled(
-                    format_tokens(&app.current_context()),
-                    Style::default().fg(ACCENT),
-                ),
-            ]),
-        ])),
-        context,
+        Paragraph::new(crumb).style(Style::default().fg(c.muted).bg(c.bg)),
+        crumbs,
     );
+    let digits = total.to_string().len().max(1);
+    let mut y = area.y + 1;
+    if window.is_empty() {
+        frame.render_widget(
+            Paragraph::new("— empty or binary file —").style(Style::default().fg(c.muted).bg(c.bg)),
+            Rect {
+                x: area.x + 1,
+                y,
+                width: area.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+    }
+    for (offset, line) in window.iter().enumerate() {
+        if y >= area.bottom() {
+            break;
+        }
+        let number = scroll + offset + 1;
+        let base = if app.focus == Focus::Editor {
+            Style::default().fg(c.text).bg(c.bg)
+        } else {
+            Style::default().fg(c.muted).bg(c.bg)
+        };
+        let hi = Style::default()
+            .fg(c.text)
+            .bg(c.accent_dim)
+            .add_modifier(Modifier::BOLD);
+        let mut spans = vec![Span::styled(
+            format!("{:>width$} │ ", number, width = digits),
+            Style::default().fg(c.muted).bg(c.bg),
+        )];
+        spans.extend(highlight_line(line, &needle, base, hi));
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect {
+                x: area.x + 1,
+                y,
+                width: area.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+        y += 1;
+    }
+    app.hitboxes.push(Hitbox {
+        rect: area,
+        action: UiAction::FocusEditor,
+    });
+}
+
+/// Split a viewer line into base/highlight spans for a case-insensitive
+/// needle, tracking byte offsets through `char_indices` so multi-byte text
+/// can never panic on a slice boundary.
+fn highlight_line<'a>(line: &'a str, needle: &str, base: Style, hi: Style) -> Vec<Span<'a>> {
+    if needle.is_empty() {
+        return vec![Span::styled(line, base)];
+    }
+    let needle_lower = needle.to_lowercase();
+    let needle_chars: Vec<char> = needle_lower.chars().collect();
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let mut spans = Vec::new();
+    let mut segment_start = 0usize;
+    let mut index = 0usize;
+    while index < chars.len() {
+        let matches = chars[index..]
+            .iter()
+            .take(needle_chars.len())
+            .map(|(_, ch)| ch.to_lowercase().collect::<String>())
+            .collect::<String>()
+            == needle_lower;
+        if matches && !needle_chars.is_empty() {
+            let (byte_start, _) = chars[index];
+            let (last_byte, last_char) = chars[index + needle_chars.len() - 1];
+            let byte_end = last_byte + last_char.len_utf8();
+            if segment_start < byte_start {
+                spans.push(Span::styled(&line[segment_start..byte_start], base));
+            }
+            spans.push(Span::styled(&line[byte_start..byte_end], hi));
+            segment_start = byte_end;
+            index += needle_chars.len();
+        } else {
+            index += 1;
+        }
+    }
+    if segment_start < line.len() {
+        spans.push(Span::styled(&line[segment_start..], base));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(line, base));
+    }
+    spans
 }
 
 fn render_page(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -219,81 +839,419 @@ fn render_page(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+
+    let status = app.status_text();
+    let status_kind = app
+        .status
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("offline");
+    let status_style = match status_kind.to_ascii_lowercase().as_str() {
+        "running" | "ready" | "healthy" => Style::default().fg(c.good),
+        "offline" | "error" | "failed" => Style::default().fg(c.bad),
+        _ => Style::default().fg(c.warn),
+    };
+    let active_route = app.status_model();
+    let launch_route = app
+        .config_value("MODEL")
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "not configured".to_string());
+    let inventory = app.model_inventory();
+    let free_models = inventory
+        .iter()
+        .filter(|model| app.model_price_state(model) == crate::app::ModelPriceState::Free)
+        .count();
+    let (provider_count, ready_providers, attention_providers) = dashboard_provider_counts(app);
+    let catalog_mode = app
+        .model_catalog_mode()
+        .unwrap_or_else(|| "server".to_string());
+    let allowlist_count = app.model_catalog_allowlist().len();
+    let mut allowlist_models = app
+        .model_catalog_allowlist()
+        .into_iter()
+        .collect::<Vec<_>>();
+    allowlist_models.sort_by_key(|model| model.to_ascii_lowercase());
+    let pending = dashboard_pending_label(&app.status);
+    let feedback = dashboard_feedback(app);
+    let attention_labels = dashboard_attention_labels(app);
+    let git = if let Some(error) = &app.git_error {
+        error.clone()
+    } else if app.git_branch.is_empty() {
+        "not checked".to_string()
+    } else {
+        format!("{} · {} change(s)", app.git_branch, app.git_changes.len())
+    };
+    let workspace = app.workspace.to_string_lossy().into_owned();
+
+    // On a narrow terminal, a two-column dashboard turns every value into a
+    // clipped label. Collapse to one dense operational card instead.
+    if area.width < 72 {
+        let actions = [
+            ("R", UiAction::Refresh),
+            ("Normal", UiAction::LaunchClaude(false)),
+            ("Danger", UiAction::LaunchClaude(true)),
+        ];
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(10),
+                Constraint::Length(action_bar_height(area.width, &actions)),
+            ])
+            .split(area);
+        let compact_width = rows[0].width.saturating_sub(2) as usize;
+        dashboard_card(
+            frame,
+            c,
+            rows[0],
+            "DASHBOARD",
+            vec![
+                compact_kv(c, "Status", &status, compact_width, status_style),
+                compact_kv(
+                    c,
+                    "MODEL",
+                    &launch_route,
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+                compact_kv(
+                    c,
+                    "ACTIVE",
+                    &active_route,
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+                compact_kv(
+                    c,
+                    "Models",
+                    &format!(
+                        "{}/{}/{} free",
+                        app.models.models.len(),
+                        inventory.len(),
+                        free_models
+                    ),
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+                compact_kv(
+                    c,
+                    "Providers",
+                    &format!("{} reg / {} attention", provider_count, attention_providers),
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+                compact_kv(
+                    c,
+                    "Policy",
+                    &catalog_mode,
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+                compact_kv(
+                    c,
+                    "Context",
+                    &format_tokens(&app.current_context()),
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+                compact_kv(
+                    c,
+                    "Root",
+                    &workspace_name(app),
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+                compact_kv(
+                    c,
+                    "Feedback",
+                    &feedback,
+                    compact_width,
+                    Style::default().fg(c.text),
+                ),
+            ],
+        );
+        action_bar(frame, app, rows[1], &actions);
+        return;
+    }
+
+    let actions = [
+        ("Refresh", UiAction::Refresh),
+        ("Claude normal", UiAction::LaunchClaude(false)),
+        ("Claude danger", UiAction::LaunchClaude(true)),
+    ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),
-            Constraint::Min(8),
-            Constraint::Length(4),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Min(5),
+            Constraint::Length(action_bar_height(area.width, &actions)),
         ])
         .split(area);
-    let status = app.status_text();
-    let model = app.status_model();
-    frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::from(Span::styled(
-                "LOCAL CONTROL PLANE",
-                Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(vec![
-                Span::styled("Server  ", Style::default().fg(MUTED)),
-                Span::styled(status, Style::default().fg(GOOD)),
-            ]),
-            Line::from(vec![
-                Span::styled("Model   ", Style::default().fg(MUTED)),
-                Span::styled(model, Style::default().fg(TEXT)),
-            ]),
-        ]))
-        .style(Style::default().bg(BG))
-        .block(section_block("Overview")),
-        rows[0],
-    );
 
-    let pending = app
-        .status
-        .get("pending_fields")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let body = Text::from(vec![
-        Line::from(Span::styled("The Rust control center is a thin client of fcc-server.", Style::default().fg(TEXT))),
-        Line::from(""),
-        Line::from(vec![Span::styled("Context window  ", Style::default().fg(MUTED)), Span::styled(format_tokens(&app.current_context()), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))]),
-        Line::from(vec![Span::styled("Pending changes  ", Style::default().fg(MUTED)), Span::styled(compact_json(&pending), Style::default().fg(WARN))]),
-        Line::from(""),
-        Line::from(Span::styled("API keys, model routing, local endpoints, custom providers, reasoning and context remain owned by the canonical loopback Admin API.", Style::default().fg(MUTED))),
-    ]);
-    frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: true })
-            .block(section_block("Runtime")),
-        rows[1],
-    );
-    action_bar(
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[0]);
+    dashboard_card(
         frame,
-        app,
-        rows[2],
-        &[
-            ("Refresh", UiAction::Refresh),
-            ("Launch Claude", UiAction::LaunchClaude(false)),
+        c,
+        top[0],
+        "SERVER",
+        vec![
+            styled_kv(c, "Status", &status, status_style),
+            kv(c, "API", "loopback Admin"),
+            kv(
+                c,
+                "Failures",
+                &format!("{} provider(s)", app.models.failed_providers.len()),
+            ),
+            kv(c, "Feedback", &trim_to(&feedback, 42)),
         ],
     );
+    dashboard_card(
+        frame,
+        c,
+        top[1],
+        "LAUNCH ROUTE",
+        vec![
+            kv(c, "MODEL", &launch_route),
+            kv(c, "ACTIVE", &active_route),
+            kv(c, "Context", &format_tokens(&app.current_context())),
+            kv(c, "Pending", &pending),
+        ],
+    );
+
+    let middle = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[1]);
+    dashboard_card(
+        frame,
+        c,
+        middle[0],
+        "MODELS",
+        vec![
+            kv(c, "Active", &app.models.models.len().to_string()),
+            kv(c, "Catalog", &inventory.len().to_string()),
+            styled_kv(
+                c,
+                "FREE",
+                &free_models.to_string(),
+                Style::default().fg(c.good),
+            ),
+            kv(c, "Selected", &app.selected_models.len().to_string()),
+        ],
+    );
+    dashboard_card(
+        frame,
+        c,
+        middle[1],
+        "PROVIDERS",
+        vec![
+            kv(c, "Registered", &provider_count.to_string()),
+            styled_kv(
+                c,
+                "Ready",
+                &ready_providers.to_string(),
+                Style::default().fg(c.good),
+            ),
+            styled_kv(
+                c,
+                "Attention",
+                &attention_providers.to_string(),
+                if attention_providers == 0 {
+                    Style::default().fg(c.good)
+                } else {
+                    Style::default().fg(c.warn)
+                },
+            ),
+            kv(c, "Failed", &app.models.failed_providers.len().to_string()),
+        ],
+    );
+
+    let lower = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[2]);
+    let mut policy_lines = vec![
+        kv(c, "Catalog mode", &catalog_mode),
+        kv(
+            c,
+            "Allowlist",
+            &format!("{} exact model(s)", allowlist_count),
+        ),
+        kv(c, "Model view", app.model_scope_label()),
+        kv(c, "Provider", &app.model_provider_label()),
+    ];
+    if allowlist_models.is_empty() {
+        policy_lines.push(kv(c, "Enabled", "none explicitly listed"));
+    } else {
+        policy_lines.push(Line::from(Span::styled(
+            "Enabled exact routes",
+            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
+        )));
+        for model in allowlist_models.iter().take(12) {
+            policy_lines.push(Line::from(vec![
+                Span::styled("  • ", Style::default().fg(c.accent)),
+                Span::styled(trim_to(model, 52), Style::default().fg(c.text)),
+            ]));
+        }
+        if allowlist_models.len() > 12 {
+            policy_lines.push(Line::from(Span::styled(
+                format!("  … plus {} more", allowlist_models.len() - 12),
+                Style::default().fg(c.muted),
+            )));
+        }
+    }
+    dashboard_card(frame, c, lower[0], "POLICY", policy_lines);
+
+    let mut workspace_lines = vec![
+        kv(c, "Root", &workspace),
+        kv(c, "Git", &git),
+        kv(c, "Changes", &app.git_changes.len().to_string()),
+        kv(c, "Pending", &pending),
+        kv(c, "Feedback", &trim_to(&feedback, 42)),
+    ];
+    if attention_labels.is_empty() {
+        workspace_lines.push(kv(c, "Health", "all registered providers ready"));
+    } else {
+        workspace_lines.push(kv(
+            c,
+            "Attention",
+            &format!("{} provider(s)", attention_labels.len()),
+        ));
+        for label in attention_labels.iter().take(12) {
+            workspace_lines.push(Line::from(vec![
+                Span::styled("  • ", Style::default().fg(c.warn)),
+                Span::styled(trim_to(label, 52), Style::default().fg(c.text)),
+            ]));
+        }
+        if attention_labels.len() > 12 {
+            workspace_lines.push(Line::from(Span::styled(
+                format!("  … plus {} more", attention_labels.len() - 12),
+                Style::default().fg(c.muted),
+            )));
+        }
+    }
+    dashboard_card(frame, c, lower[1], "WORKSPACE + HEALTH", workspace_lines);
+    action_bar(frame, app, rows[3], &actions);
+}
+
+fn dashboard_card(
+    frame: &mut Frame,
+    c: Colors,
+    area: Rect,
+    title: &str,
+    lines: Vec<Line<'static>>,
+) {
+    let block = section_block(c, title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width > 0 && inner.height > 0 {
+        frame.render_widget(
+            Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
+            inner,
+        );
+    }
+}
+
+fn dashboard_provider_counts(app: &App) -> (usize, usize, usize) {
+    let mut statuses = HashMap::new();
+    for provider in app
+        .config
+        .provider_status
+        .iter()
+        .chain(app.models.provider_status.iter())
+    {
+        if !provider.provider_id.is_empty() {
+            statuses.insert(
+                provider.provider_id.to_ascii_lowercase(),
+                provider.status.trim().to_ascii_lowercase(),
+            );
+        }
+    }
+    for provider in &app.custom_providers {
+        if provider.enabled && !provider.provider_id.is_empty() {
+            statuses
+                .entry(provider.provider_id.to_ascii_lowercase())
+                .or_insert_with(|| "configured".to_string());
+        }
+    }
+
+    let ready = statuses
+        .values()
+        .filter(|status| dashboard_provider_is_ready(status))
+        .count();
+    let attention = statuses.len().saturating_sub(ready);
+    (statuses.len(), ready, attention)
+}
+
+fn dashboard_attention_labels(app: &App) -> Vec<String> {
+    let mut providers = HashMap::new();
+    for provider in app
+        .config
+        .provider_status
+        .iter()
+        .chain(app.models.provider_status.iter())
+    {
+        if provider.provider_id.is_empty() || dashboard_provider_is_ready(&provider.status) {
+            continue;
+        }
+        let name = if provider.display_name.is_empty() {
+            provider.provider_id.clone()
+        } else {
+            provider.display_name.clone()
+        };
+        let state = if provider.label.is_empty() {
+            provider.status.clone()
+        } else {
+            provider.label.clone()
+        };
+        providers.insert(
+            provider.provider_id.to_ascii_lowercase(),
+            format!("{name} · {state}"),
+        );
+    }
+    let mut labels = providers.into_values().collect::<Vec<_>>();
+    labels.sort_by_key(|label| label.to_ascii_lowercase());
+    labels
+}
+
+fn dashboard_provider_is_ready(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "configured" | "reachable" | "connected" | "ready" | "available"
+    )
+}
+
+fn dashboard_pending_label(status: &Value) -> String {
+    let count = match status.get("pending_fields") {
+        Some(Value::Array(values)) => values.len(),
+        Some(Value::Object(values)) => values.len(),
+        Some(Value::String(value)) if !value.trim().is_empty() => 1,
+        _ => 0,
+    };
+    if count == 0 {
+        "none".to_string()
+    } else {
+        format!("{count} field(s)")
+    }
+}
+
+fn dashboard_feedback(app: &App) -> String {
+    if let Some(error) = &app.error {
+        format!("error: {}", trim_to(error, 52))
+    } else if let Some(notice) = &app.notice {
+        format!("ok: {}", trim_to(notice, 52))
+    } else {
+        "none".to_string()
+    }
 }
 
 fn render_providers(frame: &mut Frame, app: &mut App, area: Rect) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(4)])
-        .split(area);
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(rows[0]);
-
     let providers = app.config.provider_status.clone();
-    render_provider_list(frame, app, panes[0], &providers);
     let selected = providers.get(app.provider_selected).cloned();
-    render_provider_detail(frame, selected.as_ref(), panes[1]);
-
     let mut actions = vec![
         ("Configure", UiAction::ConfigureProvider),
         ("Test", UiAction::TestProvider),
@@ -315,6 +1273,20 @@ fn render_providers(frame: &mut Frame, app: &mut App, area: Rect) {
         actions.push(("Sign in", UiAction::LoginProvider));
         actions.push(("Disconnect", UiAction::DisconnectProvider));
     }
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(action_bar_height(area.width, &actions)),
+        ])
+        .split(area);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(rows[0]);
+
+    render_provider_list(frame, app, panes[0], &providers);
+    render_provider_detail(frame, app.colors, selected.as_ref(), panes[1]);
     action_bar(frame, app, rows[1], &actions);
 }
 
@@ -324,13 +1296,24 @@ fn render_provider_list(
     area: Rect,
     providers: &[ProviderStatus],
 ) {
-    let block = section_block("Providers");
+    let c = app.colors;
+    let range = if providers.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!(
+            "{}/{}",
+            app.provider_selected.saturating_add(1),
+            providers.len()
+        )
+    };
+    let block_title = format!("Providers · {range}");
+    let block = section_block(c, &block_title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if providers.is_empty() {
         frame.render_widget(
             Paragraph::new("No providers advertised by fcc-server")
-                .style(Style::default().fg(MUTED)),
+                .style(Style::default().fg(c.muted)),
             inner,
         );
         return;
@@ -346,7 +1329,8 @@ fn render_provider_list(
             height: 1,
         };
         let selected = index == app.provider_selected;
-        let status_color = provider_color(&provider.status);
+        let focused = selected && app.focus == Focus::Editor;
+        let status_color = provider_color(c, &provider.status);
         let label = if provider.display_name.is_empty() {
             &provider.provider_id
         } else {
@@ -354,15 +1338,21 @@ fn render_provider_list(
         };
         let line = Line::from(vec![
             Span::styled(
-                if selected { "▌ " } else { "  " },
-                Style::default().fg(ACCENT),
+                if focused {
+                    "▌ "
+                } else if selected {
+                    "· "
+                } else {
+                    "  "
+                },
+                Style::default().fg(c.accent),
             ),
             Span::styled(
                 trim_to(label, 24),
-                if selected {
-                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
+                if focused {
+                    Style::default().fg(c.text).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(TEXT)
+                    Style::default().fg(c.text)
                 },
             ),
             Span::raw("  "),
@@ -371,10 +1361,12 @@ fn render_provider_list(
                 Style::default().fg(status_color),
             ),
         ]);
-        let style = if selected {
-            Style::default().bg(ACCENT_DIM)
+        let style = if focused {
+            Style::default().bg(c.accent_dim)
+        } else if selected {
+            Style::default().bg(c.panel2)
         } else {
-            Style::default().bg(BG)
+            Style::default().bg(c.bg)
         };
         frame.render_widget(Paragraph::new(line).style(style), row);
         app.hitboxes.push(Hitbox {
@@ -384,13 +1376,18 @@ fn render_provider_list(
     }
 }
 
-fn render_provider_detail(frame: &mut Frame, provider: Option<&ProviderStatus>, area: Rect) {
-    let block = section_block("Inspector");
+fn render_provider_detail(
+    frame: &mut Frame,
+    c: Colors,
+    provider: Option<&ProviderStatus>,
+    area: Rect,
+) {
+    let block = section_block(c, "Inspector");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let Some(provider) = provider else {
         frame.render_widget(
-            Paragraph::new("Select a provider").style(Style::default().fg(MUTED)),
+            Paragraph::new("Select a provider").style(Style::default().fg(c.muted)),
             inner,
         );
         return;
@@ -402,31 +1399,32 @@ fn render_provider_detail(frame: &mut Frame, provider: Option<&ProviderStatus>, 
             } else {
                 provider.display_name.clone()
             },
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::default().fg(c.text).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        kv("Provider ID", &provider.provider_id),
-        kv("Kind", &provider.kind),
+        kv(c, "Provider ID", &provider.provider_id),
+        kv(c, "Kind", &provider.kind),
         Line::from(vec![
-            Span::styled("Status          ", Style::default().fg(MUTED)),
+            Span::styled("Status          ", Style::default().fg(c.muted)),
             Span::styled(
                 if provider.label.is_empty() {
                     provider.status.clone()
                 } else {
                     provider.label.clone()
                 },
-                Style::default().fg(provider_color(&provider.status)),
+                Style::default().fg(provider_color(c, &provider.status)),
             ),
         ]),
     ];
     if !provider.base_url.is_empty() {
-        lines.push(kv("Base URL", &provider.base_url));
+        lines.push(kv(c, "Base URL", &provider.base_url));
     }
     if !provider.configuration.is_empty() {
-        lines.push(kv("Required config", &provider.configuration));
+        lines.push(kv(c, "Required config", &provider.configuration));
     }
     if provider.custom {
         lines.push(kv(
+            c,
             "API key",
             if provider.api_key_configured == Some(true) {
                 "configured"
@@ -435,6 +1433,7 @@ fn render_provider_detail(frame: &mut Frame, provider: Option<&ProviderStatus>, 
             },
         ));
         lines.push(kv(
+            c,
             "Proxy",
             if provider.proxy_configured == Some(true) {
                 "configured"
@@ -443,11 +1442,11 @@ fn render_provider_detail(frame: &mut Frame, provider: Option<&ProviderStatus>, 
             },
         ));
         if !provider.model_ids.is_empty() {
-            lines.push(kv("Models", &provider.model_ids.join(", ")));
+            lines.push(kv(c, "Models", &provider.model_ids.join(", ")));
         }
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Secrets are never read back into this UI. Enter replaces a configured key; leaving the secret editor blank preserves it.", Style::default().fg(MUTED))));
+    lines.push(Line::from(Span::styled("Secrets are never read back into this UI. Enter replaces a configured key; leaving the secret editor blank preserves it.", Style::default().fg(c.muted))));
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
         inner,
@@ -455,75 +1454,151 @@ fn render_provider_detail(frame: &mut Frame, provider: Option<&ProviderStatus>, 
 }
 
 fn render_models(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+    app.normalize_model_filters();
+    let models = app.filtered_models();
+    let view_action = if app.model_show_catalog {
+        "Active only"
+    } else {
+        "Show catalog"
+    };
+    let actions = [
+        ("Search", UiAction::SearchModels),
+        ("Provider", UiAction::ChooseModelProvider),
+        ("All/Free", UiAction::CycleModelPrice),
+        (view_action, UiAction::ToggleModelCatalog),
+        ("Toggle selected", UiAction::ToggleSelectedModels),
+        ("Disable all", UiAction::DisableAllModels),
+        ("Set MODEL", UiAction::AssignModel("MODEL".to_string())),
+        ("Refresh", UiAction::Refresh),
+    ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Min(10),
-            Constraint::Length(4),
+            Constraint::Length(2),
+            Constraint::Min(8),
+            Constraint::Length(action_bar_height(area.width, &actions)),
         ])
         .split(area);
     let query = if app.model_query.is_empty() {
-        "Search all models…".to_string()
+        "Search models…".to_string()
     } else {
-        format!("Filter: {}", app.model_query)
+        format!("Search: {}", app.model_query)
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                "MODEL CATALOG",
-                Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+                "MODELS",
+                Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),
-            Span::styled(query, Style::default().fg(TEXT)),
+            Span::styled(query, Style::default().fg(c.text)),
             Span::raw("    "),
             Span::styled(
                 format!(
-                    "{} shown · {} catalog · {} routable · {} providers · {} failures",
-                    app.filtered_models().len(),
-                    app.model_inventory().len(),
+                    "{} shown · {} active · {} catalog · {} selected · {} failures",
+                    models.len(),
                     app.models.models.len(),
-                    app.models.provider_status.len(),
+                    app.model_inventory().len(),
+                    app.selected_models.len(),
                     app.models.failed_providers.len()
                 ),
-                Style::default().fg(MUTED),
+                Style::default().fg(c.muted),
             ),
         ]))
-        .style(Style::default().bg(PANEL_2))
-        .block(bottom_border()),
+        .style(Style::default().bg(c.panel2))
+        .block(bottom_border(c)),
         rows[0],
     );
+    render_model_filter_summary(frame, app, rows[1]);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
-        .split(rows[1]);
-    let models = app.filtered_models();
+        .split(rows[2]);
     render_model_list(frame, app, panes[0], &models);
     render_model_detail(frame, app, panes[1], models.get(app.model_selected));
-    action_bar(
-        frame,
-        app,
-        rows[2],
-        &[
-            ("Search", UiAction::SearchModels),
-            ("Default", UiAction::AssignModel("MODEL".to_string())),
-            ("Fable", UiAction::AssignModel("MODEL_FABLE".to_string())),
-            ("Opus", UiAction::AssignModel("MODEL_OPUS".to_string())),
-            ("Sonnet", UiAction::AssignModel("MODEL_SONNET".to_string())),
-            ("Haiku", UiAction::AssignModel("MODEL_HAIKU".to_string())),
-            ("Refresh", UiAction::Refresh),
-        ],
+    action_bar(frame, app, rows[3], &actions);
+}
+
+fn model_scope_button_label(app: &App) -> &'static str {
+    if app.model_show_catalog {
+        "Catalog"
+    } else {
+        "Active"
+    }
+}
+
+fn render_model_filter_summary(frame: &mut Frame, app: &App, area: Rect) {
+    let c = app.colors;
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(c.border))
+            .style(Style::default().bg(c.bg)),
+        area,
+    );
+    let provider = if app.model_provider_filter == "all" {
+        "All registered".to_string()
+    } else {
+        app.model_provider_label()
+    };
+    let summary = format!(
+        "Provider: {provider}  ·  {}  ·  View: {}  ·  Selected: {}",
+        app.model_free_filter_label(),
+        model_scope_button_label(app),
+        app.selected_models.len()
+    );
+    frame.render_widget(
+        Paragraph::new(summary)
+            .wrap(Wrap { trim: true })
+            .style(Style::default().fg(c.text).bg(c.bg)),
+        Rect {
+            x: area.x + 1,
+            y: area.y,
+            width: area.width.saturating_sub(2),
+            height: area.height,
+        },
     );
 }
 
 fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[String]) {
-    let block = section_block("Models");
+    let c = app.colors;
+    let range = if models.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", app.model_selected.saturating_add(1), models.len())
+    };
+    let block_title = format!("Models · {range}");
+    let block = section_block(c, &block_title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if models.is_empty() {
+        let provider_has_catalog = app.model_provider_filter != "all"
+            && app.model_inventory().iter().any(|model| {
+                model
+                    .split_once('/')
+                    .map(|(provider, _)| provider)
+                    .unwrap_or("other")
+                    .eq_ignore_ascii_case(&app.model_provider_filter)
+            });
+        let message = if app.model_show_catalog {
+            if app.model_price_filter == crate::app::ModelPriceFilter::FreeOnly
+                && provider_has_catalog
+            {
+                "No free models reported for this provider. Choose All/Free to show its full catalog."
+            } else if app.model_provider_filter == "all" {
+                "No catalog models match. Press R to refresh."
+            } else {
+                "No cached models for this provider. Press R to refresh."
+            }
+        } else {
+            "No active models match. Choose Show catalog to view and enable catalog rows."
+        };
         frame.render_widget(
-            Paragraph::new("No discovered/configured models match the filter")
-                .style(Style::default().fg(MUTED)),
+            Paragraph::new(message)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(c.muted)),
             inner,
         );
         return;
@@ -543,31 +1618,52 @@ fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[Str
             height: 1,
         };
         let selected = index == app.model_selected;
+        let focused = selected && app.focus == Focus::Editor;
         let label = app.model_label(model);
         let routable = app.model_is_routable(model);
-        let marker = if routable { "✓ " } else { "· " };
-        let suffix = if routable { "" } else { "  (policy)" };
-        let style = if selected {
-            Style::default()
-                .bg(ACCENT_DIM)
-                .fg(TEXT)
-                .add_modifier(Modifier::BOLD)
+        let pending = app.selected_models.contains(model);
+        let free_badge = if app.model_price_state(model) == crate::app::ModelPriceState::Free {
+            " FREE"
         } else {
-            Style::default().bg(BG).fg(TEXT)
+            ""
         };
-        let prefix = format!("{}{}", if selected { "▌ " } else { "  " }, marker);
-        let available = inner
-            .width
-            .saturating_sub(prefix.chars().count() as u16)
-            .saturating_sub(suffix.chars().count() as u16) as usize;
+        let style = if focused {
+            Style::default()
+                .bg(c.accent_dim)
+                .fg(c.text)
+                .add_modifier(Modifier::BOLD)
+        } else if selected {
+            Style::default().bg(c.panel2).fg(c.text)
+        } else {
+            Style::default().bg(c.bg).fg(c.text)
+        };
+        let prefix = if focused {
+            "▌ "
+        } else if selected {
+            "· "
+        } else {
+            "  "
+        };
+        // Keep pending selection visually separate from actual access state;
+        // `ON`/`OFF` is the server-backed state, while `[S]` is only the
+        // user's staged selection for the next Toggle action.
+        let marker = if pending { "[S]" } else { "[ ]" };
+        let access = if app.model_is_default(model) {
+            "DEFAULT"
+        } else if routable {
+            "ON"
+        } else {
+            "OFF"
+        };
+        // The server-provided label already carries the provider display name
+        // when needed for disambiguation. Repeating the raw provider ID here
+        // produced rows such as `bai · B.AI · DeepSeek`, which added noise
+        // without improving model identity; the exact route remains visible
+        // in the inspector.
+        let details = format!("{marker} {access}{free_badge}  {label}");
+        let available = inner.width.saturating_sub(prefix.chars().count() as u16) as usize;
         frame.render_widget(
-            Paragraph::new(format!(
-                "{}{}{}",
-                prefix,
-                trim_to(&label, available),
-                suffix
-            ))
-            .style(style),
+            Paragraph::new(trim_to(&details, available)).style(style),
             row,
         );
         app.hitboxes.push(Hitbox {
@@ -578,59 +1674,61 @@ fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[Str
 }
 
 fn render_model_detail(frame: &mut Frame, app: &App, area: Rect, model: Option<&String>) {
-    let block = section_block("Model inspector");
+    let c = app.colors;
+    let block = section_block(c, "Model inspector");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let Some(model) = model else {
         frame.render_widget(
-            Paragraph::new("Select a model").style(Style::default().fg(MUTED)),
+            Paragraph::new("Select a model").style(Style::default().fg(c.muted)),
             inner,
         );
         return;
     };
     let label = app.model_label(model);
     let evidence = app.model_evidence(model).cloned().unwrap_or(Value::Null);
-    let free = evidence
-        .get("is_free")
-        .map(compact_json)
-        .unwrap_or_else(|| "unknown".to_string());
     let source = evidence
         .get("evidence_source")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let capabilities = evidence.get("capabilities").cloned().unwrap_or(Value::Null);
+    let access = if app.model_is_default(model) {
+        "DEFAULT · routable"
+    } else if app.model_is_routable(model) {
+        "ON · routable"
+    } else {
+        "OFF · catalog only"
+    };
+    let pending = if app.selected_models.contains(model) {
+        "selected for toggle"
+    } else {
+        "not selected"
+    };
+    let capabilities = capability_summary(&evidence);
     let lines = vec![
         Line::from(Span::styled(
-            label.to_string(),
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            label,
+            Style::default().fg(c.text).add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(model.to_string(), Style::default().fg(MUTED))),
+        Line::from(Span::styled(
+            model.to_string(),
+            Style::default().fg(c.muted),
+        )),
         Line::from(""),
-        kv(
-            "Availability",
-            if app.model_is_routable(model) {
-                "routable"
-            } else {
-                "cataloged; blocked by policy"
-            },
-        ),
-        kv("Free", &free),
-        kv("Evidence", source),
+        kv(c, "Access", access),
+        kv(c, "Selection", pending),
+        kv(c, "Evidence", source),
         Line::from(""),
         Line::from(Span::styled(
-            "Routing shortcuts",
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+            "Selection",
+            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
         )),
-        Line::from("D default   F fable   O opus   S sonnet   H haiku"),
+        Line::from("Space selects · Shift/Ctrl-click adds or removes · T toggles"),
         Line::from(""),
         Line::from(Span::styled(
             "Capabilities",
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            trim_to(&compact_json(&capabilities), 280),
-            Style::default().fg(TEXT),
-        )),
+        Line::from(Span::styled(capabilities, Style::default().fg(c.text))),
     ];
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
@@ -638,15 +1736,36 @@ fn render_model_detail(frame: &mut Frame, app: &App, area: Rect, model: Option<&
     );
 }
 
+fn capability_summary(evidence: &Value) -> String {
+    let Some(capabilities) = evidence.get("capabilities").and_then(Value::as_object) else {
+        return "Not reported".to_string();
+    };
+    if capabilities.is_empty() {
+        return "Not reported".to_string();
+    }
+    let mut entries = capabilities
+        .iter()
+        .map(|(name, value)| {
+            let state = value
+                .get("state")
+                .and_then(Value::as_str)
+                .or_else(|| value.get("confidence").and_then(Value::as_str))
+                .unwrap_or("reported");
+            (
+                name.to_string(),
+                format!("{}: {state}", name.replace('_', " ")),
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|(name, _)| name.to_ascii_lowercase());
+    entries
+        .into_iter()
+        .map(|(_, summary)| summary)
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 fn render_field_page(frame: &mut Frame, app: &mut App, area: Rect, page: Page) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(4)])
-        .split(area);
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
-        .split(rows[0]);
     let indices = match page {
         Page::Routing => app.routing_field_indices(),
         Page::Local => app.local_field_indices(),
@@ -659,12 +1778,6 @@ fn render_field_page(frame: &mut Frame, app: &mut App, area: Rect, page: Page) {
         Page::Settings => app.setting_selected,
         _ => 0,
     };
-    render_field_list(frame, app, panes[0], page, &indices, selected);
-    let field = indices
-        .get(selected)
-        .and_then(|index| app.config.fields.get(*index))
-        .cloned();
-    render_field_detail(frame, field.as_ref(), panes[1]);
     let mut actions = vec![
         ("Edit", UiAction::EditField),
         ("Refresh", UiAction::Refresh),
@@ -679,6 +1792,23 @@ fn render_field_page(frame: &mut Frame, app: &mut App, area: Rect, page: Page) {
             UiAction::ToggleAdvanced,
         ));
     }
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(action_bar_height(area.width, &actions)),
+        ])
+        .split(area);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+        .split(rows[0]);
+    render_field_list(frame, app, panes[0], page, &indices, selected);
+    let field = indices
+        .get(selected)
+        .and_then(|index| app.config.fields.get(*index))
+        .cloned();
+    render_field_detail(frame, app.colors, field.as_ref(), panes[1]);
     action_bar(frame, app, rows[1], &actions);
 }
 
@@ -690,17 +1820,27 @@ fn render_field_list(
     indices: &[usize],
     selected: usize,
 ) {
-    let block = section_block(match page {
-        Page::Routing => "Routing policy",
-        Page::Local => "Local endpoints",
-        Page::Settings => "Configuration",
-        _ => "Fields",
-    });
+    let c = app.colors;
+    let range = if indices.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", selected.saturating_add(1), indices.len())
+    };
+    let block_title = format!(
+        "{} · {range}",
+        match page {
+            Page::Routing => "Routing policy",
+            Page::Local => "Local endpoints",
+            Page::Settings => "Configuration",
+            _ => "Fields",
+        }
+    );
+    let block = section_block(c, &block_title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if indices.is_empty() {
         frame.render_widget(
-            Paragraph::new("No fields available").style(Style::default().fg(MUTED)),
+            Paragraph::new("No fields available").style(Style::default().fg(c.muted)),
             inner,
         );
         return;
@@ -721,24 +1861,33 @@ fn render_field_list(
             height: 1,
         };
         let selected_row = index == selected;
+        let focused_row = selected_row && app.focus == Focus::Editor;
         let value = App::display_field_value(field);
         let label_width = (inner.width as usize / 2).max(12);
         let line = format!(
             "{}{:label_width$}  {}",
-            if selected_row { "▌ " } else { "  " },
+            if focused_row {
+                "▌ "
+            } else if selected_row {
+                "· "
+            } else {
+                "  "
+            },
             trim_to(&field.label, label_width),
             trim_to(
                 &value,
                 inner.width.saturating_sub(label_width as u16 + 5) as usize
             )
         );
-        let style = if selected_row {
+        let style = if focused_row {
             Style::default()
-                .bg(ACCENT_DIM)
-                .fg(TEXT)
+                .bg(c.accent_dim)
+                .fg(c.text)
                 .add_modifier(Modifier::BOLD)
+        } else if selected_row {
+            Style::default().bg(c.panel2).fg(c.text)
         } else {
-            Style::default().bg(BG).fg(TEXT)
+            Style::default().bg(c.bg).fg(c.text)
         };
         frame.render_widget(Paragraph::new(line).style(style), row);
         let action = match page {
@@ -751,13 +1900,13 @@ fn render_field_list(
     }
 }
 
-fn render_field_detail(frame: &mut Frame, field: Option<&ConfigField>, area: Rect) {
-    let block = section_block("Inspector");
+fn render_field_detail(frame: &mut Frame, c: Colors, field: Option<&ConfigField>, area: Rect) {
+    let block = section_block(c, "Inspector");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let Some(field) = field else {
         frame.render_widget(
-            Paragraph::new("Select a setting").style(Style::default().fg(MUTED)),
+            Paragraph::new("Select a setting").style(Style::default().fg(c.muted)),
             inner,
         );
         return;
@@ -765,15 +1914,19 @@ fn render_field_detail(frame: &mut Frame, field: Option<&ConfigField>, area: Rec
     let mut lines = vec![
         Line::from(Span::styled(
             field.label.clone(),
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::default().fg(c.text).add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(field.key.clone(), Style::default().fg(MUTED))),
+        Line::from(Span::styled(
+            field.key.clone(),
+            Style::default().fg(c.muted),
+        )),
         Line::from(""),
-        kv("Value", &App::display_field_value(field)),
-        kv("Source", &field.source),
-        kv("Type", &field.field_type),
-        kv("Locked", if field.locked { "Yes" } else { "No" }),
+        kv(c, "Value", &App::display_field_value(field)),
+        kv(c, "Source", &field.source),
+        kv(c, "Type", &field.field_type),
+        kv(c, "Locked", if field.locked { "Yes" } else { "No" }),
         kv(
+            c,
             "Restart",
             if field.restart_required {
                 "Required"
@@ -782,20 +1935,21 @@ fn render_field_detail(frame: &mut Frame, field: Option<&ConfigField>, area: Rec
             },
         ),
         kv(
+            c,
             "Session boundary",
             if field.session_sensitive { "Yes" } else { "No" },
         ),
         Line::from(""),
         Line::from(Span::styled(
             field.description.clone(),
-            Style::default().fg(MUTED),
+            Style::default().fg(c.muted),
         )),
     ];
     if field.secret {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "Configured secrets are masked. Enter replaces; X explicitly clears.",
-            Style::default().fg(WARN),
+            Style::default().fg(c.warn),
         )));
     }
     frame.render_widget(
@@ -805,140 +1959,296 @@ fn render_field_detail(frame: &mut Frame, field: Option<&ConfigField>, area: Rec
 }
 
 fn render_context(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+    let actions = [
+        ("Edit context", UiAction::EditField),
+        ("Refresh", UiAction::Refresh),
+    ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(12), Constraint::Length(4)])
+        .constraints([
+            Constraint::Min(12),
+            Constraint::Length(action_bar_height(area.width, &actions)),
+        ])
         .split(area);
     let field = app.context_field().cloned();
     let current = field
         .as_ref()
         .map(App::display_field_value)
         .unwrap_or_else(|| "256000".to_string());
-    let block = section_block("Claude Code context policy");
+    let block = section_block(c, "Claude Code context policy");
     let inner = block.inner(rows[0]);
     frame.render_widget(block, rows[0]);
     let lines = vec![
-        Line::from(Span::styled("SESSION WINDOW", Style::default().fg(MUTED).add_modifier(Modifier::BOLD))),
-        Line::from(Span::styled(format_tokens(&current), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("SESSION WINDOW", Style::default().fg(c.muted).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(format_tokens(&current), Style::default().fg(c.accent).add_modifier(Modifier::BOLD))),
         Line::from(""),
-        kv("FCC setting", "FCC_CLAUDE_CONTEXT_TOKENS"),
-        kv("Accepted range", &format!("{CONTEXT_MIN} – {CONTEXT_MAX} tokens")),
+        kv(c, "FCC setting", "FCC_CLAUDE_CONTEXT_TOKENS"),
+        kv(c, "Accepted range", &format!("{CONTEXT_MIN} – {CONTEXT_MAX} tokens")),
         Line::from(""),
-        Line::from(Span::styled("New FCC-launched Claude sessions receive the selected value as BOTH:", Style::default().fg(TEXT))),
-        Line::from(Span::styled("CLAUDE_CODE_MAX_CONTEXT_TOKENS", Style::default().fg(GOOD))),
-        Line::from(Span::styled("CLAUDE_CODE_AUTO_COMPACT_WINDOW", Style::default().fg(GOOD))),
+        Line::from(Span::styled("New FCC-launched Claude sessions receive the selected value as BOTH:", Style::default().fg(c.text))),
+        Line::from(Span::styled("CLAUDE_CODE_MAX_CONTEXT_TOKENS", Style::default().fg(c.good))),
+        Line::from(Span::styled("CLAUDE_CODE_AUTO_COMPACT_WINDOW", Style::default().fg(c.good))),
         Line::from(""),
-        Line::from(Span::styled("Changing this setting does not resize an already-running Claude process. Known model-native ceilings smaller than the configured cap still win.", Style::default().fg(MUTED))),
+        Line::from(Span::styled("Changing this setting does not resize an already-running Claude process. Known model-native ceilings smaller than the configured cap still win.", Style::default().fg(c.muted))),
         Line::from(""),
-        Line::from(Span::styled("Default 256K is deliberate. Raise it only when the selected upstream model actually supports the larger window.", Style::default().fg(WARN))),
+        Line::from(Span::styled("Default 256K is deliberate. Raise it only when the selected upstream model actually supports the larger window.", Style::default().fg(c.warn))),
     ];
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
         inner,
     );
-    action_bar(
-        frame,
-        app,
-        rows[1],
-        &[
-            ("Edit context", UiAction::EditField),
-            ("Refresh", UiAction::Refresh),
-        ],
-    );
+    action_bar(frame, app, rows[1], &actions);
 }
 
 fn render_usage(frame: &mut Frame, app: &mut App, area: Rect) {
+    let actions = [("Refresh", UiAction::Refresh)];
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(4)])
+        .constraints([
+            Constraint::Min(8),
+            Constraint::Length(action_bar_height(area.width, &actions)),
+        ])
         .split(area);
-    frame.render_widget(
-        Paragraph::new(pretty(&app.usage))
-            .style(Style::default().fg(TEXT).bg(BG))
-            .wrap(Wrap { trim: false })
-            .block(section_block("30-day metadata-only usage")),
+    render_scrollable_output(
+        frame,
+        app,
         rows[0],
+        "30-day metadata-only usage",
+        pretty(&app.usage),
     );
-    action_bar(frame, app, rows[1], &[("Refresh", UiAction::Refresh)]);
+    action_bar(frame, app, rows[1], &actions);
 }
 
 fn render_diagnostics(frame: &mut Frame, app: &mut App, area: Rect) {
+    let actions = [
+        ("Run diagnostic", UiAction::RunDiagnostic),
+        ("Refresh", UiAction::Refresh),
+    ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(4)])
+        .constraints([
+            Constraint::Min(8),
+            Constraint::Length(action_bar_height(area.width, &actions)),
+        ])
         .split(area);
     let body = if app.diagnostic.is_null() {
         "Run a synthetic route diagnostic. No prompt content is sent to a provider.".to_string()
     } else {
         pretty(&app.diagnostic)
     };
+    render_scrollable_output(frame, app, rows[0], "Route diagnostic", body);
+    action_bar(frame, app, rows[1], &actions);
+}
+
+fn render_scrollable_output(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    title: &str,
+    body: String,
+) {
+    let c = app.colors;
+    let block_width = area.width.saturating_sub(2).max(1);
+    let total = crate::app::rendered_line_count(&body, block_width);
+    let viewport = area.height.saturating_sub(2).max(1) as usize;
+    let max_scroll = total.saturating_sub(viewport);
+    let scroll = app.content_scroll.min(max_scroll);
+    app.content_scroll = scroll;
+    let first = if total == 0 { 0 } else { scroll + 1 };
+    let last = (scroll + viewport).min(total);
+    let block_title = format!("{title} · lines {first}–{last} of {total}");
     frame.render_widget(
         Paragraph::new(body)
-            .style(Style::default().fg(TEXT))
+            .style(Style::default().fg(c.text).bg(c.bg))
             .wrap(Wrap { trim: false })
-            .block(section_block("Route diagnostic")),
-        rows[0],
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0))
+            .block(section_block(c, &block_title)),
+        area,
     );
-    action_bar(
-        frame,
-        app,
-        rows[1],
-        &[
-            ("Run diagnostic", UiAction::RunDiagnostic),
-            ("Refresh", UiAction::Refresh),
-        ],
+}
+
+fn render_panel(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(c.border))
+            .style(Style::default().bg(c.panel)),
+        area,
+    );
+    let (errors, warnings) = app.problem_counts();
+    let header = format!("FCC STATUS · PROVIDER ALERTS ({})", errors + warnings);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            trim_to(&header, area.width.saturating_sub(2) as usize),
+            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
+        )),
+        Rect {
+            x: area.x + 1,
+            y: area.y,
+            width: area.width.saturating_sub(2),
+            height: 1,
+        },
+    );
+    let mut lines: Vec<(String, Style)> = Vec::new();
+    for name in app.models.failed_providers.iter().take(3) {
+        lines.push((
+            format!("⚠ provider failed: {name}"),
+            Style::default().fg(c.warn),
+        ));
+    }
+    for provider in app
+        .config
+        .provider_status
+        .iter()
+        .filter(|provider| {
+            matches!(
+                provider.status.as_str(),
+                "missing_key" | "missing_config" | "missing_url" | "unknown"
+            )
+        })
+        .take(2)
+    {
+        lines.push((
+            format!("⚠ {}: {}", provider.display_name, provider.status),
+            Style::default().fg(c.warn),
+        ));
+    }
+    if let Some(error) = &app.error {
+        lines.push((error.clone(), Style::default().fg(c.bad)));
+    } else if let Some(notice) = &app.notice {
+        lines.push((notice.clone(), Style::default().fg(c.good)));
+    } else {
+        lines.push((app.status_text(), Style::default().fg(c.muted)));
+    }
+    let mut y = area.y + 1;
+    for (text, style) in lines {
+        if y >= area.bottom() {
+            break;
+        }
+        frame.render_widget(
+            Paragraph::new(trim_to(&text, area.width.saturating_sub(2) as usize)).style(style),
+            Rect {
+                x: area.x + 1,
+                y,
+                width: area.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+        y += 1;
+    }
+}
+
+fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
+    let c = app.colors;
+    let bar = Style::default().fg(c.text).bg(c.panel2);
+    let (errors, warnings) = app.problem_counts();
+    let mut left = String::new();
+    if !app.git_branch.is_empty() {
+        left.push_str(&format!("⑂ {}  ", app.git_branch));
+    }
+    left.push_str(&workspace_name(app));
+    if errors + warnings > 0 {
+        left.push_str(&format!("  ✖{} ⚠{}", errors, warnings));
+    } else {
+        left.push_str("  ✓");
+    }
+    let right = if let Some((_, file)) = app.active_file() {
+        let position = file.scroll + 1;
+        format!(
+            "Ln {position}/{}  {}  {}  FCC LOCAL",
+            file.lines.len(),
+            app.status_model_short(),
+            format_tokens(&app.current_context())
+        )
+    } else {
+        format!(
+            "{}  {}  {}  FCC LOCAL",
+            app.page.label(),
+            app.status_model_short(),
+            format_tokens(&app.current_context())
+        )
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(trim_to(&left, chunks[0].width as usize)).style(bar),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(trim_to(&right, chunks[1].width as usize))
+            .alignment(ratatui::layout::Alignment::Right)
+            .style(bar),
+        chunks[1],
     );
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let c = app.colors;
     let message = if let Some(error) = &app.error {
         Span::styled(
             trim_to(error, 72),
-            Style::default().fg(BAD).add_modifier(Modifier::BOLD),
+            Style::default().fg(c.bad).add_modifier(Modifier::BOLD),
         )
     } else if let Some(notice) = &app.notice {
-        Span::styled(trim_to(notice, 72), Style::default().fg(GOOD))
+        Span::styled(trim_to(notice, 72), Style::default().fg(c.good))
     } else {
-        Span::styled("LOCAL · LOOPBACK ADMIN API", Style::default().fg(MUTED))
+        Span::styled("LOCAL · LOOPBACK ADMIN API", Style::default().fg(c.muted))
     };
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(area);
     frame.render_widget(
-        Paragraph::new(Line::from(message))
-            .style(Style::default().bg(PANEL))
-            .block(top_border()),
+        Paragraph::new(Line::from(message)).style(Style::default().bg(c.panel)),
         chunks[0],
     );
+    // Keep the footer for transient notices only. Navigation guidance belongs
+    // in the actual page controls, not in a permanent decorative legend.
     frame.render_widget(
-        Paragraph::new("Mouse · ↑↓ Navigate · Enter Open · ^K Palette · R Refresh · C Claude · ? Help · Q Quit")
-            .alignment(ratatui::layout::Alignment::Right)
-            .style(Style::default().fg(MUTED).bg(PANEL))
-            .block(top_border()),
+        Paragraph::new("").style(Style::default().bg(c.panel)),
         chunks[1],
     );
 }
 
 fn action_bar(frame: &mut Frame, app: &mut App, area: Rect, actions: &[(&str, UiAction)]) {
+    let c = app.colors;
     frame.render_widget(
         Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(BORDER))
-            .style(Style::default().bg(PANEL)),
+            .border_style(Style::default().fg(c.border))
+            .style(Style::default().bg(c.panel)),
         area,
     );
-    let mut x = area.x + 1;
+    if area.width < 3 || area.height < 2 {
+        return;
+    }
+    let left = area.x.saturating_add(1);
+    let right = area.right().saturating_sub(1);
+    let max_width = right.saturating_sub(left).max(1);
+    let mut x = left;
+    let mut y = area.y + 1;
     for (label, action) in actions {
-        let width = (label.chars().count() as u16 + 4).min(area.right().saturating_sub(x));
-        if width < 5 || x >= area.right() {
+        if y >= area.bottom() {
             break;
+        }
+        let desired = label.chars().count() as u16 + 4;
+        let width = desired.min(max_width).max(1);
+        if x > left && x.saturating_add(width) > right {
+            y = y.saturating_add(1);
+            x = left;
+            if y >= area.bottom() {
+                break;
+            }
         }
         let button = Rect {
             x,
-            y: area.y + 1,
+            y,
             width,
-            height: 2.min(area.height.saturating_sub(1)),
+            height: 1,
         };
         let hovered = app
             .mouse
@@ -946,13 +2256,20 @@ fn action_bar(frame: &mut Frame, app: &mut App, area: Rect, actions: &[(&str, Ui
             .unwrap_or(false);
         let style = if hovered {
             Style::default()
-                .fg(TEXT)
-                .bg(ACCENT_DIM)
+                .fg(c.text)
+                .bg(c.accent_dim)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(TEXT).bg(PANEL_2)
+            Style::default().fg(c.text).bg(c.panel2)
         };
-        frame.render_widget(Paragraph::new(format!("  {label}  ")).style(style), button);
+        frame.render_widget(
+            Paragraph::new(format!(
+                "  {}  ",
+                trim_to(label, width.saturating_sub(4) as usize)
+            ))
+            .style(style),
+            button,
+        );
         app.hitboxes.push(Hitbox {
             rect: button,
             action: action.clone(),
@@ -961,7 +2278,24 @@ fn action_bar(frame: &mut Frame, app: &mut App, area: Rect, actions: &[(&str, Ui
     }
 }
 
-fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
+fn action_bar_height(width: u16, actions: &[(&str, UiAction)]) -> u16 {
+    let usable = width.saturating_sub(2).max(1);
+    let mut rows: u16 = if actions.is_empty() { 0 } else { 1 };
+    let mut used = 0u16;
+    for (label, _) in actions {
+        let button_width = (label.chars().count() as u16 + 4).min(usable).max(1);
+        if used > 0 && used.saturating_add(button_width) > usable {
+            rows = rows.saturating_add(1);
+            used = 0;
+        }
+        used = used.saturating_add(button_width.saturating_add(1));
+    }
+    // One row is the top border; the remaining rows contain buttons.
+    rows.saturating_add(1).max(2)
+}
+
+fn render_modal(frame: &mut Frame, app: &mut App, area: Rect) {
+    let c = app.colors;
     let Some(modal) = &app.modal else {
         return;
     };
@@ -970,7 +2304,6 @@ fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
         76,
         match modal {
             Modal::ProviderEditor { .. } => 24,
-            Modal::Help => 22,
             Modal::Palette { .. } => 20,
             Modal::FieldPicker { field_indices, .. } => (field_indices.len() as u16 + 6).min(24),
             Modal::Choice { options, .. } => (options.len() as u16 + 6).min(22),
@@ -978,34 +2311,186 @@ fn render_modal(frame: &mut Frame, app: &App, area: Rect) {
         },
     );
     frame.render_widget(Clear, rect);
-    frame.render_widget(Block::default().style(Style::default().bg(PANEL)), rect);
+    frame.render_widget(Block::default().style(Style::default().bg(c.panel)), rect);
     match modal {
-        Modal::EditField { field, input } => render_edit_modal(frame, rect, field, input),
-        Modal::Choice { label, options, selected, .. } => render_choice_modal(frame, rect, label, options, *selected),
-        Modal::FieldPicker { title, field_indices, selected } => render_field_picker(frame, app, rect, title, field_indices, *selected),
-        Modal::ProviderEditor { existing_id, draft, selected, editing } => render_provider_editor(frame, rect, existing_id.as_deref(), draft, *selected, editing.as_ref()),
-        Modal::SearchModels { input } => render_simple_input(frame, rect, "Search models", input, "Enter filters · Esc cancels"),
-        Modal::Palette { input, selected } => render_palette(frame, app, rect, &input.value, *selected),
-        Modal::Confirm { title, body, .. } => render_message_box(frame, rect, title, &format!("{body}\n\nEnter/Y confirms · Esc/N cancels"), WARN),
-        Modal::Message { title, body } => render_message_box(frame, rect, title, body, TEXT),
-        Modal::Help => render_message_box(frame, rect, "Keyboard + mouse", "Click sidebar rows, list rows, and action buttons.\n\nGlobal: Tab/Shift-Tab pages · Ctrl-K/Ctrl-P palette · R refresh · C launch Claude · ! danger launcher · Q quit\nProviders: Enter configure · T test · N new custom · E edit custom · X delete · L browser login · Shift-L device login · Shift-D disconnect\nModels: / search · D/F/O/S/H assign default/Fable/Opus/Sonnet/Haiku\nSettings: Enter edit · A advanced · X clear selected secret\nPalette: type to filter · ↑↓ or Ctrl-P/Ctrl-N move · Enter runs · Esc closes\nMultiline editor: Ctrl-Enter saves · Esc cancels\nCustom provider editor: ↑↓ field · Enter edit · Space toggle booleans · Ctrl-S save", TEXT),
+        Modal::EditField { field, input } => {
+            render_edit_modal(frame, app.colors, rect, field, input)
+        }
+        Modal::Choice {
+            label,
+            options,
+            selected,
+            ..
+        } => render_choice_modal(frame, app.colors, rect, label, options, *selected),
+        Modal::FieldPicker {
+            title,
+            field_indices,
+            selected,
+        } => render_field_picker(
+            frame,
+            app.colors,
+            app,
+            rect,
+            title,
+            field_indices,
+            *selected,
+        ),
+        Modal::ProviderEditor {
+            existing_id,
+            draft,
+            selected,
+            editing,
+        } => render_provider_editor(
+            frame,
+            app.colors,
+            rect,
+            existing_id.as_deref(),
+            draft,
+            *selected,
+            editing.as_ref(),
+        ),
+        Modal::SearchModels { input } => render_simple_input(
+            frame,
+            app.colors,
+            rect,
+            "Search models",
+            input,
+            "Enter filters · Esc cancels",
+        ),
+        Modal::SearchFiles { input } => render_simple_input(
+            frame,
+            app.colors,
+            rect,
+            "Search files",
+            input,
+            "Enter searches workspace · Esc cancels",
+        ),
+        Modal::FindInFile { input } => render_simple_input(
+            frame,
+            app.colors,
+            rect,
+            "Find in file",
+            input,
+            "Enter jumps to next match · Esc cancels",
+        ),
+        Modal::Palette { input, selected } => {
+            render_palette(frame, app, rect, &input.value, *selected)
+        }
+        Modal::Confirm { title, body, .. } => render_message_box(
+            frame,
+            app.colors,
+            rect,
+            title,
+            &format!("{body}\n\nEnter/Y confirms · Esc/N cancels"),
+            c.warn,
+        ),
+        Modal::Message { title, body } => {
+            render_message_box(frame, app.colors, rect, title, body, c.text)
+        }
+    }
+    register_modal_hitboxes(app, rect);
+}
+
+fn register_modal_hitboxes(app: &mut App, rect: Rect) {
+    let c = app.colors;
+    let Some(modal) = app.modal.as_ref() else {
+        return;
+    };
+    match modal {
+        Modal::Choice {
+            label,
+            options,
+            selected,
+            ..
+        } => {
+            let block_title = format!("{label}  {}", list_position(*selected, options.len()));
+            let block = modal_block(c, &block_title);
+            let inner = block.inner(rect);
+            let height = inner.height.saturating_sub(2) as usize;
+            let offset = list_offset(*selected, options.len(), height);
+            for (visible, _) in options.iter().enumerate().skip(offset).take(height) {
+                app.hitboxes.push(Hitbox {
+                    rect: Rect {
+                        x: inner.x,
+                        y: inner.y + (visible - offset) as u16,
+                        width: inner.width,
+                        height: 1,
+                    },
+                    action: UiAction::ModalActivate(visible),
+                });
+            }
+        }
+        Modal::FieldPicker {
+            title,
+            field_indices,
+            selected,
+        } => {
+            let block_title = format!("{title}  {}", list_position(*selected, field_indices.len()));
+            let block = modal_block(c, &block_title);
+            let inner = block.inner(rect);
+            let height = inner.height.saturating_sub(2) as usize;
+            let offset = list_offset(*selected, field_indices.len(), height);
+            for (visible, _) in field_indices.iter().enumerate().skip(offset).take(height) {
+                app.hitboxes.push(Hitbox {
+                    rect: Rect {
+                        x: inner.x,
+                        y: inner.y + (visible - offset) as u16,
+                        width: inner.width,
+                        height: 1,
+                    },
+                    action: UiAction::ModalActivate(visible),
+                });
+            }
+        }
+        Modal::ProviderEditor { .. } => {
+            let inner = modal_block(c, "Edit custom provider").inner(rect);
+            for index in 0..8usize {
+                app.hitboxes.push(Hitbox {
+                    rect: Rect {
+                        x: inner.x,
+                        y: inner.y + index as u16,
+                        width: inner.width,
+                        height: 1,
+                    },
+                    action: UiAction::ModalSelect(index),
+                });
+            }
+        }
+        Modal::Palette {
+            input, selected, ..
+        } => {
+            let inner = modal_block(c, "Command palette").inner(rect);
+            let inventory = app.palette_inventory();
+            let visible = match_palette(&input.value, &inventory);
+            let rows = inner.height.saturating_sub(5) as usize;
+            let offset = list_offset(*selected, visible.len(), rows);
+            for (row, _) in visible.iter().skip(offset).take(rows).enumerate() {
+                app.hitboxes.push(Hitbox {
+                    rect: Rect {
+                        x: inner.x,
+                        y: inner.y + 4 + row as u16,
+                        width: inner.width,
+                        height: 1,
+                    },
+                    action: UiAction::ModalActivate(offset + row),
+                });
+            }
+        }
+        _ => {}
     }
 }
 
 fn render_edit_modal(
     frame: &mut Frame,
+    c: Colors,
     rect: Rect,
     field: &ConfigField,
     input: &crate::app::TextInput,
 ) {
-    let block = modal_block(&field.label);
+    let block = modal_block(c, &field.label);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
-    let shown = if input.secret {
-        "•".repeat(input.value.chars().count())
-    } else {
-        input.value.clone()
-    };
+    let shown = input_display(input);
     let hint = if input.multiline {
         "Ctrl-Enter saves · Enter newline · Esc cancels"
     } else if field.secret && field.configured {
@@ -1015,12 +2500,12 @@ fn render_edit_modal(
     };
     frame.render_widget(
         Paragraph::new(shown)
-            .style(Style::default().fg(TEXT).bg(BG))
+            .style(Style::default().fg(c.text).bg(c.bg))
             .wrap(Wrap { trim: false })
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT)),
+                    .border_style(Style::default().fg(c.accent)),
             ),
         Rect {
             x: inner.x,
@@ -1030,7 +2515,7 @@ fn render_edit_modal(
         },
     );
     frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        Paragraph::new(hint).style(Style::default().fg(c.muted)),
         Rect {
             x: inner.x,
             y: inner.bottom().saturating_sub(2),
@@ -1042,21 +2527,22 @@ fn render_edit_modal(
 
 fn render_simple_input(
     frame: &mut Frame,
+    c: Colors,
     rect: Rect,
     title: &str,
     input: &crate::app::TextInput,
     hint: &str,
 ) {
-    let block = modal_block(title);
+    let block = modal_block(c, title);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     frame.render_widget(
-        Paragraph::new(input.value.clone())
-            .style(Style::default().fg(TEXT).bg(BG))
+        Paragraph::new(input_display(input))
+            .style(Style::default().fg(c.text).bg(c.bg))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT)),
+                    .border_style(Style::default().fg(c.accent)),
             ),
         Rect {
             x: inner.x,
@@ -1066,7 +2552,7 @@ fn render_simple_input(
         },
     );
     frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        Paragraph::new(hint).style(Style::default().fg(c.muted)),
         Rect {
             x: inner.x,
             y: inner.y + 6,
@@ -1077,7 +2563,8 @@ fn render_simple_input(
 }
 
 fn render_palette(frame: &mut Frame, app: &App, rect: Rect, query: &str, selected: usize) {
-    let block = modal_block("Command palette");
+    let c = app.colors;
+    let block = modal_block(c, "Command palette");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.height < 4 || inner.width < 8 {
@@ -1085,11 +2572,11 @@ fn render_palette(frame: &mut Frame, app: &App, rect: Rect, query: &str, selecte
     }
     frame.render_widget(
         Paragraph::new(format!("❯ {query}"))
-            .style(Style::default().fg(TEXT).bg(BG))
+            .style(Style::default().fg(c.text).bg(c.bg))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT)),
+                    .border_style(Style::default().fg(c.accent)),
             ),
         Rect {
             x: inner.x,
@@ -1103,7 +2590,7 @@ fn render_palette(frame: &mut Frame, app: &App, rect: Rect, query: &str, selecte
     let rows = (inner.height.saturating_sub(5)) as usize;
     if visible.is_empty() {
         frame.render_widget(
-            Paragraph::new("No matching command").style(Style::default().fg(MUTED)),
+            Paragraph::new("No matching command").style(Style::default().fg(c.muted)),
             Rect {
                 x: inner.x,
                 y: inner.y + 4,
@@ -1134,11 +2621,11 @@ fn render_palette(frame: &mut Frame, app: &App, rect: Rect, query: &str, selecte
         };
         let style = if display == selected.min(visible.len().saturating_sub(1)) {
             Style::default()
-                .fg(TEXT)
-                .bg(ACCENT_DIM)
+                .fg(c.text)
+                .bg(c.accent_dim)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(TEXT)
+            Style::default().fg(c.text)
         };
         let marker = if display == selected.min(visible.len().saturating_sub(1)) {
             "▌ "
@@ -1161,7 +2648,7 @@ fn render_palette(frame: &mut Frame, app: &App, rect: Rect, query: &str, selecte
     }
     frame.render_widget(
         Paragraph::new("Type to filter · ↑↓ move · Enter runs · Esc closes")
-            .style(Style::default().fg(MUTED)),
+            .style(Style::default().fg(c.muted)),
         Rect {
             x: inner.x,
             y: inner.bottom().saturating_sub(1),
@@ -1173,32 +2660,33 @@ fn render_palette(frame: &mut Frame, app: &App, rect: Rect, query: &str, selecte
 
 fn render_choice_modal(
     frame: &mut Frame,
+    c: Colors,
     rect: Rect,
     title: &str,
     options: &[crate::api::ConfigOption],
     selected: usize,
 ) {
-    let block = modal_block(title);
+    let title = format!("{title}  {}", list_position(selected, options.len()));
+    let block = modal_block(c, &title);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
-    for (index, option) in options
-        .iter()
-        .enumerate()
-        .take(inner.height.saturating_sub(2) as usize)
-    {
+    let height = inner.height.saturating_sub(2) as usize;
+    let offset = list_offset(selected, options.len(), height);
+    for (index, option) in options.iter().enumerate().skip(offset).take(height) {
+        let visible = index - offset;
         let row = Rect {
             x: inner.x,
-            y: inner.y + index as u16,
+            y: inner.y + visible as u16,
             width: inner.width,
             height: 1,
         };
         let style = if index == selected {
             Style::default()
-                .fg(TEXT)
-                .bg(ACCENT_DIM)
+                .fg(c.text)
+                .bg(c.accent_dim)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(TEXT)
+            Style::default().fg(c.text)
         };
         frame.render_widget(
             Paragraph::new(format!(
@@ -1214,41 +2702,46 @@ fn render_choice_modal(
 
 fn render_field_picker(
     frame: &mut Frame,
+    c: Colors,
     app: &App,
     rect: Rect,
     title: &str,
     indices: &[usize],
     selected: usize,
 ) {
-    let block = modal_block(title);
+    let title = format!("{title}  {}", list_position(selected, indices.len()));
+    let block = modal_block(c, &title);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
-    for (visible, index) in indices
-        .iter()
-        .enumerate()
-        .take(inner.height.saturating_sub(2) as usize)
-    {
+    let height = inner.height.saturating_sub(2) as usize;
+    let offset = list_offset(selected, indices.len(), height);
+    for (visible, index) in indices.iter().enumerate().skip(offset).take(height) {
+        let selected_index = offset + visible;
         let Some(field) = app.config.fields.get(*index) else {
             continue;
         };
         let row = Rect {
             x: inner.x,
-            y: inner.y + visible as u16,
+            y: inner.y + (selected_index - offset) as u16,
             width: inner.width,
             height: 1,
         };
-        let style = if visible == selected {
+        let style = if selected_index == selected {
             Style::default()
-                .fg(TEXT)
-                .bg(ACCENT_DIM)
+                .fg(c.text)
+                .bg(c.accent_dim)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(TEXT)
+            Style::default().fg(c.text)
         };
         frame.render_widget(
             Paragraph::new(format!(
                 "{}{:30}  {}",
-                if visible == selected { "▌ " } else { "  " },
+                if selected_index == selected {
+                    "▌ "
+                } else {
+                    "  "
+                },
                 trim_to(&field.label, 30),
                 trim_to(&App::display_field_value(field), 30)
             ))
@@ -1260,6 +2753,7 @@ fn render_field_picker(
 
 fn render_provider_editor(
     frame: &mut Frame,
+    c: Colors,
     rect: Rect,
     existing_id: Option<&str>,
     draft: &crate::app::ProviderDraft,
@@ -1271,7 +2765,7 @@ fn render_provider_editor(
     } else {
         "New custom provider"
     };
-    let block = modal_block(title);
+    let block = modal_block(c, title);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     for index in 0..8usize {
@@ -1283,11 +2777,11 @@ fn render_provider_editor(
         };
         let style = if index == selected {
             Style::default()
-                .fg(TEXT)
-                .bg(ACCENT_DIM)
+                .fg(c.text)
+                .bg(c.accent_dim)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(TEXT)
+            Style::default().fg(c.text)
         };
         frame.render_widget(
             Paragraph::new(format!(
@@ -1303,7 +2797,7 @@ fn render_provider_editor(
     let hint_y = inner.y + 10;
     frame.render_widget(
         Paragraph::new("↑↓ field · Enter edit · Space boolean · Ctrl-S save · Esc cancel")
-            .style(Style::default().fg(MUTED)),
+            .style(Style::default().fg(c.muted)),
         Rect {
             x: inner.x,
             y: hint_y,
@@ -1312,20 +2806,16 @@ fn render_provider_editor(
         },
     );
     if let Some(input) = editing {
-        let shown = if input.secret {
-            "•".repeat(input.value.chars().count())
-        } else {
-            input.value.clone()
-        };
+        let shown = input_display(input);
         frame.render_widget(
             Paragraph::new(shown)
                 .wrap(Wrap { trim: false })
-                .style(Style::default().fg(TEXT).bg(BG))
+                .style(Style::default().fg(c.text).bg(c.bg))
                 .block(
                     Block::default()
                         .title(" Edit value ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(ACCENT)),
+                        .border_style(Style::default().fg(c.accent)),
                 ),
             Rect {
                 x: inner.x,
@@ -1335,12 +2825,19 @@ fn render_provider_editor(
             },
         );
     } else if existing_id.is_some() && draft.existing_has_key {
-        frame.render_widget(Paragraph::new("API key is configured but never returned by FCC. Leave API key blank to preserve it.").style(Style::default().fg(WARN)).wrap(Wrap { trim: true }), Rect { x: inner.x, y: hint_y + 3, width: inner.width, height: 3 });
+        frame.render_widget(Paragraph::new("API key is configured but never returned by FCC. Leave API key blank to preserve it.").style(Style::default().fg(c.warn)).wrap(Wrap { trim: true }), Rect { x: inner.x, y: hint_y + 3, width: inner.width, height: 3 });
     }
 }
 
-fn render_message_box(frame: &mut Frame, rect: Rect, title: &str, body: &str, color: Color) {
-    let block = modal_block(title);
+fn render_message_box(
+    frame: &mut Frame,
+    c: Colors,
+    rect: Rect,
+    title: &str,
+    body: &str,
+    color: Color,
+) {
+    let block = modal_block(c, title);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     frame.render_widget(
@@ -1351,58 +2848,71 @@ fn render_message_box(frame: &mut Frame, rect: Rect, title: &str, body: &str, co
     );
 }
 
-fn section_block(title: &str) -> Block<'_> {
+fn section_block(c: Colors, title: &str) -> Block<'_> {
     Block::default()
         .title(Span::styled(
             format!(" {title} "),
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER))
-        .style(Style::default().bg(BG))
+        .border_style(Style::default().fg(c.border))
+        .style(Style::default().bg(c.bg))
 }
 
-fn modal_block(title: &str) -> Block<'_> {
+fn modal_block(c: Colors, title: &str) -> Block<'_> {
     Block::default()
         .title(Span::styled(
             format!(" {title} "),
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::default().fg(c.text).add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT))
-        .style(Style::default().bg(PANEL))
+        .border_style(Style::default().fg(c.accent))
+        .style(Style::default().bg(c.panel))
 }
 
-fn bottom_border() -> Block<'static> {
+fn bottom_border(c: Colors) -> Block<'static> {
     Block::default()
         .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(BORDER))
-        .style(Style::default().bg(PANEL))
+        .border_style(Style::default().fg(c.border))
+        .style(Style::default().bg(c.panel))
 }
 
-fn top_border() -> Block<'static> {
-    Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(BORDER))
-        .style(Style::default().bg(PANEL))
+fn kv(c: Colors, label: &str, value: &str) -> Line<'static> {
+    styled_kv(c, label, value, Style::default().fg(c.text))
 }
 
-fn kv(label: &str, value: &str) -> Line<'static> {
+fn compact_kv(
+    c: Colors,
+    label: &str,
+    value: &str,
+    width: usize,
+    value_style: Style,
+) -> Line<'static> {
+    let prefix = format!("{label}: ");
+    let value_width = width.saturating_sub(prefix.chars().count()).max(1);
     Line::from(vec![
-        Span::styled(format!("{label:<16}"), Style::default().fg(MUTED)),
-        Span::styled(value.to_string(), Style::default().fg(TEXT)),
+        Span::styled(prefix, Style::default().fg(c.muted)),
+        Span::styled(trim_to(value, value_width), value_style),
     ])
 }
 
-fn provider_color(status: &str) -> Color {
-    match status {
-        "configured" | "reachable" | "connected" => GOOD,
-        "missing_key" | "missing_config" | "missing_url" | "unknown" => WARN,
-        "offline" | "invalid_config" => BAD,
-        "disabled" | "disconnected" => MUTED,
-        _ => MUTED,
+fn styled_kv(c: Colors, label: &str, value: &str, value_style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<16}"), Style::default().fg(c.muted)),
+        Span::styled(value.to_string(), value_style),
+    ])
+}
+
+fn provider_color(c: Colors, status: &str) -> Color {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "configured" | "reachable" | "connected" => c.good,
+        "connecting" => c.warn,
+        "missing_key" | "missing_config" | "missing_url" | "unknown" => c.warn,
+        "offline" | "invalid_config" | "error" => c.bad,
+        "disabled" | "disconnected" => c.muted,
+        _ => c.muted,
     }
 }
 
@@ -1430,6 +2940,14 @@ fn list_offset(selected: usize, len: usize, height: usize) -> usize {
         .min(len.saturating_sub(height))
 }
 
+fn list_position(selected: usize, len: usize) -> String {
+    if len == 0 {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", selected.min(len - 1) + 1, len)
+    }
+}
+
 fn contains(rect: Rect, x: u16, y: u16) -> bool {
     x >= rect.x && x < rect.right() && y >= rect.y && y < rect.bottom()
 }
@@ -1447,11 +2965,20 @@ fn trim_to(value: &str, max: usize) -> String {
     format!("{}…", value.chars().take(max - 1).collect::<String>())
 }
 
-fn compact_json(value: &Value) -> String {
-    match value {
-        Value::Null => "—".to_string(),
-        Value::String(value) => value.clone(),
-        _ => serde_json::to_string(value).unwrap_or_else(|_| "—".to_string()),
+fn input_display(input: &TextInput) -> String {
+    let mut cursor = input.cursor.min(input.value.len());
+    while cursor > 0 && !input.value.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    let (before, after) = input.value.split_at(cursor);
+    if input.secret {
+        format!(
+            "{}▌{}",
+            "•".repeat(before.chars().count()),
+            "•".repeat(after.chars().count())
+        )
+    } else {
+        format!("{before}▌{after}")
     }
 }
 
@@ -1472,6 +2999,7 @@ mod tests {
         ConfigField, ConfigOption, CustomProvider, ModelsResponse, ProviderStatus, MASKED_SECRET,
     };
     use crate::app::{ConfirmAction, ProviderDraft, TextInput, CONTEXT_KEY};
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -1482,9 +3010,11 @@ mod tests {
         let mut app = App::fixture();
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_eq!(app.geometry.top.height, 3);
-        assert_eq!(app.geometry.sidebar.width, 28);
-        assert_eq!(app.geometry.footer.height, 2);
-        assert_eq!(app.geometry.main.width, 132);
+        assert_eq!(app.geometry.sidebar.width, 30);
+        assert_eq!(app.geometry.footer.height, 1);
+        assert_eq!(app.geometry.tabs.height, 0);
+        assert_eq!(app.geometry.gutter.width, 0);
+        assert_eq!(app.geometry.main.width, 130);
     }
 
     #[test]
@@ -1494,9 +3024,9 @@ mod tests {
         let mut app = App::fixture();
         app.page = Page::Context;
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
-        assert_eq!(app.geometry.sidebar.width, 28);
+        assert_eq!(app.geometry.sidebar.width, 30);
         assert_eq!(app.geometry.top.height, 3);
-        assert_eq!(app.geometry.footer.height, 2);
+        assert_eq!(app.geometry.footer.height, 1);
     }
 
     #[test]
@@ -1636,7 +3166,6 @@ mod tests {
                 title: "Provider test".to_string(),
                 body: "{\"ok\":true}".to_string(),
             },
-            Modal::Help,
         ];
         app.page = Page::Providers;
         for modal in modals {
@@ -1646,6 +3175,394 @@ mod tests {
                 terminal.draw(|frame| render(frame, &mut app)).unwrap();
             }
         }
+    }
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn control_center_chrome_geometry_with_panel_open() {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.panel_open = true;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.geometry.tabs.height, 0);
+        assert_eq!(app.geometry.gutter.width, 0);
+        assert_eq!(app.geometry.sidebar.width, 30);
+        assert_eq!(app.geometry.editor.width, 130);
+        assert_eq!(app.geometry.panel.height, 7);
+        assert_eq!(app.geometry.statusbar.height, 1);
+        assert_eq!(app.geometry.footer.height, 1);
+        assert!(!app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(&hitbox.action, UiAction::ActivateTab(_))));
+        let text = buffer_text(&terminal);
+        assert!(text.contains("FCC STATUS"));
+        assert!(text.contains("FCC LOCAL"));
+    }
+
+    #[test]
+    fn control_center_shell_has_no_editor_chrome_or_activity_rail() {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.activity = Activity::Explorer;
+        app.page = Page::Dashboard;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert_eq!(app.geometry.tabs.width, 0);
+        assert_eq!(app.geometry.gutter.width, 0);
+        assert_eq!(app.geometry.main.width, 130);
+        assert!(text.contains("CONTROL"));
+        assert!(text.contains("CENTER"));
+        assert!(text.contains("Dashboard"));
+        assert!(text.contains("Providers"));
+        assert!(text.contains("Models"));
+        assert!(text.contains("Routing"));
+        assert!(!text.contains("Explorer"));
+        assert!(!text.contains("Source Control"));
+        assert!(!text.contains("Search files"));
+        assert!(!text.contains("●  ●  ●"));
+        assert!(!app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(&hitbox.action, UiAction::Activity(_))));
+        assert!(!app
+            .hitboxes
+            .iter()
+            .any(|hitbox| matches!(&hitbox.action, UiAction::ActivateTab(_))));
+    }
+
+    #[test]
+    fn sidebar_focus_has_a_distinct_selected_surface() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        let mut app = App::fixture();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let row = (app.geometry.sidebar.x + 2, app.geometry.sidebar.y + 4);
+        let editor_focused = terminal
+            .backend()
+            .buffer()
+            .cell(row)
+            .expect("selected sidebar row exists")
+            .style()
+            .bg;
+
+        app.focus = Focus::Sidebar;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let sidebar_focused = terminal
+            .backend()
+            .buffer()
+            .cell(row)
+            .expect("selected sidebar row exists")
+            .style()
+            .bg;
+        assert_ne!(editor_focused, sidebar_focused);
+    }
+
+    #[test]
+    fn page_navigation_owns_sidebar_keyboard_focus() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::fixture();
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('0'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        app.move_focused(2);
+        assert_eq!(app.page, Page::Models);
+        assert_eq!(app.sidebar_cursor, 2);
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert_eq!(app.focus, Focus::Editor);
+        assert_eq!(app.editor_focus, EditorFocus::Page);
+    }
+
+    #[test]
+    fn dashboard_surface_is_concrete_and_actionable() {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.status = serde_json::json!({
+            "status": "running",
+            "host": "127.0.0.1",
+            "port": 8082,
+            "model": "bai/active"
+        });
+        app.config.fields.extend([
+            ConfigField {
+                key: "MODEL".to_string(),
+                value: "cline/z-ai/glm-5.3-flash".to_string(),
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "MODEL_CATALOG_MODE".to_string(),
+                value: "curated".to_string(),
+                ..ConfigField::default()
+            },
+            ConfigField {
+                key: "MODEL_CATALOG_ALLOWLIST".to_string(),
+                value: "bai/active, cline/z-ai/glm-5.3-flash".to_string(),
+                ..ConfigField::default()
+            },
+        ]);
+        app.models.models = vec!["bai/active".to_string()];
+        app.models.catalog_models = vec![
+            "bai/active".to_string(),
+            "cline/z-ai/glm-5.3-flash".to_string(),
+        ];
+        app.models.catalog_model_evidence.insert(
+            "bai/active".to_string(),
+            serde_json::json!({"is_free": true}),
+        );
+        app.config.provider_status = vec![
+            ProviderStatus {
+                provider_id: "bai".to_string(),
+                display_name: "B.AI".to_string(),
+                status: "configured".to_string(),
+                ..ProviderStatus::default()
+            },
+            ProviderStatus {
+                provider_id: "cline".to_string(),
+                display_name: "Cline".to_string(),
+                status: "missing_key".to_string(),
+                ..ProviderStatus::default()
+            },
+        ];
+        app.git_branch = "feat/dashboard".to_string();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        for title in [
+            "SERVER",
+            "LAUNCH ROUTE",
+            "MODELS",
+            "PROVIDERS",
+            "POLICY",
+            "WORKSPACE",
+        ] {
+            assert!(text.contains(title), "dashboard missing {title}");
+        }
+        assert!(text.contains("cline/z-ai/glm-5.3-flash"));
+        assert!(text.contains("bai/active"));
+        assert!(text.contains("Claude normal"));
+        assert!(text.contains("Claude danger"));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| { matches!(&hitbox.action, &UiAction::LaunchClaude(false)) }));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|hitbox| { matches!(&hitbox.action, &UiAction::LaunchClaude(true)) }));
+        assert!(!text.contains("thin client"));
+        assert!(!text.contains("canonical loopback Admin API"));
+    }
+
+    #[test]
+    fn models_surface_exposes_filters_without_routing_or_price_noise() {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["bai/free-model".to_string()];
+        app.models.catalog_models =
+            vec!["bai/free-model".to_string(), "bai/paid-model".to_string()];
+        app.models.catalog_model_evidence.insert(
+            "bai/free-model".to_string(),
+            serde_json::json!({"is_free": true}),
+        );
+        app.models.catalog_model_evidence.insert(
+            "bai/paid-model".to_string(),
+            serde_json::json!({"is_free": false}),
+        );
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Provider: All"));
+        assert!(text.contains("Free only: OFF"));
+        assert!(text.contains("View: Active"));
+        assert!(text.contains("Show catalog"));
+        assert!(text.contains("Toggle selected"));
+        assert!(text.contains("Set MODEL"));
+        assert!(text.contains("FREE"));
+        assert!(!text.contains("MODEL CATALOG"));
+        assert!(!text.contains("Routing shortcuts"));
+        assert!(!text.contains("(policy)"));
+        assert!(!text.contains("PRICE?"));
+        assert!(!text.contains(" PAID"));
+        assert!(!text.contains("? help"));
+        assert!(!text.contains("Keyboard shortcuts"));
+    }
+
+    #[test]
+    fn compact_models_page_keeps_every_primary_action_reachable() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["bai/free-model".to_string()];
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("View:"));
+        assert!(text.contains("Show catalog"));
+        app.model_show_catalog = true;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Active only"));
+        let actions = app
+            .hitboxes
+            .iter()
+            .filter_map(|hitbox| match &hitbox.action {
+                UiAction::SearchModels
+                | UiAction::ChooseModelProvider
+                | UiAction::CycleModelPrice
+                | UiAction::ToggleModelCatalog
+                | UiAction::ToggleSelectedModels
+                | UiAction::DisableAllModels
+                | UiAction::AssignModel(_)
+                | UiAction::Refresh => Some(&hitbox.action),
+                _ => None,
+            })
+            .count();
+        assert_eq!(actions, 8);
+    }
+
+    #[test]
+    fn explicit_file_viewer_has_no_tab_strip() {
+        let dir = std::env::temp_dir().join(format!("fcc-ui-viewer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.md"), "hello viewer\nsecond line\n").unwrap();
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.set_workspace(dir.clone());
+        app.run_search("hello");
+        app.open_search_hit(0);
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("notes.md"));
+        assert!(text.contains('1'));
+        assert!(text.contains("hello viewer"));
+        assert!(text.contains("Ln 1/2"));
+        assert!(!text.contains(" x "));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compact_viewport_renders_control_center_with_panel() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.panel_open = true;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.geometry.footer.height, 1);
+        assert_eq!(app.geometry.statusbar.height, 1);
+        assert_eq!(app.geometry.gutter.width, 0);
+    }
+
+    #[test]
+    fn compact_viewport_keeps_the_finite_page_inventory_visible() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut app = App::fixture();
+        app.focus = Focus::Sidebar;
+        app.sidebar_cursor = Page::ALL.len() - 1;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        for page in Page::ALL {
+            assert!(text.contains(page.label()), "missing page {}", page.label());
+        }
+        assert!(text.contains("Diagnostics"));
+    }
+
+    #[test]
+    fn very_small_viewport_still_renders_without_panicking() {
+        let mut app = App::fixture();
+        for page in Page::ALL {
+            app.page = page;
+            let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        }
+    }
+
+    #[test]
+    fn long_output_renders_a_bounded_position_indicator() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut app = App::fixture();
+        app.page = Page::Usage;
+        app.usage = serde_json::json!({
+            "entries": (0..30).map(|index| serde_json::json!({"index": index})).collect::<Vec<_>>()
+        });
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let first = buffer_text(&terminal);
+        assert!(first.contains("lines 1–"));
+        app.content_scroll = 10;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let later = buffer_text(&terminal);
+        assert!(later.contains("lines 11–"));
+    }
+
+    #[test]
+    fn modal_list_rows_accept_mouse_selection_without_clicking_through() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.modal = Some(Modal::Choice {
+            key: "__FCC_MODEL_PROVIDER__".to_string(),
+            label: "Choose setting".to_string(),
+            options: vec![
+                ConfigOption {
+                    value: "one".to_string(),
+                    label: "One".to_string(),
+                },
+                ConfigOption {
+                    value: "two".to_string(),
+                    label: "Two".to_string(),
+                },
+            ],
+            selected: 0,
+        });
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let rect = app
+            .hitboxes
+            .iter()
+            .find_map(|hitbox| match &hitbox.action {
+                UiAction::ModalActivate(1) => Some(hitbox.rect),
+                _ => None,
+            })
+            .expect("choice row should have a modal hitbox");
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        assert!(app.modal.is_none());
+        assert_eq!(app.page, Page::Models);
+        assert_eq!(app.model_provider_filter, "two");
+    }
+
+    #[test]
+    fn highlight_line_marks_case_insensitive_matches_without_panics() {
+        let base = Style::default();
+        let hi = Style::default().add_modifier(Modifier::BOLD);
+        let spans = highlight_line("héllo WÖRLD world", "wör", base, hi);
+        let joined: String = spans.iter().map(|span| span.content.as_ref()).collect();
+        assert_eq!(joined, "héllo WÖRLD world");
+        assert_eq!(spans.iter().filter(|span| span.style == hi).count(), 1);
+        let plain = highlight_line("nothing here", "", base, hi);
+        assert_eq!(plain.len(), 1);
     }
 
     #[test]
@@ -1659,8 +3576,9 @@ mod tests {
         });
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_eq!(app.geometry.top.height, 3);
-        assert_eq!(app.geometry.sidebar.width, 28);
-        assert_eq!(app.geometry.footer.height, 2);
-        assert_eq!(app.geometry.main.width, 132);
+        assert_eq!(app.geometry.sidebar.width, 30);
+        assert_eq!(app.geometry.footer.height, 1);
+        assert_eq!(app.geometry.gutter.width, 0);
+        assert_eq!(app.geometry.main.width, 130);
     }
 }

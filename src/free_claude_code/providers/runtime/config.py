@@ -1,7 +1,12 @@
 """Provider configuration construction from neutral catalog metadata."""
 
 from free_claude_code.application.errors import ApplicationUnavailableError
-from free_claude_code.config.provider_catalog import ProviderDescriptor
+from free_claude_code.config.provider_catalog import (
+    ProviderDescriptor,
+)
+from free_claude_code.config.provider_catalog import (
+    has_provider_configuration as has_provider_configuration,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import ProviderConfig
 
@@ -21,16 +26,6 @@ def provider_credential(descriptor: ProviderDescriptor, settings: Settings) -> s
     if descriptor.credential_attr:
         return string_setting(settings, descriptor.credential_attr)
     return ""
-
-
-def has_provider_configuration(
-    descriptor: ProviderDescriptor, settings: Settings
-) -> bool:
-    """Return whether all provider-defining settings are present."""
-    attrs = descriptor.configuration_attrs()
-    if attrs:
-        return all(string_setting(settings, attr).strip() for attr in attrs)
-    return descriptor.static_credential is not None
 
 
 def require_provider_credential(

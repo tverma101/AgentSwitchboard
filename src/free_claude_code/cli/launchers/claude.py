@@ -459,6 +459,8 @@ def _start_interactive_owner(
     run_owned_control_center(
         settings,
         initial_argv=initial_argv,
+        initial_cwd=cwd,
+        initial_danger="--dangerously-skip-permissions" in initial_argv,
         launch_client=_launch_control_client,
     )
     return True

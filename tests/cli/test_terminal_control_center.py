@@ -108,6 +108,29 @@ def test_interactive_fcc_server_attaches_to_existing_proxy_without_ownership() -
     port_probe.assert_not_called()
 
 
+def test_native_control_wrapper_forwards_pending_launch_context(tmp_path: Path) -> None:
+    from free_claude_code.cli import control_tui_entry
+
+    with patch.object(control_tui_entry, "run_native_control_center") as run_native:
+        control_tui_entry.run_control_tui(
+            _settings(),
+            supervisor=None,
+            launch_client=MagicMock(),
+            startup_error="server ready",
+            launch_args=("--model", "muse"),
+            launch_cwd=tmp_path,
+            launch_danger=True,
+        )
+
+    run_native.assert_called_once_with(
+        _settings(),
+        notice="server ready",
+        launch_args=("--model", "muse"),
+        launch_cwd=tmp_path,
+        launch_danger=True,
+    )
+
+
 def test_control_menu_enter_launches_claude_and_returns_to_menu() -> None:
     from free_claude_code.cli import terminal_control
 
@@ -878,19 +901,14 @@ def test_control_tui_does_not_adopt_a_child_profile_as_server_state(
     ]
 
 
-def test_owned_control_center_returns_initial_launch_failure_to_tui() -> None:
+def test_owned_control_center_holds_initial_launch_until_tui_choice() -> None:
     from free_claude_code.cli import control_tui_entry
-    from free_claude_code.cli.launchers.common import ClientLaunchError
 
     settings = _settings()
     supervisor = MagicMock()
     supervisor.schedule_run.return_value = True
     server_thread = MagicMock()
-    launch = MagicMock(
-        side_effect=ClientLaunchError(
-            "FCC Claude compatibility firewall blocked launch: quarantined", 78
-        )
-    )
+    launch = MagicMock()
 
     with (
         patch.object(control_tui_entry, "ServerSupervisor", return_value=supervisor),
@@ -905,11 +923,10 @@ def test_owned_control_center_returns_initial_launch_failure_to_tui() -> None:
         )
 
     run_control.assert_called_once()
-    assert run_control.call_args.kwargs["startup_error"] == (
-        "Could not launch Claude:\n"
-        "FCC Claude compatibility firewall blocked launch: quarantined\n"
-        "Exit status: 78."
-    )
+    assert run_control.call_args.kwargs["launch_args"] == ("--model", "muse")
+    assert run_control.call_args.kwargs["launch_cwd"] is None
+    assert run_control.call_args.kwargs["launch_danger"] is False
+    launch.assert_not_called()
     supervisor.request_stop.assert_called_once_with()
     server_thread.join.assert_called_once_with(5.0)
 
@@ -940,6 +957,41 @@ def test_direct_owner_starts_control_center_with_post_migration_settings() -> No
     owner.assert_called_once_with(
         settings,
         initial_argv=("--model", "muse"),
+        initial_cwd=None,
+        initial_danger=False,
+        launch_client=claude._launch_control_client,
+    )
+
+
+def test_direct_danger_owner_preserves_pending_cwd_and_safety_intent(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import (
+        commands,
+        control_tui_entry,
+        server_startup,
+        terminal_control,
+    )
+    from free_claude_code.cli.launchers import claude
+
+    settings = _settings(port=31341)
+    argv = ("--dangerously-skip-permissions", "--model", "muse")
+    with (
+        patch.object(terminal_control, "terminal_control_available", return_value=True),
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch.object(claude, "preflight_proxy", return_value="connection refused"),
+        patch.object(server_startup, "server_port_is_occupied", return_value=False),
+        patch.object(control_tui_entry, "run_owned_control_center") as owner,
+        patch.object(claude.get_settings, "cache_clear"),
+    ):
+        started = claude._start_interactive_owner(argv, cwd=tmp_path)
+
+    assert started is True
+    owner.assert_called_once_with(
+        settings,
+        initial_argv=argv,
+        initial_cwd=tmp_path,
+        initial_danger=True,
         launch_client=claude._launch_control_client,
     )
 

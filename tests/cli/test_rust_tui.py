@@ -93,7 +93,9 @@ def test_standalone_tui_entrypoint_loads_server_settings() -> None:
     ):
         assert rust_tui.main(()) == 0
 
-    run.assert_called_once_with(settings, notice=None)
+    run.assert_called_once_with(
+        settings, notice=None, workspace=None, open=[], line=None
+    )
 
 
 def test_tui_accepts_workspace_file_and_passes_parent_as_notice(
@@ -113,6 +115,71 @@ def test_tui_accepts_workspace_file_and_passes_parent_as_notice(
     _, kwargs = run.call_args
     assert kwargs["notice"] is not None
     assert str(tmp_path) in kwargs["notice"]
+    assert kwargs["workspace"] == tmp_path
+    assert kwargs["open"] == [target]
+    assert kwargs["line"] is None
+
+
+def test_native_command_forwards_workspace_open_and_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "fcc-control-center"
+    binary.write_text("native", encoding="utf-8")
+    monkeypatch.setenv("FCC_CONTROL_TUI_BINARY", str(binary))
+    target = tmp_path / "app.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    command = rust_tui.native_control_command(
+        _settings(), workspace=tmp_path, open=[target], line=3
+    )
+
+    assert command[0] == str(binary)
+    assert "--workspace" in command
+    assert command[command.index("--workspace") + 1] == str(tmp_path)
+    assert "--open" in command
+    assert command[command.index("--open") + 1] == str(target)
+    assert "--line" in command
+    assert command[command.index("--line") + 1] == "3"
+
+
+def test_native_command_forwards_pending_client_context_without_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "fcc-control-center"
+    binary.write_text("native", encoding="utf-8")
+    monkeypatch.setenv("FCC_CONTROL_TUI_BINARY", str(binary))
+
+    command = rust_tui.native_control_command(
+        _settings(),
+        launch_args=("--profile", "coding", "--model", "muse"),
+        launch_cwd=tmp_path,
+        launch_danger=True,
+    )
+
+    assert command[0] == str(binary)
+    assert command.count("--launch-arg") == 4
+    assert command[command.index("--launch-arg") + 1] == "--profile"
+    assert command[command.index("--launch-cwd") + 1] == str(tmp_path)
+    assert "--launch-danger" in command
+    assert not any("API_KEY" in part or "TOKEN=" in part for part in command)
+
+
+def test_tui_list_commands_covers_control_center_verbs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert rust_tui.main(("--list-commands",)) == 0
+    out = capsys.readouterr().out
+    for label in (
+        "Toggle page navigation",
+        "Toggle status panel",
+        "Focus page navigation",
+        "Focus page",
+    ):
+        assert label in out
+    for removed in ("Explorer", "Source Control", "Search files", "workbench"):
+        assert removed not in out
 
 
 def test_tui_rejects_missing_workspace(capsys: pytest.CaptureFixture[str]) -> None:
@@ -134,6 +201,9 @@ def test_tui_goto_parses_location(tmp_path: Path) -> None:
 
     _, kwargs = run.call_args
     assert f"{target}:3:7" in (kwargs["notice"] or "")
+    assert kwargs["workspace"] == tmp_path
+    assert kwargs["open"] == [target]
+    assert kwargs["line"] == 3
 
 
 @pytest.mark.parametrize(
@@ -243,6 +313,13 @@ def test_tui_list_commands_covers_every_page(
 def test_tui_palette_commands_mirror_rust_titles() -> None:
     assert len(rust_tui.PALETTE_COMMANDS) == len(set(rust_tui.PALETTE_COMMANDS))
     assert "Open command palette" in rust_tui.PALETTE_COMMANDS
+    assert "Set MODEL to selected model" in rust_tui.PALETTE_COMMANDS
+    assert "Choose model provider" in rust_tui.PALETTE_COMMANDS
+    assert "Toggle selected models" in rust_tui.PALETTE_COMMANDS
+    assert "Enable selected models" not in rust_tui.PALETTE_COMMANDS
+    assert "Disable selected models" not in rust_tui.PALETTE_COMMANDS
+    assert "Disable all models" in rust_tui.PALETTE_COMMANDS
+    assert "Keyboard shortcuts and help" not in rust_tui.PALETTE_COMMANDS
     assert "Run route diagnostic" in rust_tui.PALETTE_COMMANDS
 
 
@@ -289,3 +366,51 @@ def test_tui_help_lists_workspace_surface(
 ) -> None:
     assert rust_tui.main(("--help",)) == 0
     assert "--goto" in capsys.readouterr().out
+
+
+def test_tui_build_installs_release_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("XDG_BIN_HOME", str(tmp_path))
+    manifest = tmp_path / "Cargo.toml"
+    manifest.write_text("[package]", encoding="utf-8")
+    built = tmp_path / "target" / "release"
+    built.mkdir(parents=True)
+    (built / "fcc-control-center").write_bytes(b"native")
+
+    class Completed:
+        returncode = 0
+
+    with (
+        patch.object(rust_tui, "native_manifest_path", return_value=manifest),
+        patch.object(rust_tui.shutil, "which", return_value="/usr/bin/cargo"),
+        patch.object(rust_tui.subprocess, "run", return_value=Completed()),
+    ):
+        assert rust_tui.main(("--build",)) == 0
+
+    assert (tmp_path / "fcc-control-center").is_file()
+    assert "installed" in capsys.readouterr().out
+
+
+def test_tui_build_reports_cargo_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("XDG_BIN_HOME", str(tmp_path))
+    manifest = tmp_path / "Cargo.toml"
+    manifest.write_text("[package]", encoding="utf-8")
+
+    class Failed:
+        returncode = 1
+
+    with (
+        patch.object(rust_tui, "native_manifest_path", return_value=manifest),
+        patch.object(rust_tui.shutil, "which", return_value="/usr/bin/cargo"),
+        patch.object(rust_tui.subprocess, "run", return_value=Failed()),
+    ):
+        assert rust_tui.main(("--build",)) == 2
+
+    assert "cargo build" in capsys.readouterr().err

@@ -40,6 +40,7 @@ class KiloProvider(OpenAIChatProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Advertise Kilo chat models that can execute FCC agent requests."""
+        self._authorize_egress(self._base_url, category="model_discovery")
         payload = await self._list_models_payload()
         return extract_kilo_model_infos(
             payload,

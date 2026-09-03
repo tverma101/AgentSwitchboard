@@ -1,9 +1,9 @@
 # terminal-code interaction transplant
 
-Status: research / decision record. This page records what was verified about
-the external `terminal-code` project, which interaction ideas were transplanted
-into AgentSwitchboard's native control center, and which parts were explicitly
-rejected. It is not a release claim about VS Code compatibility.
+Status: research / superseded decision record. This page records what was
+verified about the external `terminal-code` project and why its editor
+workbench presentation is not part of AgentSwitchboard. It is not a release
+claim about VS Code compatibility.
 
 ## Verified upstream facts
 
@@ -39,20 +39,23 @@ Kitty pixels) is rejected for this repository:
 - The cell-exact geometry contract (`docs/RUST_CONTROL_CENTER.md`) governs the
   native UI; pixel-perfect VS Code rendering is explicitly out of scope.
 
-What was transplanted instead is the interaction model, reimplemented natively:
+The earlier transplant proposal is superseded. The only retained idea is a
+small keyboard command palette; the editor/workbench presentation is explicitly
+removed from the FCC shell:
 
 | terminal-code idea | FCC native form |
 | --- | --- |
 | Command palette (`cmd+p` / `ctrl+k`) | `Ctrl+K` / `Ctrl+P` palette in the Rust control center covering all 9 pages plus every page-contextual action (`src/free_claude_code/native_tui/src/app.rs`: `palette_inventory`, `match_palette`) |
-| `tode [path]` workspace open | `fcc-tui [path]` validates the path and attaches with a workspace notice |
-| `tode --goto f:l:c` | `fcc-tui --goto <file:line:col>` with existence and range validation |
+| VS Code workbench shell | Rejected; the native shell has direct FCC page navigation with no activity rail, duplicate sidebar, editor tabs, or editor-specific status chrome |
+| `tode [path]` workspace open | `fcc-tui [path]` remains a bounded CLI compatibility convenience and does not add workspace navigation to the visible FCC shell |
+| `tode --goto f:l:c` | `fcc-tui --goto <file:line:col>` retains existence and range validation as an explicit CLI convenience; it does not change the default control-center shell |
 | `tode --diff a b` | `fcc-tui --diff <a> <b>` prints a bounded (120-line) unified preview, then attaches |
 | `tode --review` | `fcc-tui --review` prints a bounded `git status` snapshot, then attaches |
 | `tode --split/--size` | `fcc-tui --split/--size` prints a tmux split suggestion when `TMUX` is set, otherwise fails closed with guidance; the TUI never splits the terminal itself |
 | `tode --theme` | `fcc-tui --theme` accepts the built-in `dark` theme and rejects anything else |
 | `tode --shortcut-setup` | `fcc-tui --shortcut-setup` prints the terminal-vs-TUI conflict table using Kitty/Ghostty/iTerm2/VS Code/tmux markers |
 | `tode --timing` | `fcc-tui --timing` reports parse/settings/total stage timings |
-| `tode --list-extensions` | `fcc-tui --list-commands` lists the palette inventory (FCC manages providers/models, not VS Code extensions) |
+| `tode --list-extensions` | `fcc-tui --list-commands` lists the FCC page/action inventory (FCC manages providers/models, not editor extensions) |
 
 Explicitly rejected with a fail-closed error: `--ssh` (loopback-only Admin),
 `--install-extension` / `--uninstall-extension` (use the Providers page for
@@ -71,7 +74,7 @@ uv run pytest -n 0 tests/cli/test_rust_tui.py tests/cli/test_entrypoints.py
 
 Rust palette coverage: `palette_inventory_reaches_every_page` (all 9 pages),
 filter semantics, open/execute/cancel/quit/out-of-range cases, and the
-cell-exact chrome test with the palette open. Python coverage: workspace,
+direct-shell geometry and no-editor-chrome regressions. Python coverage: workspace,
 goto, diff preview + truncation, split with/without tmux, ssh/extension
 rejections, `--list-commands` page coverage, shortcut setup, review rejection
 outside a checkout, timing, and help.

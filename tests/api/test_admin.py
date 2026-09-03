@@ -258,6 +258,29 @@ def test_admin_connected_account_routes_are_safe_loopback_only_and_uncached(
     assert remote.get("/admin/api/providers/openai/auth").status_code == 403
 
 
+def test_admin_provider_inventory_overlays_live_connected_account_state(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    account = _FakeConnectedAccount()
+    account.connected = True
+    account.revision = 1
+    app = create_test_app(connected_accounts={"openai": account})
+    client = _local_client(app)
+
+    config = client.get("/admin/api/config")
+    status = client.get("/admin/api/status")
+
+    assert config.status_code == 200
+    assert status.status_code == 200
+    for body in (config.json(), status.json()):
+        provider = next(
+            item for item in body["provider_status"] if item["provider_id"] == "openai"
+        )
+        assert provider["status"] == "connected"
+        assert provider["label"] == "Connected"
+
+
 def test_admin_rejects_auth_routes_for_non_connected_provider(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
 

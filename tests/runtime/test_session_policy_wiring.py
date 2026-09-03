@@ -16,6 +16,7 @@ from free_claude_code.application.helpers import ApprovedHelper, ApprovedHelperR
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.session_policy import (
     build_session_execution_policy_for_settings,
+    model_discovery_provider_ids_for_settings,
 )
 from free_claude_code.cli.managed.manager import ManagedClaudeSessionManager
 from free_claude_code.config.settings import Settings
@@ -299,3 +300,19 @@ def test_settings_policy_builder_parses_admin_allowlist() -> None:
 
     assert policy.allowed_helper_ids == frozenset({"codex-computer-use"})
     assert policy.routing_policy.mode is CapabilityRoutingMode.SMART_LOCAL
+    assert {"open_router", "opencode_go"} <= set(
+        policy.provider_policy.discovery_provider_families
+    )
+
+
+def test_model_discovery_policy_accepts_connected_account_ids() -> None:
+    settings = _settings()
+
+    providers = model_discovery_provider_ids_for_settings(
+        settings,
+        connected_provider_ids=("openai",),
+    )
+
+    assert "open_router" in providers
+    assert "opencode_go" in providers
+    assert "openai" in providers

@@ -146,7 +146,7 @@ class OpenAIChatProvider(BaseProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return model metadata from the OpenAI-compatible models endpoint."""
-        self._authorize_egress(self._base_url)
+        self._authorize_egress(self._base_url, category="model_discovery")
         try:
             payload = await self._list_models_payload()
         except Exception as exc:

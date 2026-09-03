@@ -30,6 +30,11 @@ class ProviderPolicy:
     )
     mode: ProviderPolicyMode = ProviderPolicyMode.STRICT
     paid_fallback: bool = False
+    # Model-list discovery is read-only catalog metadata, but it still uses a
+    # provider credential. The session builder fills this with the providers
+    # explicitly configured for the current generation; it must not become a
+    # wildcard permission for inference traffic.
+    discovery_provider_families: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.primary_provider or not self.primary_model:
@@ -55,7 +60,11 @@ class ProviderEgressGuard:
     ) -> bool:
         family = provider_family.strip().lower()
         allowed = family == self.policy.primary_provider.lower()
-        if category == "local_tool":
+        if category == "model_discovery":
+            allowed = allowed or family in {
+                provider.lower() for provider in self.policy.discovery_provider_families
+            }
+        elif category == "local_tool":
             allowed = family == "local" or family in {
                 tool.lower() for tool in self.policy.allowed_local_tools
             }
@@ -63,7 +72,13 @@ class ProviderEgressGuard:
             allowed = allowed or family in {
                 helper.lower() for helper in self.policy.allowed_helpers
             }
-        if family in {item.lower() for item in self.policy.forbidden_provider_families}:
+        # Discovery is an explicitly configured, read-only metadata request.
+        # It may inspect a connected account such as OpenAI without granting
+        # that provider inference egress; the normal model category remains
+        # fail-closed against the forbidden-family set.
+        if category != "model_discovery" and family in {
+            item.lower() for item in self.policy.forbidden_provider_families
+        }:
             allowed = False
         decision = "allowed" if allowed else "blocked"
         if not allowed and self.policy.mode is ProviderPolicyMode.DIAGNOSTIC:
@@ -108,12 +123,22 @@ class ProviderEgressGuard:
                 "provider egress URL must use http(s) and include a host"
             )
         if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
-            if category != "local_tool" and (
+            if category not in {"local_tool", "model_discovery"} and (
                 provider_family is None
                 or provider_family.strip().lower()
                 != self.policy.primary_provider.lower()
             ):
                 raise ProviderPolicyError("local URL is only valid for local tools")
+            if category == "model_discovery":
+                if provider_family is None:
+                    raise ProviderPolicyError(
+                        "local model discovery requires a provider family"
+                    )
+                return self.authorize(
+                    provider_family,
+                    category=category,
+                    destination_host=parsed.hostname,
+                )
             if category != "local_tool":
                 return self.authorize(
                     provider_family or self.policy.primary_provider,

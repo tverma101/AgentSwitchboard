@@ -85,6 +85,23 @@ def test_configured_provider_family_can_use_an_explicit_proxy_host() -> None:
     )
 
 
+def test_configured_discovery_provider_does_not_grant_inference_egress() -> None:
+    guard = ProviderEgressGuard(
+        ProviderPolicy(
+            "opencode_go",
+            "model",
+            discovery_provider_families=frozenset({"openai"}),
+        )
+    )
+
+    guard.authorize("openai", category="model_discovery")
+    with pytest.raises(ProviderPolicyError, match="before network I/O"):
+        guard.authorize("openai")
+
+    assert guard.receipt()["counts"] == {"openai": 1}
+    assert guard.receipt()["blocked_counts"] == {"openai": 1}
+
+
 def test_diagnostic_policy_records_blocked_destinations_without_authorizing_them() -> (
     None
 ):

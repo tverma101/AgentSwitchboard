@@ -17,6 +17,7 @@ import free_claude_code.messaging.workflow as messaging_workflow_module
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
     ConnectedAccountPort,
+    ConnectedAccountState,
     ConnectedAccountStatus,
 )
 from free_claude_code.application.errors import ApplicationUnavailableError
@@ -252,7 +253,7 @@ class ApplicationRuntime:
             "model": settings.model,
             "provider": parse_provider_type(settings.model),
             "pending_fields": list(self._pending_fields),
-            "provider_status": provider_config_status(load_value_state()),
+            "provider_status": self._provider_status(),
             "session_policy": (
                 session_policy.receipt() if session_policy is not None else None
             ),
@@ -261,6 +262,38 @@ class ApplicationRuntime:
                 for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
             },
         }
+
+    def _provider_status(self) -> list[dict[str, Any]]:
+        """Return config status with live connected-account state overlaid.
+
+        ``provider_config_status`` intentionally has no runtime dependencies,
+        so a connected account would otherwise always be reported as
+        ``disconnected`` even while its process-lifetime auth manager holds
+        credentials or is completing an interactive login. Keep the static
+        configuration fields intact and overlay only the safe lifecycle state
+        owned by the running manager.
+        """
+
+        statuses = provider_config_status(load_value_state())
+        by_provider = {
+            str(status.get("provider_id", "")).casefold(): status
+            for status in statuses
+            if status.get("provider_id")
+        }
+        for provider_id, manager in self._connected_accounts.items():
+            status = by_provider.get(provider_id.casefold())
+            if status is None:
+                continue
+            account = manager.status()
+            if account.state is ConnectedAccountState.CONNECTED:
+                status.update(status="connected", label="Connected")
+            elif account.state is ConnectedAccountState.CONNECTING:
+                status.update(status="connecting", label="Signing in")
+            elif account.state is ConnectedAccountState.ERROR:
+                status.update(status="error", label="Authentication error")
+            else:
+                status.update(status="disconnected", label="Not connected")
+        return statuses
 
     async def test_provider(self, provider_id: str) -> dict[str, Any]:
         lease = await self.provider_manager.acquire()

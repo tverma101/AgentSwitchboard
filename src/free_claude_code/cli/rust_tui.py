@@ -19,13 +19,12 @@ _BINARY_NAME = "fcc-control-center"
 _TUI_USAGE = (
     "fcc-tui [path] [--goto <file:line:col>] [--diff <a> <b>] [--review] "
     "[--split <right|left|up|down> [--size <fraction>]] [--theme <name>] "
-    "[--timing] [--shortcut-setup] [--list-commands]"
+    "[--timing] [--shortcut-setup] [--list-commands] [--build]"
 )
 
-#: Subset of terminal-code's `tode` verbs, transplanted as native behavior.
-#: Every entry maps to a real local action below; verbs that would need a
-#: code-server/terminal-browser pixel presentation (``--ssh``, extension
-#: management) fail closed with guidance instead of pretending to work.
+#: Native control-center theme and command inventory. The UI is intentionally
+#: not a code-editor/workbench shell; file-oriented compatibility flags remain
+#: bounded CLI conveniences, while the visible TUI exposes FCC pages/actions.
 _SUPPORTED_THEMES = ("dark",)
 _SPLIT_DIRECTIONS = ("right", "left", "up", "down")
 
@@ -43,10 +42,13 @@ PALETTE_COMMANDS: tuple[str, ...] = (
     "Go to Usage",
     "Go to Diagnostics",
     "Refresh current view",
+    "Toggle page navigation",
+    "Toggle status panel",
+    "Focus page navigation",
+    "Focus page",
     "Launch Claude",
     "Launch Claude with danger permissions",
     "Open command palette",
-    "Keyboard shortcuts and help",
     "Quit control center",
     "Configure selected provider",
     "Test selected provider",
@@ -56,11 +58,10 @@ PALETTE_COMMANDS: tuple[str, ...] = (
     "Sign in connected account",
     "Disconnect connected account",
     "Search models",
-    "Assign selected model to default",
-    "Assign selected model to Fable",
-    "Assign selected model to Opus",
-    "Assign selected model to Sonnet",
-    "Assign selected model to Haiku",
+    "Choose model provider",
+    "Toggle selected models",
+    "Disable all models",
+    "Set MODEL to selected model",
     "Edit selected field",
     "Toggle advanced fields",
     "Run route diagnostic",
@@ -92,6 +93,7 @@ class TuiOptions:
     timing: bool = False
     shortcut_setup: bool = False
     list_commands: bool = False
+    build_native: bool = False
     notice_parts: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -112,6 +114,7 @@ def parse_tui_argv(argv: Sequence[str]) -> TuiOptions:
     timing = False
     shortcut_setup = False
     list_commands = False
+    build_native = False
     size_without_split = False
 
     index = 0
@@ -166,6 +169,8 @@ def parse_tui_argv(argv: Sequence[str]) -> TuiOptions:
             shortcut_setup = True
         elif arg == "--list-commands":
             list_commands = True
+        elif arg == "--build":
+            build_native = True
         elif arg == "--ssh":
             raise TuiUsageError(
                 "fcc-tui does not support --ssh: the Admin client only connects "
@@ -216,6 +221,7 @@ def parse_tui_argv(argv: Sequence[str]) -> TuiOptions:
         timing=timing,
         shortcut_setup=shortcut_setup,
         list_commands=list_commands,
+        build_native=build_native,
         notice_parts=tuple(notice_parts),
     )
 
@@ -232,10 +238,9 @@ def _require_workspace(raw: str) -> Path:
     candidate = Path(raw).expanduser()
     if not candidate.exists():
         raise TuiUsageError(f"workspace path does not exist: {raw}")
-    resolved = candidate.resolve()
-    if resolved.is_file():
-        return resolved.parent
-    return resolved
+    # Files pass through; main() roots the control center at the parent and
+    # opens the file only for explicit CLI preview compatibility.
+    return candidate.resolve()
 
 
 def _require_file(raw: str) -> Path:
@@ -420,12 +425,30 @@ def native_control_command(
     settings: Settings,
     *,
     notice: str | None = None,
+    workspace: Path | None = None,
+    open: Sequence[Path] = (),
+    line: int | None = None,
+    launch_args: Sequence[str] = (),
+    launch_cwd: Path | None = None,
+    launch_danger: bool = False,
 ) -> tuple[str, ...]:
     """Resolve the native binary or a source-backed Cargo launch command."""
 
     args = ["--base-url", local_proxy_root_url(settings)]
     if notice:
         args.extend(("--notice", notice))
+    if workspace is not None:
+        args.extend(("--workspace", str(workspace)))
+    for path in open:
+        args.extend(("--open", str(path)))
+    if line is not None:
+        args.extend(("--line", str(line)))
+    for launch_arg in launch_args:
+        args.extend(("--launch-arg", launch_arg))
+    if launch_cwd is not None:
+        args.extend(("--launch-cwd", str(launch_cwd)))
+    if launch_danger:
+        args.append("--launch-danger")
 
     configured = os.environ.get(_NATIVE_BINARY_ENV, "").strip()
     if configured:
@@ -462,14 +485,71 @@ def native_control_command(
     )
 
 
+def native_binary_install_path() -> Path:
+    """Return where a prebuilt control-center binary belongs on PATH."""
+
+    configured = os.environ.get(_NATIVE_BINARY_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    bin_home = os.environ.get("XDG_BIN_HOME", "").strip()
+    if bin_home:
+        return Path(bin_home).expanduser() / _BINARY_NAME
+    return Path.home() / ".local" / "bin" / _BINARY_NAME
+
+
+def build_native_binary() -> Path:
+    """Compile the release control center and install it on PATH.
+
+    The launcher prefers an on-PATH binary over a source-backed `cargo run`,
+    so installing once keeps every later `fcc-server`/`fcc-tui` attach fast.
+    """
+
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        raise TuiUsageError("cargo is not on PATH; cannot build the native TUI")
+    manifest = native_manifest_path()
+    if not manifest.is_file():
+        raise TuiUsageError(f"native manifest is missing: {manifest}")
+    completed = subprocess.run(
+        [cargo, "build", "--release", "--manifest-path", str(manifest)],
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise TuiUsageError(
+            f"cargo build --release failed with status {completed.returncode}"
+        )
+    built = manifest.parent / "target" / "release" / _BINARY_NAME
+    if not built.is_file():
+        raise TuiUsageError(f"expected release binary is missing: {built}")
+    target = native_binary_install_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(built, target)
+    return target
+
+
 def run_native_control_center(
     settings: Settings,
     *,
     notice: str | None = None,
+    workspace: Path | None = None,
+    open: Sequence[Path] = (),
+    line: int | None = None,
+    launch_args: Sequence[str] = (),
+    launch_cwd: Path | None = None,
+    launch_danger: bool = False,
 ) -> None:
     """Run the native control center in the foreground."""
 
-    command = native_control_command(settings, notice=notice)
+    command = native_control_command(
+        settings,
+        notice=notice,
+        workspace=workspace,
+        open=open,
+        line=line,
+        launch_args=launch_args,
+        launch_cwd=launch_cwd,
+        launch_danger=launch_danger,
+    )
     completed = subprocess.run(command, check=False)
     if completed.returncode not in {0, 130}:
         raise RuntimeError(
@@ -494,6 +574,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     parsed_ms = (time.perf_counter() - started) * 1000
 
+    if options.build_native:
+        try:
+            installed = build_native_binary()
+        except TuiUsageError as exc:
+            print(f"fcc-tui: {exc}", file=sys.stderr)
+            return 2
+        print(f"installed {installed}")
+        return 0
+
     if options.list_commands:
         print("\n".join(PALETTE_COMMANDS))
         return 0
@@ -516,6 +605,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     workspace = options.workspace
+    open_files = [options.goto_file] if options.goto_file is not None else []
+    if workspace is not None and workspace.is_file():
+        # A positional file becomes an editor tab rooted at its parent.
+        open_files.insert(0, workspace)
+        workspace = workspace.parent
     if workspace is None and options.goto_file is not None:
         workspace = options.goto_file.parent
     if options.review:
@@ -528,7 +622,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = commands.load_server_settings()
     settings_ms = (time.perf_counter() - started) * 1000 - parsed_ms
-    run_native_control_center(settings, notice=tui_notice(options))
+    run_native_control_center(
+        settings,
+        notice=tui_notice(options),
+        workspace=workspace,
+        open=open_files,
+        line=options.goto_line,
+    )
     if options.timing:
         total_ms = (time.perf_counter() - started) * 1000
         print(
