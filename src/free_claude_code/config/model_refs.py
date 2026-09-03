@@ -5,9 +5,6 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-MODEL_CONTEXT_WINDOW_MIN = 32_000
-MODEL_CONTEXT_WINDOW_MAX = 1_000_000
-
 
 @dataclass(frozen=True, slots=True)
 class ConfiguredChatModelRef:
@@ -54,14 +51,13 @@ def normalize_model_ref(model_ref: str) -> NormalizedModelRef:
 
 
 def parse_model_context_windows(value: str) -> dict[str, int]:
-    """Parse a bounded manual per-model context-window mapping.
+    """Parse a manual per-model context-window mapping.
 
     Accepted shape is a JSON object mapping exact ``provider/model`` refs to
-    token counts from 32K through 1M, e.g.
-    ``{"opencode_go/muse-spark": 1000000}``. Blank input means no overrides.
-    Anything else raises ``ValueError`` so a typo or unsafe window fails fast
-    at settings validation instead of silently misrouting a session's context
-    budget.
+    positive token counts, e.g. ``{"opencode_go/muse-spark": 1000000}``.
+    Blank input means no overrides. Anything else raises ``ValueError`` so a
+    typo fails fast at settings validation instead of silently misrouting a
+    session's context budget.
     """
 
     if not value.strip():
@@ -83,15 +79,9 @@ def parse_model_context_windows(value: str) -> dict[str, int]:
             raise ValueError(
                 f"MODEL_CONTEXT_WINDOWS key {ref!r} must be a provider/model ref"
             )
-        if not isinstance(tokens, int) or isinstance(tokens, bool):
+        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
             raise ValueError(
-                f"MODEL_CONTEXT_WINDOWS value for {ref!r} must be an integer "
-                f"between {MODEL_CONTEXT_WINDOW_MIN} and {MODEL_CONTEXT_WINDOW_MAX}"
-            )
-        if not MODEL_CONTEXT_WINDOW_MIN <= tokens <= MODEL_CONTEXT_WINDOW_MAX:
-            raise ValueError(
-                f"MODEL_CONTEXT_WINDOWS value for {ref!r} must be between "
-                f"{MODEL_CONTEXT_WINDOW_MIN} and {MODEL_CONTEXT_WINDOW_MAX}"
+                f"MODEL_CONTEXT_WINDOWS value for {ref!r} must be a positive integer"
             )
         windows[ref] = tokens
     return windows
