@@ -1265,9 +1265,11 @@ class TestPerModelMapping:
 
         assert parse_model_context_windows("") == {}
         assert parse_model_context_windows("   ") == {}
-        assert parse_model_context_windows('{"a/b": 1000, "c/d/e": 2000}') == {
-            "a/b": 1000,
-            "c/d/e": 2000,
+        assert parse_model_context_windows(
+            '{"a/b": 32000, "c/d/e": 1000000}'
+        ) == {
+            "a/b": 32_000,
+            "c/d/e": 1_000_000,
         }
 
     def test_configured_chat_model_refs_collects_unique_models(self, monkeypatch):
