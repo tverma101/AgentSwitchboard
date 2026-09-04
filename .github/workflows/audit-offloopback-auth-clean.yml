@@ -1,0 +1,38 @@
+name: audit-offloopback-auth-clean
+
+on:
+  push:
+    branches: [fix/offloopback-auth-required-clean]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Apply and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          python scripts/apply_offloopback_auth_repair.py
+          uv sync --locked
+          uv run ruff format src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
+          uv run ruff check --fix src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
+          uv run ty check
+          uv run pytest -q -n 0 tests/config/test_server_binding_auth.py tests/config/test_config.py
+          git diff --check
+          git rm scripts/apply_offloopback_auth_repair.py .github/workflows/audit-offloopback-auth-clean.yml
+          git add src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
+          git commit -m "fix: require auth for non-loopback server binds"
+          git push origin HEAD:fix/offloopback-auth-required-clean
