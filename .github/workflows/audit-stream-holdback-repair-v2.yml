@@ -1,0 +1,67 @@
+name: audit-stream-holdback-repair-v2
+
+on:
+  push:
+    branches: [fix/stream-holdback-wallclock]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Execute corrected shared holdback repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/audit-stream-holdback-repair.yml")
+          lines = workflow.read_text().splitlines()
+          start = next(
+              index for index, line in enumerate(lines) if line.strip() == "run: |"
+          )
+          script_lines = []
+          for line in lines[start + 1 :]:
+              script_lines.append(line[10:] if line.startswith("          ") else line)
+          script = "\n".join(script_lines) + "\n"
+
+          old = '''text = replace_once(
+              text,
+              """                if attempt is not None and not attempt.accepted:\\n                    await attempt.retry(\\n""",
+              """                if (\\n                    attempt is not None\\n                    and not attempt.accepted\\n                    and not recovery.committed\\n                ):\\n                    await attempt.retry(\\n""",
+              "chat committed retry guard",
+          )'''
+          new = '''text = replace_once(
+              text,
+              """                if attempt is not None and not attempt.accepted:\\n                    await attempt.retry(\\n                        error,\\n                        provider_failure_override=(\\n                            self._provider._provider_failure_override\\n                        ),\\n                    )\\n                generated_output = has_committed_sse_output(ledger)\\n""",
+              """                if (\\n                    attempt is not None\\n                    and not attempt.accepted\\n                    and not recovery.committed\\n                ):\\n                    await attempt.retry(\\n                        error,\\n                        provider_failure_override=(\\n                            self._provider._provider_failure_override\\n                        ),\\n                    )\\n                generated_output = has_committed_sse_output(ledger)\\n""",
+              "chat committed retry guard",
+          )'''
+          if script.count(old) != 1:
+              raise RuntimeError(
+                  f"primary chat guard patcher anchor changed: {script.count(old)}"
+              )
+          script = script.replace(old, new, 1)
+
+          cleanup_old = "git rm .github/workflows/audit-stream-holdback-repair.yml"
+          cleanup_new = """git rm \\
+            .github/workflows/audit-stream-holdback-repair.yml \\
+            .github/workflows/audit-stream-holdback-repair-v2.yml"""
+          if script.count(cleanup_old) != 1:
+              raise RuntimeError("stream workflow cleanup anchor changed")
+          script = script.replace(cleanup_old, cleanup_new, 1)
+
+          Path("/tmp/audit-stream-holdback-repair.sh").write_text(script)
+          PY
+          bash /tmp/audit-stream-holdback-repair.sh
