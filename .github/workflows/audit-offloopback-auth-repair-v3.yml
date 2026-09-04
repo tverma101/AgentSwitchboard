@@ -1,0 +1,63 @@
+name: audit-offloopback-auth-repair-v3
+
+on:
+  push:
+    branches: [fix/offloopback-auth-required]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Execute typed auth repair validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/audit-offloopback-auth-repair-v2.yml")
+          lines = workflow.read_text().splitlines()
+          start = next(index for index, line in enumerate(lines) if line.strip() == "run: |")
+          script = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in lines[start + 1 :]
+          ) + "\n"
+
+          fixture_old = '''def clear_server_auth_env(monkeypatch) -> None:
+              monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+              monkeypatch.delenv("HOST", raising=False)'''
+          fixture_new = '''def clear_server_auth_env(monkeypatch) -> None:
+              monkeypatch.setitem(Settings.model_config, "env_file", ())
+              monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+              monkeypatch.delenv("HOST", raising=False)'''
+          if script.count(fixture_old) != 1:
+              raise RuntimeError("auth fixture anchor changed")
+          script = script.replace(fixture_old, fixture_new, 1)
+          script = script.replace("                      _env_file=None,\n", "")
+          script = script.replace("_env_file=None, ", "")
+
+          cleanup_old = '''git rm \\
+            .github/workflows/audit-offloopback-auth-repair.yml \\
+            .github/workflows/audit-offloopback-auth-repair-v2.yml'''
+          cleanup_new = '''git rm \\
+            .github/workflows/audit-offloopback-auth-repair.yml \\
+            .github/workflows/audit-offloopback-auth-repair-v2.yml \\
+            .github/workflows/audit-offloopback-auth-repair-v3.yml'''
+          if script.count(cleanup_old) != 1:
+              raise RuntimeError("auth cleanup anchor changed")
+          script = script.replace(cleanup_old, cleanup_new, 1)
+
+          Path("/tmp/audit-offloopback-auth-repair.sh").write_text(script)
+          PY
+          bash /tmp/audit-offloopback-auth-repair.sh
