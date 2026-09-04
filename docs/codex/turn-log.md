@@ -109,3 +109,15 @@
 - `evidence`: implementation, source tests, optimized artifact, installed-artifact behavior, and loopback API/rendering are verified separately; no authenticated upstream inference request was issued by this turn, so provider proxy success and user visual confirmation remain separate evidence states.
 - `residual_gap`: remote PR checks, external provider inference, and merge are not established; the task-owned tmux server/TUI sessions should be cleaned after publication, while any user-owned session must remain untouched.
 - `next_action`: review the confirmed diff, commit the topic-branch changes, push `feat/tui-tode-transplant` to update PR #215, verify exact remote head, then report merge as a separate maintainer action.
+
+## 2026-09-03 — recover provider-filtered model catalogs and safe provider taps
+
+- `scope`: current `feat/tui-tode-transplant` checkout and PR #215; native Models/Providers pages, cold catalog hydration, registered-provider filtering, repository palette navigation, and the installed control-center artifact.
+- `project`: `tverma101/AgentSwitchboard`; canonical checkout `/Users/tejas/Projects/AgentSwitchboard`; commit `141ad58e` on the verified topic branch.
+- `status`: implemented, locally tested, rebuilt, installed, and live-loopback smoke verified; exact commit is ready to publish.
+- `changed`: show the full cached catalog by default; recover a valid empty catalog once at startup and retry a provider-specific empty catalog once when selected; expose the catalog count; keep provider-row taps selection-only; require explicit Configure/Sign in/Test actions; add the missing Repositories palette command; preserve finite model navigation and exact route IDs.
+- `validation`: native Rust tests (92) and Clippy with warnings denied passed; `tests/cli/test_rust_tui.py` (36) passed; full `uv run --no-sync pytest -q` passed with 3887 passed and 152 skipped; Ruff, `ty`, compileall, format, and diff checks passed. Source and installed release binary match SHA256 `7ab8ca9b316d1d003dfea8e02c051777a63c55ce2e779d871010702b8a0d7b85`.
+- `live_evidence`: the existing loopback server returned 1 active model, 1018 catalog models, and zero failed providers; a fresh installed PTY showed `1018 shown · 1 on · 1018 catalog · 69 free`, six OpenAI catalog rows, and a connected OpenAI provider whose Enter action produced only an explicit sign-in notice rather than opening OAuth.
+- `evidence`: implementation, source tests, installed artifact, and live loopback UI/API behavior are verified separately; no authenticated upstream inference request or user visual confirmation is claimed. The user-owned TUI process was not restarted.
+- `residual_gap`: the user-owned existing TUI process must be closed/relaunched to load this installed SHA; external provider inference, remote PR checks, and merge remain separate lifecycle states; no Actions mutation was performed.
+- `next_action`: push `141ad58e` to `feat/tui-tode-transplant`, verify the remote head and PR #215 metadata, then hand off relaunch for user visual confirmation.
