@@ -1,0 +1,112 @@
+name: rebuild-redundancy-suite
+
+on:
+  push:
+    branches: [fix/redundancy-suite-hardening-clean]
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Reconstruct and validate intended redundancy hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          git fetch origin main codex/redundancy-test-suite-hardening
+          test "$(git rev-parse origin/main)" = "1c9ea069d409f0cad164b8ab84b8673aba7942d5"
+
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          def remove_top_level_definition(
+              path_text: str,
+              name: str,
+              *,
+              expected_count: int,
+              remove_index: int = 0,
+          ) -> None:
+              path = Path(path_text)
+              text = path.read_text(encoding="utf-8")
+              tree = ast.parse(text, filename=str(path))
+              matches = [
+                  node
+                  for node in tree.body
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                  and node.name == name
+              ]
+              if len(matches) != expected_count:
+                  raise RuntimeError(
+                      f"{path}:{name} expected {expected_count} definitions, found {len(matches)}"
+                  )
+              node = matches[remove_index]
+              if node.end_lineno is None:
+                  raise RuntimeError(f"{path}:{name} has no end_lineno")
+              lines = text.splitlines(keepends=True)
+              start = node.lineno - 1
+              end = node.end_lineno
+              while end < len(lines) and not lines[end].strip():
+                  end += 1
+              del lines[start:end]
+              path.write_text("".join(lines), encoding="utf-8")
+
+          remove_top_level_definition(
+              "tests/cli/test_codex_computer_use_registration.py",
+              "test_ensure_migrates_exact_native_launcher_to_bridge",
+              expected_count=1,
+          )
+          remove_top_level_definition(
+              "tests/providers/test_nvidia_nim.py",
+              "_make_bad_request_error",
+              expected_count=2,
+              remove_index=0,
+          )
+          remove_top_level_definition(
+              "tests/providers/test_wafer.py",
+              "test_build_request_body_uses_resolved_policy_without_inspecting_model",
+              expected_count=1,
+          )
+          PY
+
+          git show origin/codex/redundancy-test-suite-hardening:tests/test_redundancy_audit.py > tests/test_redundancy_audit.py
+
+          uv sync --locked
+          uv run ruff format \
+            tests/cli/test_codex_computer_use_registration.py \
+            tests/providers/test_nvidia_nim.py \
+            tests/providers/test_wafer.py \
+            tests/test_redundancy_audit.py
+          uv run ruff check --fix \
+            tests/cli/test_codex_computer_use_registration.py \
+            tests/providers/test_nvidia_nim.py \
+            tests/providers/test_wafer.py \
+            tests/test_redundancy_audit.py
+          uv run ty check
+          uv run pytest -q -n 0 \
+            tests/test_redundancy_audit.py \
+            tests/cli/test_codex_computer_use_registration.py \
+            tests/providers/test_nvidia_nim.py \
+            tests/providers/test_wafer.py
+          git diff --check
+
+          git rm .github/workflows/rebuild-redundancy-suite.yml
+          git add \
+            tests/cli/test_codex_computer_use_registration.py \
+            tests/providers/test_nvidia_nim.py \
+            tests/providers/test_wafer.py \
+            tests/test_redundancy_audit.py
+          git commit -m "test: harden redundancy and suite structure"
+          git push origin HEAD:fix/redundancy-suite-hardening-clean
