@@ -59,7 +59,10 @@ from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
 )
-from free_claude_code.providers.http import close_provider_stream
+from free_claude_code.providers.http import (
+    close_provider_stream,
+    request_model_list_json,
+)
 from free_claude_code.providers.model_listing import extract_openai_model_infos
 from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
@@ -354,12 +357,13 @@ class OpenCodeGoProvider(BaseProvider):
 
         async def fetch() -> Any:
             self._authorize_egress(f"{self._base_url}/models")
-            response = await self._native_http.get(
+            return await request_model_list_json(
+                self._native_http,
+                "GET",
                 f"{self._base_url}/models",
+                provider_name="OPENCODE_GO",
                 headers=self._auth_headers(),
             )
-            response.raise_for_status()
-            return response.json()
 
         payload = await self._admission.run_with_retry(fetch)
         return extract_openai_model_infos(payload, provider_name="OPENCODE_GO")

@@ -1,11 +1,65 @@
 """Shared HTTP lifecycle helpers for upstream provider clients."""
 
 import inspect
+import json
 from typing import Any
 
+import httpx
 from loguru import logger
 
 from free_claude_code.core.trace import trace_event
+from free_claude_code.providers.model_listing import (
+    MAX_MODEL_LIST_RESPONSE_BYTES,
+    ModelListResponseError,
+)
+
+
+async def request_model_list_json(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    provider_name: str,
+    **request_kwargs: Any,
+) -> Any:
+    """Fetch and decode one model catalog without eagerly buffering unbounded bytes."""
+    request = client.build_request(method, url, **request_kwargs)
+    response = await client.send(request, stream=True)
+    try:
+        response.raise_for_status()
+        raw_content_length = response.headers.get("content-length")
+        if raw_content_length is not None:
+            try:
+                content_length = int(raw_content_length)
+            except ValueError:
+                content_length = None
+            if (
+                content_length is not None
+                and content_length > MAX_MODEL_LIST_RESPONSE_BYTES
+            ):
+                raise ModelListResponseError(
+                    f"{provider_name} model-list response exceeded maximum "
+                    f"bytes ({MAX_MODEL_LIST_RESPONSE_BYTES})"
+                )
+
+        parts: list[bytes] = []
+        received = 0
+        async for chunk in response.aiter_bytes():
+            received += len(chunk)
+            if received > MAX_MODEL_LIST_RESPONSE_BYTES:
+                raise ModelListResponseError(
+                    f"{provider_name} model-list response exceeded maximum "
+                    f"bytes ({MAX_MODEL_LIST_RESPONSE_BYTES})"
+                )
+            parts.append(chunk)
+        try:
+            return json.loads(b"".join(parts))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ModelListResponseError(
+                f"{provider_name} model-list response is malformed: invalid JSON"
+            ) from exc
+    finally:
+        await maybe_await_aclose(response)
 
 
 async def maybe_await_aclose(response: Any) -> None:

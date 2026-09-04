@@ -129,7 +129,7 @@ async def test_lists_stream_tool_capable_models_only(
 ) -> None:
     with patch.object(
         github_models_provider._model_list_client,
-        "get",
+        "send",
         new_callable=AsyncMock,
         return_value=_catalog_response(
             [
@@ -152,14 +152,13 @@ async def test_lists_stream_tool_capable_models_only(
             {ProviderModelInfo("openai/gpt-4.1")}
         )
 
-    mock_get.assert_awaited_once_with(
-        GITHUB_MODELS_CATALOG_URL,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": "Bearer test-github-models-token",
-            "X-GitHub-Api-Version": "2026-03-10",
-        },
-    )
+    send_call = mock_get.await_args_list[0]
+    request = send_call.args[0]
+    assert str(request.url) == GITHUB_MODELS_CATALOG_URL
+    assert request.headers["Accept"] == "application/vnd.github+json"
+    assert request.headers["Authorization"] == "Bearer test-github-models-token"
+    assert request.headers["X-GitHub-Api-Version"] == "2026-03-10"
+    assert send_call.kwargs == {"stream": True}
 
 
 @pytest.mark.asyncio
@@ -169,7 +168,7 @@ async def test_model_list_rejects_malformed_payload(
     with (
         patch.object(
             github_models_provider._model_list_client,
-            "get",
+            "send",
             new_callable=AsyncMock,
             return_value=_catalog_response({"data": []}),
         ),
@@ -184,7 +183,7 @@ async def test_model_list_returns_empty_set_when_no_models_support_streaming_too
 ) -> None:
     with patch.object(
         github_models_provider._model_list_client,
-        "get",
+        "send",
         new_callable=AsyncMock,
         return_value=_catalog_response(
             [
