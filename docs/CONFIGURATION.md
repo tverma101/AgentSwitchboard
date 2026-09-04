@@ -81,6 +81,15 @@ If FCC is already healthy, the control center attaches without claiming its
 lifecycle. Use `fcc-tui` from another terminal to attach directly, or
 `fcc-server --headless` for a blocking server-only process.
 
+`fcc-tui` also accepts bounded terminal-code-style workspace conveniences:
+`[path]`, `--goto <file:line:col>`, `--diff <a> <b>`, `--review`,
+`--split/--size`, `--theme`, `--timing`, `--shortcut-setup`, and
+`--list-commands`. These are local terminal helpers only: they do not add a
+browser/editor shell, and every control-center mutation still stays inside the
+native UI and loopback Admin API. `--ssh` and extension-management verbs fail
+closed with guidance. See [terminal-code transplant](TERMINAL_CODE_TRANSPLANT.md)
+for the verified source pins and verb mapping.
+
 On a cold start, `fcc-server` opens this control center before starting the
 HTTP server. Discovery and repository inventory are prepared without a
 listener; the Models and Repositories choices are written to a private result

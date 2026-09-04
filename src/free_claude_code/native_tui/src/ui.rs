@@ -1,5 +1,7 @@
 use crate::api::{ConfigField, ProviderStatus};
-use crate::app::{pretty, App, ChromeGeometry, ConnectionState, Hitbox, Modal, Page, UiAction};
+use crate::app::{
+    match_palette, pretty, App, ChromeGeometry, ConnectionState, Hitbox, Modal, Page, UiAction,
+};
 use crate::models::{PriceFilter, PriceState, MODEL_KEY};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -1726,7 +1728,10 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(GOOD),
         )
     } else {
-        Span::raw("")
+        Span::styled(
+            "^K Palette · R Refresh · C Claude · ? Help · Q Quit",
+            Style::default().fg(MUTED),
+        )
     };
     frame.render_widget(
         Paragraph::new(Line::from(message))
@@ -1797,6 +1802,7 @@ fn render_modal(frame: &mut Frame, app: &mut App, area: Rect) {
         match &modal {
             Modal::ProviderEditor { .. } => 24,
             Modal::ProviderPicker { options, .. } => (options.len() as u16 + 4).min(24),
+            Modal::Palette { .. } => 20,
             Modal::FieldPicker { field_indices, .. } => (field_indices.len() as u16 + 6).min(24),
             Modal::Choice { options, .. } | Modal::ContextChoice { options, .. } => {
                 (options.len() as u16 + 6).min(22)
@@ -1843,6 +1849,9 @@ fn render_modal(frame: &mut Frame, app: &mut App, area: Rect) {
         Modal::ProviderPicker { options, selected } => {
             render_provider_picker(frame, app, rect, options, *selected)
         }
+        Modal::Palette { input, selected } => {
+            render_palette(frame, app, rect, &input.value, *selected)
+        }
         Modal::Confirm { title, body, .. } => render_message_box(
             frame,
             rect,
@@ -1852,6 +1861,75 @@ fn render_modal(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         Modal::Message { title, body } => render_message_box(frame, rect, title, body, TEXT),
     }
+}
+
+fn render_palette(frame: &mut Frame, app: &mut App, rect: Rect, query: &str, selected: usize) {
+    let block = modal_block("Command palette");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let query_row = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(format!("> {query}")).style(Style::default().fg(TEXT).bg(BG)),
+        query_row,
+    );
+
+    let inventory = app.palette_inventory();
+    let visible = match_palette(query, &inventory);
+    let list_height = inner.height.saturating_sub(3) as usize;
+    let offset = list_offset(selected, visible.len(), list_height);
+    for (row_index, entry_index) in visible.iter().skip(offset).take(list_height).enumerate() {
+        let display_index = offset + row_index;
+        let entry = &inventory[*entry_index];
+        let row = Rect {
+            x: inner.x,
+            y: inner.y + 2 + row_index as u16,
+            width: inner.width,
+            height: 1,
+        };
+        let style = if display_index == selected {
+            Style::default()
+                .fg(TEXT)
+                .bg(ACCENT_DIM)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TEXT).bg(PANEL)
+        };
+        let label = format!(
+            "{}{}  ·  {}",
+            if display_index == selected {
+                "▌ "
+            } else {
+                "  "
+            },
+            entry.title,
+            entry.hint
+        );
+        frame.render_widget(
+            Paragraph::new(trim_to(&label, inner.width as usize)).style(style),
+            row,
+        );
+    }
+
+    let hint = if visible.is_empty() {
+        "No matching commands · Esc closes"
+    } else {
+        "Type to filter · ↑↓/Ctrl-P/Ctrl-N move · Enter runs · Esc closes"
+    };
+    frame.render_widget(
+        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        Rect {
+            x: inner.x,
+            y: inner.bottom().saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        },
+    );
 }
 
 fn render_provider_picker(
@@ -2747,5 +2825,21 @@ mod tests {
             .hitboxes
             .iter()
             .any(|hitbox| matches!(hitbox.action, UiAction::LaunchClaude(true))));
+    }
+
+    #[test]
+    fn palette_keeps_reference_chrome_geometry() {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.modal = Some(Modal::Palette {
+            input: crate::app::TextInput::new("provider".to_string(), false, false),
+            selected: 0,
+        });
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.geometry.top.height, 3);
+        assert_eq!(app.geometry.sidebar.width, 28);
+        assert_eq!(app.geometry.footer.height, 2);
+        assert_eq!(app.geometry.main.width, 132);
     }
 }
