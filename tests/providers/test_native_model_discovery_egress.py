@@ -75,10 +75,8 @@ async def test_github_models_native_discovery_is_blocked_before_http() -> None:
 @pytest.mark.asyncio
 async def test_vertex_native_discovery_is_blocked_before_token_or_http() -> None:
     guard = _blocked_guard()
-    token_provider = cast(
-        GoogleAccessTokenProvider,
-        AsyncMock(return_value="access-token"),
-    )
+    token_mock = AsyncMock(return_value="access-token")
+    token_provider = cast(GoogleAccessTokenProvider, token_mock)
     provider = VertexProvider(
         ProviderConfig(
             api_key="",
@@ -97,6 +95,6 @@ async def test_vertex_native_discovery_is_blocked_before_token_or_http() -> None
                 await provider.list_model_infos()
         finally:
             await provider.cleanup()
-    token_provider.assert_not_awaited()
+    token_mock.assert_not_awaited()
     get.assert_not_awaited()
     assert guard.receipt()["blocked_counts"] == {"vertex": 1}
