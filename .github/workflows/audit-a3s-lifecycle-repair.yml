@@ -1,0 +1,125 @@
+name: audit-a3s-lifecycle-repair
+
+on:
+  push:
+    branches: [fix/a3s-subprocess-lifecycle]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Apply and validate A3S lifecycle repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/free_claude_code/api/web_tools/local_search.py")
+          text = path.read_text()
+
+          old = """    try:\n        stdout, _stderr = await asyncio.wait_for(\n            _read_process_output(process), timeout=_A3S_PROCESS_TIMEOUT_SECONDS\n        )\n    except TimeoutError:\n        _terminate_process(process)\n        await process.wait()\n        raise RuntimeError(\"local A3S Search timed out\") from None\n"""
+          new = """    try:\n        stdout, _stderr = await asyncio.wait_for(\n            _read_process_output(process), timeout=_A3S_PROCESS_TIMEOUT_SECONDS\n        )\n    except asyncio.CancelledError:\n        _terminate_process(process)\n        await process.wait()\n        raise\n    except TimeoutError:\n        _terminate_process(process)\n        await process.wait()\n        raise RuntimeError(\"local A3S Search timed out\") from None\n"""
+          if text.count(old) != 1:
+              raise RuntimeError("A3S caller cleanup anchor changed")
+          text = text.replace(old, new, 1)
+
+          old = """async def _read_process_output(process: Process[bytes]) -> tuple[bytes, bytes]:\n    \"\"\"Read bounded child output without allowing a pipe to deadlock the child.\"\"\"\n    assert process.stdout is not None\n    assert process.stderr is not None\n    stdout_task = asyncio.create_task(process.stdout.read(_A3S_STDOUT_CAP_BYTES + 1))\n    stderr_task = asyncio.create_task(process.stderr.read(_A3S_STDERR_CAP_BYTES))\n    try:\n        stdout = await stdout_task\n        if len(stdout) > _A3S_STDOUT_CAP_BYTES:\n            _terminate_process(process)\n        stderr = await stderr_task\n        await process.wait()\n        return stdout, stderr\n    finally:\n        for task in (stdout_task, stderr_task):\n            if not task.done():\n                task.cancel()\n\n\ndef _terminate_process(process: Process[bytes]) -> None:\n"""
+          new = """async def _read_process_output(process: Process[bytes]) -> tuple[bytes, bytes]:\n    \"\"\"Read bounded child output while continuously draining both pipes.\"\"\"\n    assert process.stdout is not None\n    assert process.stderr is not None\n    stdout_task = asyncio.create_task(\n        _drain_stream_bounded(\n            process.stdout,\n            _A3S_STDOUT_CAP_BYTES,\n            terminate_process=process,\n        )\n    )\n    stderr_task = asyncio.create_task(\n        _drain_stream_bounded(process.stderr, _A3S_STDERR_CAP_BYTES)\n    )\n    try:\n        stdout, stderr = await asyncio.gather(stdout_task, stderr_task)\n        await process.wait()\n        return stdout, stderr\n    except BaseException:\n        _terminate_process(process)\n        for task in (stdout_task, stderr_task):\n            if not task.done():\n                task.cancel()\n        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)\n        await process.wait()\n        raise\n\n\nasync def _drain_stream_bounded(\n    stream: asyncio.StreamReader,\n    cap_bytes: int,\n    *,\n    terminate_process: Process[bytes] | None = None,\n) -> bytes:\n    \"\"\"Capture at most a bounded prefix while draining the stream to EOF.\"\"\"\n    captured = bytearray()\n    capture_limit = cap_bytes + (1 if terminate_process is not None else 0)\n    terminated = False\n    while True:\n        chunk = await stream.read(64 * 1024)\n        if not chunk:\n            break\n        if len(captured) < capture_limit:\n            remaining = capture_limit - len(captured)\n            captured.extend(chunk[:remaining])\n        if (\n            terminate_process is not None\n            and len(captured) > cap_bytes\n            and not terminated\n        ):\n            _terminate_process(terminate_process)\n            terminated = True\n    return bytes(captured)\n\n\ndef _terminate_process(process: Process[bytes]) -> None:\n"""
+          if text.count(old) != 1:
+              raise RuntimeError("A3S pipe reader anchor changed")
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+
+          tests = Path("tests/api/test_local_a3s_search.py")
+          test_text = tests.read_text()
+          old = """class _FakeStream:\n    def __init__(self, data: bytes) -> None:\n        self._data = data\n\n    async def read(self, _limit: int) -> bytes:\n        return self._data\n"""
+          new = """class _FakeStream:\n    def __init__(self, data: bytes) -> None:\n        self._data = data\n        self.read_calls = 0\n\n    async def read(self, limit: int) -> bytes:\n        self.read_calls += 1\n        if not self._data:\n            return b\"\"\n        chunk = self._data[:limit]\n        self._data = self._data[limit:]\n        return chunk\n"""
+          if test_text.count(old) != 1:
+              raise RuntimeError("A3S fake stream anchor changed")
+          test_text = test_text.replace(old, new, 1)
+          old = """        self._final_returncode = returncode if returncode is not None else 0\n        self.killed = False\n\n    async def wait(self) -> int:\n        if self.returncode is None:\n            self.returncode = self._final_returncode\n        return self.returncode\n"""
+          new = """        self._final_returncode = returncode if returncode is not None else 0\n        self.killed = False\n        self.wait_calls = 0\n\n    async def wait(self) -> int:\n        self.wait_calls += 1\n        if self.returncode is None:\n            self.returncode = self._final_returncode\n        return self.returncode\n"""
+          if test_text.count(old) != 1:
+              raise RuntimeError("A3S fake process anchor changed")
+          test_text = test_text.replace(old, new, 1)
+          tests.write_text(test_text)
+          PY
+
+          cat >> tests/api/test_local_a3s_search.py <<'PY'
+
+
+          @pytest.mark.asyncio
+          async def test_a3s_cancellation_kills_and_reaps_process() -> None:
+              process = _FakeProcess(b"")
+              entered = asyncio.Event()
+
+              async def wait_forever(_process) -> tuple[bytes, bytes]:
+                  entered.set()
+                  await asyncio.Event().wait()
+                  return b"", b""
+
+              with (
+                  patch(
+                      "free_claude_code.api.web_tools.local_search.shutil.which",
+                      return_value="/usr/local/bin/a3s-search",
+                  ),
+                  patch(
+                      "free_claude_code.api.web_tools.local_search.asyncio.create_subprocess_exec",
+                      new=AsyncMock(return_value=process),
+                  ),
+                  patch(
+                      "free_claude_code.api.web_tools.local_search._read_process_output",
+                      new=wait_forever,
+                  ),
+              ):
+                  task = asyncio.create_task(run_local_a3s_search("capital of France"))
+                  await entered.wait()
+                  task.cancel()
+                  with pytest.raises(asyncio.CancelledError):
+                      await task
+
+              assert process.killed is True
+              assert process.wait_calls >= 1
+
+
+          @pytest.mark.asyncio
+          async def test_a3s_stderr_cap_keeps_draining_without_retaining_excess() -> None:
+              from free_claude_code.api.web_tools.local_search import (
+                  _A3S_STDERR_CAP_BYTES,
+                  _read_process_output,
+              )
+
+              process = _FakeProcess(b'{}')
+              process.stderr = _FakeStream(b"e" * (_A3S_STDERR_CAP_BYTES + 100_000))
+
+              _stdout, stderr = await _read_process_output(process)
+
+              assert len(stderr) == _A3S_STDERR_CAP_BYTES
+              assert process.stderr.read_calls >= 3
+          PY
+
+          uv sync --locked
+          uv run ruff format src/free_claude_code/api/web_tools/local_search.py tests/api/test_local_a3s_search.py
+          uv run ruff check --fix src/free_claude_code/api/web_tools/local_search.py tests/api/test_local_a3s_search.py
+          uv run ty check
+          uv run pytest -q -n 0 tests/api/test_local_a3s_search.py
+          git diff --check
+
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          git rm .github/workflows/audit-a3s-lifecycle-repair.yml
+          git add src/free_claude_code/api/web_tools/local_search.py tests/api/test_local_a3s_search.py
+          git commit -m "fix: clean up and continuously drain A3S subprocesses"
+          git push origin HEAD:fix/a3s-subprocess-lifecycle
