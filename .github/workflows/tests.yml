@@ -1,6 +1,8 @@
 # Branch protection: require every status check this workflow reports, for example:
 #   Ban suppressions and legacy annotations
 #   ruff-format, ruff-check, ty, pytest
+# The required pytest job depends on rust-tui, so native Rust failures are transitively protected
+# even when branch protection cannot require the rust-tui context directly.
 # GitHub may prefix with the workflow name (e.g. "CI / ruff-format"); use the names the branch protection UI offers after a run.
 
 name: CI
@@ -59,8 +61,6 @@ jobs:
             run: uv run --no-sync ruff check
           - id: ty
             run: uv run --no-sync ty check
-          - id: pytest
-            run: uv run --no-sync pytest -q --tb=short
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -116,3 +116,30 @@ jobs:
 
       - name: Enforce committed rustfmt output
         run: git diff --exit-code -- src/free_claude_code/native_tui
+
+  pytest:
+    name: pytest
+    needs: rust-tui
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+
+      - name: Prepare project environment
+        run: uv sync --locked
+
+      - name: Run
+        run: uv run --no-sync pytest -q --tb=short
