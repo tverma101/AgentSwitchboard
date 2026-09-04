@@ -1,0 +1,79 @@
+name: Audit provider cleanup repair
+
+on:
+  push:
+    branches:
+      - fix/retry-retired-provider-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/retry-retired-provider-cleanup
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: 0.11.16
+          enable-cache: true
+          cache-python: false
+
+      - name: Apply cleanup ownership repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          manager_path = Path("src/free_claude_code/runtime/provider_manager.py")
+          manager = manager_path.read_text(encoding="utf-8")
+          old = """            await self._cancel_refresh()\n            await self._retry_unpublished_cleanup()\n            candidate_id = self._next_generation_id\n"""
+          new = """            await self._cancel_refresh()\n            await self._retry_retired_cleanup()\n            await self._retry_unpublished_cleanup()\n            candidate_id = self._next_generation_id\n"""
+          assert manager.count(old) == 1, "replace cleanup anchor changed"
+          manager = manager.replace(old, new)
+
+          old = """                    self._close_generation(generation, forced=False)\n                    for generation in generations\n"""
+          new = """                    self._close_generation(generation, forced=True)\n                    for generation in generations\n"""
+          assert manager.count(old) == 1, "shutdown cleanup anchor changed"
+          manager = manager.replace(old, new)
+
+          old = """    async def _retry_unpublished_cleanup(self) -> bool:\n        all_closed = True\n        for runtime in tuple(self._unpublished):\n            if not await self._cleanup_unpublished(runtime):\n                all_closed = False\n        return all_closed\n\n    async def _close_generation(\n"""
+          new = """    async def _retry_unpublished_cleanup(self) -> bool:\n        all_closed = True\n        for runtime in tuple(self._unpublished):\n            if not await self._cleanup_unpublished(runtime):\n                all_closed = False\n        return all_closed\n\n    async def _retry_retired_cleanup(self) -> bool:\n        \"\"\"Retry drained retired generations that previously failed cleanup.\"\"\"\n        all_closed = True\n        for generation in tuple(self._retired.values()):\n            if generation.active_leases != 0:\n                continue\n            if not await self._close_generation(generation, forced=False):\n                all_closed = False\n        return all_closed\n\n    async def _close_generation(\n"""
+          assert manager.count(old) == 1, "retry helper anchor changed"
+          manager_path.write_text(manager.replace(old, new), encoding="utf-8")
+
+          manager_test_path = Path("tests/runtime/test_provider_manager.py")
+          manager_tests = manager_test_path.read_text(encoding="utf-8")
+          old = '''@pytest.mark.asyncio\nasync def test_hot_cleanup_failure_keeps_published_replacement() -> None:\n    factory = RuntimeFactory()\n    manager = ProviderRuntimeManager(\n        _settings("nvidia_nim/one"),\n        runtime_factory=factory,\n    )\n    factory.runtimes[0].cleanup_error = RuntimeError("cleanup failed")\n\n    generation_id = await manager.replace(\n        _settings("nvidia_nim/two"),\n        commit=lambda: None,\n    )\n\n    assert generation_id == 2\n    assert manager.current_generation_id == 2\n    assert factory.runtimes[0].cleanup_calls == 1\n    assert 1 in manager._retired\n\n    factory.runtimes[0].cleanup_error = None\n    await manager.close()\n\n    assert factory.runtimes[0].cleanup_calls == 2\n    assert manager._retired == {}\n'''
+          new = '''@pytest.mark.asyncio\nasync def test_hot_cleanup_failure_is_retried_on_next_replacement() -> None:\n    factory = RuntimeFactory()\n    manager = ProviderRuntimeManager(\n        _settings("nvidia_nim/one"),\n        runtime_factory=factory,\n    )\n    factory.runtimes[0].cleanup_error = RuntimeError("cleanup failed")\n\n    generation_id = await manager.replace(\n        _settings("nvidia_nim/two"),\n        commit=lambda: None,\n    )\n\n    assert generation_id == 2\n    assert manager.current_generation_id == 2\n    assert factory.runtimes[0].cleanup_calls == 1\n    assert 1 in manager._retired\n\n    factory.runtimes[0].cleanup_error = None\n    generation_id = await manager.replace(\n        _settings("nvidia_nim/three"),\n        commit=lambda: None,\n    )\n\n    assert generation_id == 3\n    assert factory.runtimes[0].cleanup_calls == 2\n    assert 1 not in manager._retired\n    await manager.close()\n    assert manager._retired == {}\n'''
+          assert manager_tests.count(old) == 1, "manager cleanup regression anchor changed"
+          manager_test_path.write_text(manager_tests.replace(old, new), encoding="utf-8")
+
+          runtime_test_path = Path("tests/providers/test_provider_runtime.py")
+          runtime_tests = runtime_test_path.read_text(encoding="utf-8")
+          old = '''@pytest.mark.asyncio\nasync def test_provider_runtime_cleanup_runs_all_even_if_one_fails() -> None:\n    \"\"\"Successful providers leave the cache while failed providers remain retryable.\"\"\"\n    p1 = MagicMock()\n    p1.cleanup = AsyncMock(side_effect=RuntimeError("first"))\n    p2 = MagicMock()\n    p2.cleanup = AsyncMock()\n    runtime = ProviderRuntime(_make_settings(), {"a": p1, "b": p2})\n\n    with pytest.raises(RuntimeError, match="first"):\n        await runtime.cleanup()\n\n    p1.cleanup.assert_awaited_once()\n    p2.cleanup.assert_awaited_once()\n    assert runtime.is_cached("a")\n    assert not runtime.is_cached("b")\n\n    p1.cleanup = AsyncMock()\n    await runtime.cleanup()\n\n    p1.cleanup.assert_awaited_once()\n    assert not runtime.is_cached("a")\n'''
+          new = '''@pytest.mark.asyncio\nasync def test_provider_runtime_cleanup_runs_all_even_if_one_persistently_fails() -> None:\n    \"\"\"Successful providers leave the cache while persistent failures remain retryable.\"\"\"\n    p1 = MagicMock()\n    p1.cleanup = AsyncMock(side_effect=RuntimeError("first"))\n    p2 = MagicMock()\n    p2.cleanup = AsyncMock()\n    runtime = ProviderRuntime(_make_settings(), {"a": p1, "b": p2})\n\n    with pytest.raises(RuntimeError, match="first"):\n        await runtime.cleanup()\n\n    assert p1.cleanup.await_count == 2\n    p2.cleanup.assert_awaited_once()\n    assert runtime.is_cached("a")\n    assert not runtime.is_cached("b")\n\n    p1.cleanup = AsyncMock()\n    await runtime.cleanup()\n\n    p1.cleanup.assert_awaited_once()\n    assert not runtime.is_cached("a")\n\n\n@pytest.mark.asyncio\nasync def test_provider_runtime_cleanup_retries_only_failed_provider_once() -> None:\n    transient = MagicMock()\n    transient.cleanup = AsyncMock(side_effect=[RuntimeError("transient"), None])\n    healthy = MagicMock()\n    healthy.cleanup = AsyncMock()\n    runtime = ProviderRuntime(_make_settings(), {"transient": transient, "healthy": healthy})\n\n    await runtime.cleanup()\n\n    assert transient.cleanup.await_count == 2\n    healthy.cleanup.assert_awaited_once()\n    assert not runtime.is_cached("transient")\n    assert not runtime.is_cached("healthy")\n'''
+          assert runtime_tests.count(old) == 1, "runtime cleanup regression anchor changed"
+          runtime_test_path.write_text(runtime_tests.replace(old, new), encoding="utf-8")
+
+      - name: Prepare environment
+        run: uv sync --locked
+
+      - name: Format and validate
+        run: |
+          uv run --no-sync ruff format src/free_claude_code/providers/runtime/runtime.py src/free_claude_code/runtime/provider_manager.py tests/providers/test_provider_runtime.py tests/runtime/test_provider_manager.py
+          uv run --no-sync ruff check src/free_claude_code/providers/runtime/runtime.py src/free_claude_code/runtime/provider_manager.py tests/providers/test_provider_runtime.py tests/runtime/test_provider_manager.py
+          uv run --no-sync ty check
+          uv run --no-sync pytest -q tests/providers/test_provider_runtime.py tests/runtime/test_provider_manager.py --tb=short
+
+      - name: Commit repair and remove audit workflow
+        run: |
+          rm .github/workflows/audit-provider-cleanup-repair.yml
+          git config user.name "Tejas Verma"
+          git config user.email "145865683+tverma101@users.noreply.github.com"
+          git add src/free_claude_code/providers/runtime/runtime.py src/free_claude_code/runtime/provider_manager.py tests/providers/test_provider_runtime.py tests/runtime/test_provider_manager.py .github/workflows/audit-provider-cleanup-repair.yml
+          git commit -m "fix: retry failed provider generation cleanup"
+          git push origin HEAD:fix/retry-retired-provider-cleanup
