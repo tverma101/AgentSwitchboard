@@ -61,7 +61,7 @@ jobs:
 
 
           @pytest.fixture(autouse=True)
-          def isolate_managed_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+          def isolate_managed_dotenv(monkeypatch) -> None:
               monkeypatch.setitem(Settings.model_config, "env_file", ())
               monkeypatch.delenv("HOST", raising=False)
               monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
