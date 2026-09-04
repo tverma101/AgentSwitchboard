@@ -1,0 +1,82 @@
+name: rebuild-live-receipts
+
+on:
+  push:
+    branches: [fix/preserve-live-receipts-clean]
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Reconstruct and validate archival receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          git fetch origin main chore/preserve-live-receipts-20260826
+          test "$(git rev-parse origin/main)" = "1c9ea069d409f0cad164b8ab84b8673aba7942d5"
+
+          paths=(
+            smoke/receipts/claude-auto-compact-muse-2026-08-26.json
+            smoke/receipts/claude-subagent-live-muse-2026-08-26.json
+            smoke/receipts/codex-computer-use-action-matrix-2026-08-26.json
+            smoke/receipts/codex-computer-use-managed-readiness-2026-08-26.json
+            smoke/receipts/muse-live-tool-loop-2026-08-26.json
+            smoke/receipts/opencode-go-economics-harness-2026-08-26.jsonl
+            smoke/receipts/opencode-go-economics-native-2026-08-26.jsonl
+            smoke/receipts/opencode-go-native-route-matrix-2026-08-26.json
+          )
+          git checkout origin/chore/preserve-live-receipts-20260826 -- "${paths[@]}"
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          paths = [
+              Path("smoke/receipts/claude-auto-compact-muse-2026-08-26.json"),
+              Path("smoke/receipts/claude-subagent-live-muse-2026-08-26.json"),
+              Path("smoke/receipts/codex-computer-use-action-matrix-2026-08-26.json"),
+              Path("smoke/receipts/codex-computer-use-managed-readiness-2026-08-26.json"),
+              Path("smoke/receipts/muse-live-tool-loop-2026-08-26.json"),
+              Path("smoke/receipts/opencode-go-economics-harness-2026-08-26.jsonl"),
+              Path("smoke/receipts/opencode-go-economics-native-2026-08-26.jsonl"),
+              Path("smoke/receipts/opencode-go-native-route-matrix-2026-08-26.json"),
+          ]
+          forbidden = (
+              "Bearer ",
+              "ghp_",
+              "sk-ant-",
+              "sk-proj-",
+              "/Users/",
+              "@gmail.com",
+              "@outlook.com",
+          )
+          for path in paths:
+              text = path.read_text(encoding="utf-8")
+              for marker in forbidden:
+                  if marker in text:
+                      raise RuntimeError(f"sensitive marker {marker!r} found in {path}")
+              if path.suffix == ".json":
+                  json.loads(text)
+              else:
+                  for line_number, line in enumerate(text.splitlines(), start=1):
+                      if line.strip():
+                          json.loads(line)
+          PY
+
+          expected=$(printf '%s\n' "${paths[@]}" | sort)
+          actual=$(git diff --cached --name-only | sort)
+          test "$actual" = "$expected"
+          git diff --cached --check
+
+          git rm .github/workflows/rebuild-live-receipts.yml
+          git add "${paths[@]}"
+          git commit -m "chore: preserve unique historical live validation receipts"
+          git push origin HEAD:fix/preserve-live-receipts-clean
