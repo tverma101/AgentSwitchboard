@@ -1,0 +1,62 @@
+name: Audit native discovery egress repair
+
+on:
+  push:
+    branches:
+      - fix/guard-native-model-discovery
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/guard-native-model-discovery
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: 0.11.16
+          enable-cache: true
+          cache-python: false
+      - name: Patch native discovery guards
+        shell: python
+        run: |
+          from pathlib import Path
+
+          patches = {
+              "src/free_claude_code/providers/cloudflare/client.py": (
+                  '    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:\n        """Return Cloudflare Workers AI metadata from account model search."""\n\n        async def request() -> httpx.Response:\n',
+                  '    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:\n        """Return Cloudflare Workers AI metadata from account model search."""\n        self._authorize_egress(self._model_search_url)\n\n        async def request() -> httpx.Response:\n',
+              ),
+              "src/free_claude_code/providers/github_models/client.py": (
+                  '    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:\n        """Return stream/tool-capable GitHub Models catalog ids."""\n\n        async def request() -> httpx.Response:\n',
+                  '    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:\n        """Return stream/tool-capable GitHub Models catalog ids."""\n        self._authorize_egress(self._catalog_url)\n\n        async def request() -> httpx.Response:\n',
+              ),
+              "src/free_claude_code/providers/vertex/client.py": (
+                  '    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:\n        """List Vertex publisher models and translate their resource names."""\n        model_ids: set[str] = set()\n',
+                  '    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:\n        """List Vertex publisher models and translate their resource names."""\n        self._authorize_egress(self._models_url)\n        model_ids: set[str] = set()\n',
+              ),
+          }
+          for filename, (old, new) in patches.items():
+              path = Path(filename)
+              text = path.read_text(encoding="utf-8")
+              assert text.count(old) == 1, f"guard anchor changed: {filename}"
+              path.write_text(text.replace(old, new), encoding="utf-8")
+      - name: Validate
+        run: |
+          uv sync --locked
+          uv run --no-sync ruff format src/free_claude_code/providers/cloudflare/client.py src/free_claude_code/providers/github_models/client.py src/free_claude_code/providers/vertex/client.py tests/providers/test_native_model_discovery_egress.py
+          uv run --no-sync ruff check src/free_claude_code/providers/cloudflare/client.py src/free_claude_code/providers/github_models/client.py src/free_claude_code/providers/vertex/client.py tests/providers/test_native_model_discovery_egress.py
+          uv run --no-sync ty check
+          uv run --no-sync pytest -q tests/providers/test_native_model_discovery_egress.py tests/providers/test_cloudflare.py tests/providers/test_github_models.py tests/providers/test_vertex.py --tb=short
+      - name: Commit clean repair
+        run: |
+          rm .github/workflows/audit-native-discovery-egress-repair.yml
+          git config user.name "Tejas Verma"
+          git config user.email "145865683+tverma101@users.noreply.github.com"
+          git add src/free_claude_code/providers/cloudflare/client.py src/free_claude_code/providers/github_models/client.py src/free_claude_code/providers/vertex/client.py tests/providers/test_native_model_discovery_egress.py .github/workflows/audit-native-discovery-egress-repair.yml
+          git commit -m "fix: guard native provider model discovery"
+          git push origin HEAD:fix/guard-native-model-discovery
