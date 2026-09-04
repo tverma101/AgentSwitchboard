@@ -44,9 +44,8 @@ old_methods = """    @staticmethod
         if provider_id not in PROVIDER_CATALOG:
             raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
 
-    @staticmethod
     def _direct_provider_model(
-        model_name: str
+        self, model_name: str
 """
 new_methods = """    def _validate_provider_id(self, provider_id: str) -> None:
         if provider_id not in self._provider_catalog:
