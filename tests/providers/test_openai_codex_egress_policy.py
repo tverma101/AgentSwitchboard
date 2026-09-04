@@ -1,5 +1,7 @@
 """OpenAI Codex must participate in the shared pre-network egress policy."""
 
+from unittest.mock import patch
+
 import httpx
 import pytest
 
@@ -109,16 +111,21 @@ async def test_codex_stream_is_blocked_before_auth_admission_or_transport() -> N
     provider = OpenAICodexProvider(
         _config(guard), auth=auth, admission=admission, client=client
     )
-    stream = provider.stream_response(_request())
-    try:
-        with pytest.raises(ProviderPolicyError, match="before network I/O"):
-            await anext(stream)
-    finally:
-        await stream.aclose()
-        await client.aclose()
+    with patch.object(
+        admission,
+        "new_retry_session",
+        wraps=admission.new_retry_session,
+    ) as new_retry_session:
+        stream = provider.stream_response(_request())
+        try:
+            with pytest.raises(ProviderPolicyError, match="before network I/O"):
+                await anext(stream)
+        finally:
+            await stream.aclose()
+            await client.aclose()
+        new_retry_session.assert_not_called()
 
     assert auth.access_calls == 0
-    assert admission.new_retry_session().attempts_started == 0
     assert transport_calls == 0
     assert guard.receipt()["blocked_counts"] == {"openai": 1}
 
