@@ -139,8 +139,9 @@ class OpenAICodexProvider(BaseProvider):
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Discover models visible to the currently connected ChatGPT account."""
 
+        self._authorize_egress(self._config.base_url)
+
         async def fetch() -> Any:
-            self._authorize_egress(self._config.base_url)
             access = await self._auth.access()
             response = await self._client.get(
                 "models",
@@ -272,6 +273,7 @@ class OpenAICodexProvider(BaseProvider):
         thread_id: str | None,
         responses_lite: bool,
     ) -> AsyncIterator[str]:
+        self._authorize_egress(self._config.base_url)
         retry_session = self._admission.new_retry_session(request_id=request_id)
         recovery = RecoveryController()
         message_id = f"msg_{uuid.uuid4()}"
@@ -311,7 +313,6 @@ class OpenAICodexProvider(BaseProvider):
             attempt: ProviderAttempt | None = None
             stream_opened = False
             try:
-                self._authorize_egress(self._config.base_url)
                 access = await self._auth.access()
                 attempt = await self._admission.open_attempt(retry_session)
                 request_headers = {
