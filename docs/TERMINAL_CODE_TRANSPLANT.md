@@ -69,6 +69,15 @@ uv run pytest -n 0 tests/cli/test_rust_tui.py tests/cli/test_entrypoints.py
 ./scripts/ci.sh --fast
 ```
 
+The current-main reconstruction on 2026-09-04 was validated before the PR
+branch was rewritten: `cargo fmt --check` and Clippy were clean, all 48 native
+Rust tests passed, and all 94 focused `test_rust_tui.py` +
+`test_entrypoints.py` tests passed. The replay also asserted that the only
+conflicts against current `main` were the four reviewed integration files and
+refused to rewrite the branch if any additional conflict appeared. Repository
+CI on the final exact PR head remains the merge gate rather than being inferred
+from this reconstruction run.
+
 Rust palette coverage: `palette_inventory_reaches_every_page` (all 10 pages),
 filter semantics, open/execute/cancel/quit/out-of-range cases, and the
 cell-exact chrome test with the palette open. Python coverage: workspace,
