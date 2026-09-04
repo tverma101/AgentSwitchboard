@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "kind": "live_codex_computer_use_action_matrix",
+  "captured_at": "2026-08-26",
+  "implementation_commit": "5449bff57c195bb34e9f54cc0c1327f082655253",
+  "host": {
+    "os": "macOS 26.6",
+    "architecture": "arm64",
+    "official_client_version": "CUA App Version: 1000854"
+  },
+  "target": {
+    "app": "com.apple.TextEdit",
+    "document": "task-created unsaved disposable document",
+    "raw_text_recorded": false
+  },
+  "authorization": {
+    "elicitation": "exact TextEdit-only approval",
+    "other_apps_approved": false
+  },
+  "screen_and_accessibility": {
+    "screenshot_blocks_seen": true,
+    "accessibility_tree_seen": true,
+    "text_entry_element_observed": true
+  },
+  "operations": [
+    {
+      "operation": "click",
+      "completed": true,
+      "target": "TextEdit text entry area"
+    },
+    {
+      "operation": "type_text",
+      "completed": true,
+      "effect_verified": "metadata-only marker appeared in refreshed accessibility state"
+    },
+    {
+      "operation": "select_text",
+      "completed": true,
+      "effect_verified": "selection call returned without error"
+    },
+    {
+      "operation": "set_value",
+      "completed": true,
+      "effect_verified": "replacement marker appeared in refreshed accessibility state"
+    },
+    {
+      "operation": "press_key",
+      "completed": true,
+      "key_class": "navigation"
+    },
+    {
+      "operation": "perform_secondary_action",
+      "completed": true,
+      "action": "Raise"
+    },
+    {
+      "operation": "scroll",
+      "completed": false,
+      "error": "Computer Use server error -10005: noWindowsAvailable",
+      "reproduced_by": ["Harness managed broker", "official @oai/sky client"],
+      "automatically_retried": false
+    },
+    {
+      "operation": "drag",
+      "completed": false,
+      "error": "Computer Use server error -10005: noWindowsAvailable",
+      "reproduced_by": ["Harness managed broker", "official @oai/sky client"],
+      "automatically_retried": false
+    }
+  ],
+  "unverified": [
+    "scroll and drag support on a later installed client build",
+    "cancellation/timeout with no duplicate side effects",
+    "full native-vs-Harness parity matrix",
+    "Luna stable-prefix and cache economics after helper use"
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "schema": "fcc.claude-subagent-route.v1",
+  "receipt": "live-installed-claude-foreground-subagent",
+  "captured_at": "2026-08-26T21:06:18Z",
+  "evidence": {
+    "kind": "live_installed_claude",
+    "status": "passed",
+    "synthetic": false,
+    "client_executed": true,
+    "gateway": "fcc_loopback_to_opencode_go"
+  },
+  "claude": {
+    "binary": "claude",
+    "version": "2.1.228",
+    "surface": "foreground_agent_subagent"
+  },
+  "harness": {
+    "package_version": "4.30.26",
+    "commit_sha": "158a02e563f47245b72e42f8a9ab708cc6151060",
+    "active_user_server_touched": false
+  },
+  "context": {
+    "requested_tokens": null,
+    "effective_tokens": 256000,
+    "compact_fired": false
+  },
+  "requests": {
+    "client_requests_observed": 11,
+    "completed_provider_turns": 9,
+    "agent_tool_count": 31,
+    "agent_result_count": 33,
+    "tool_result_count": 14,
+    "foreground_run_in_background": false,
+    "upstream_attempts_per_completed_turn": 1.0,
+    "provider_http_error_count": 0,
+    "upstream_protocol": "responses"
+  },
+  "provider_route_sequence": [
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false},
+    {"provider_id": "opencode_go", "gateway_model": "claude-sonnet-5", "route_source": "model", "alias_applied": false}
+  ],
+  "invariants": {
+    "every_completed_provider_turn_stayed_on_opencode_go": true,
+    "every_completed_provider_turn_used_the_same_gateway_model": true,
+    "no_alias_route_was_applied": true,
+    "fcc_route_observed": true,
+    "direct_first_party_route_observed": false
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_subagent_when_requested",
+    "retained_content": "metadata-only receipt; prompts, responses, session ids, credentials, and raw logs omitted"
+  },
+  "unverified_boundaries": [
+    "subagent crossing its own compact boundary",
+    "interrupted compaction recovery",
+    "candidate Claude-version inheritance",
+    "packet-level network capture was not used; direct_first_party_route_observed is based on FCC route receipts"
+  ]
+}
