@@ -58,8 +58,9 @@ class ProviderEgressGuard:
         destination_host: str | None = None,
     ) -> bool:
         family = provider_family.strip().lower()
+        primary_family = self.policy.primary_provider.lower()
         allowed = family in {
-            self.policy.primary_provider.lower(),
+            primary_family,
             *(provider.lower() for provider in self.policy.allowed_provider_families),
         }
         if category == "local_tool":
@@ -70,7 +71,10 @@ class ProviderEgressGuard:
             allowed = allowed or family in {
                 helper.lower() for helper in self.policy.allowed_helpers
             }
-        if family in {item.lower() for item in self.policy.forbidden_provider_families}:
+        if (
+            family in {item.lower() for item in self.policy.forbidden_provider_families}
+            and family != primary_family
+        ):
             allowed = False
         decision = "allowed" if allowed else "blocked"
         if not allowed and self.policy.mode is ProviderPolicyMode.DIAGNOSTIC:
