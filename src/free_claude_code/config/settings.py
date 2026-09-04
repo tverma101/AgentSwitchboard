@@ -1,5 +1,6 @@
 """Flat application settings schema loaded by Pydantic Settings."""
 
+import ipaddress
 from functools import lru_cache
 from typing import Any
 
@@ -461,7 +462,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8082
     # Optional proxy bearer token protecting public API endpoints.
-    # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
+    # Set via env `ANTHROPIC_AUTH_TOKEN`. Empty is allowed only on loopback.
     anthropic_auth_token: str = Field(
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
@@ -699,6 +700,23 @@ class Settings(BaseSettings):
         dotenv_value = env_file_override(self.model_config, ANTHROPIC_AUTH_TOKEN_ENV)
         if dotenv_value is not None:
             self.anthropic_auth_token = dotenv_value
+        return self
+
+    @model_validator(mode="after")
+    def require_auth_for_non_loopback_host(self) -> Settings:
+        """Prevent an unauthenticated proxy from binding beyond this machine."""
+        normalized_host = self.host.strip().strip("[]").casefold()
+        is_loopback = normalized_host == "localhost"
+        if not is_loopback:
+            try:
+                is_loopback = ipaddress.ip_address(normalized_host).is_loopback
+            except ValueError:
+                is_loopback = False
+        if not is_loopback and not self.anthropic_auth_token.strip():
+            raise ValueError(
+                "ANTHROPIC_AUTH_TOKEN is required when HOST is not loopback; "
+                "use HOST=127.0.0.1 for an unauthenticated local server"
+            )
         return self
 
     model_config = SettingsConfigDict(
