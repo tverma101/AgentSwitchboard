@@ -66,8 +66,16 @@ def test_application_keeps_request_correlation_outside_body_limit() -> None:
     app = create_test_app()
     middleware_classes = [middleware.cls for middleware in app.user_middleware]
 
-    correlation_index = middleware_classes.index(RequestCorrelationMiddleware)
-    body_limit_index = middleware_classes.index(PublicRequestBodyLimitMiddleware)
+    correlation_index = next(
+        index
+        for index, middleware_class in enumerate(middleware_classes)
+        if middleware_class is RequestCorrelationMiddleware
+    )
+    body_limit_index = next(
+        index
+        for index, middleware_class in enumerate(middleware_classes)
+        if middleware_class is PublicRequestBodyLimitMiddleware
+    )
     assert correlation_index < body_limit_index
 
 
