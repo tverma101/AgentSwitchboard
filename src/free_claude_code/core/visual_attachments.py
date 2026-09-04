@@ -118,6 +118,17 @@ def validate_base64_source(source: dict[str, Any]) -> VisualAttachmentReceipt:
     media_type = source.get("media_type")
     if not isinstance(encoded, str) or not isinstance(media_type, str):
         raise VisualAttachmentError("Base64 image requires media_type and data")
+    if media_type not in SUPPORTED_IMAGE_TYPES:
+        raise VisualAttachmentError(f"Unsupported image media type: {media_type}")
+
+    # Base64 expands three input bytes into four ASCII characters. Reject an
+    # impossible-to-fit payload before allocating its decoded copy; the
+    # decoded-byte check in validate_image_bytes remains authoritative.
+    max_encoded_chars = 4 * ((MAX_IMAGE_BYTES + 2) // 3)
+    if len(encoded) > max_encoded_chars:
+        raise VisualAttachmentError(
+            f"Image exceeds the {MAX_IMAGE_BYTES / (1024 * 1024):g} MiB limit"
+        )
     try:
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
