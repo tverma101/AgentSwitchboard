@@ -1,0 +1,798 @@
+name: Audit model discovery bounds repair
+
+on:
+  push:
+    branches: [fix/bound-provider-model-discovery]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/bound-provider-model-discovery
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Patch bounded model discovery
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              assert text.count(old) == 1, f"anchor changed: {path}: {old[:80]!r}"
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          model_listing = "src/free_claude_code/providers/model_listing.py"
+          replace_once(
+              model_listing,
+              "from free_claude_code.application.model_metadata import (\n    ProviderModelInfo as _ProviderModelInfo,\n)\n\n\nclass ModelListResponseError",
+              "from free_claude_code.application.model_metadata import (\n    ProviderModelInfo as _ProviderModelInfo,\n)\n\nMAX_MODEL_LIST_RESPONSE_BYTES = 4 * 1024 * 1024\nMAX_MODEL_LIST_RECORDS = 10_000\nMAX_MODEL_LIST_PAGES = 32\n\n\nclass ModelListResponseError",
+          )
+          replace_once(
+              model_listing,
+              '''def model_list_items(payload: Any, *, provider_name: str) -> tuple[Any, ...]:
+              """Return a validated OpenAI-shaped model-list data array."""
+              data = _field(payload, "data")
+              if not _is_sequence(data):
+                  raise _malformed(provider_name, "expected top-level data array")
+              return tuple(data)
+          ''',
+              '''def ensure_model_list_record_limit(
+              items: Sequence[Any], *, provider_name: str, field_name: str
+          ) -> None:
+              """Reject provider catalogs large enough to become a memory/CPU sink."""
+              if len(items) > MAX_MODEL_LIST_RECORDS:
+                  raise _malformed(
+                      provider_name,
+                      f"{field_name} exceeded maximum records ({MAX_MODEL_LIST_RECORDS})",
+                  )
+          
+          
+          def model_list_items(payload: Any, *, provider_name: str) -> tuple[Any, ...]:
+              """Return a validated and bounded OpenAI-shaped model-list data array."""
+              data = _field(payload, "data")
+              if not _is_sequence(data):
+                  raise _malformed(provider_name, "expected top-level data array")
+              ensure_model_list_record_limit(
+                  data, provider_name=provider_name, field_name="data array"
+              )
+              return tuple(data)
+          ''',
+          )
+
+          http_path = "src/free_claude_code/providers/http.py"
+          replace_once(
+              http_path,
+              '''import inspect
+          from typing import Any
+          
+          from loguru import logger
+          
+          from free_claude_code.core.trace import trace_event
+          ''',
+              '''import inspect
+          import json
+          from typing import Any
+          
+          import httpx
+          from loguru import logger
+          
+          from free_claude_code.core.trace import trace_event
+          from free_claude_code.providers.model_listing import (
+              MAX_MODEL_LIST_RESPONSE_BYTES,
+              ModelListResponseError,
+          )
+          ''',
+          )
+          replace_once(
+              http_path,
+              '''async def maybe_await_aclose(response: Any) -> None:
+          ''',
+              '''async def request_model_list_json(
+              client: httpx.AsyncClient,
+              method: str,
+              url: str,
+              *,
+              provider_name: str,
+              **request_kwargs: Any,
+          ) -> Any:
+              """Fetch and decode one model catalog without eagerly buffering unbounded bytes."""
+              request = client.build_request(method, url, **request_kwargs)
+              response = await client.send(request, stream=True)
+              try:
+                  response.raise_for_status()
+                  raw_content_length = response.headers.get("content-length")
+                  if raw_content_length is not None:
+                      try:
+                          content_length = int(raw_content_length)
+                      except ValueError:
+                          content_length = None
+                      if (
+                          content_length is not None
+                          and content_length > MAX_MODEL_LIST_RESPONSE_BYTES
+                      ):
+                          raise ModelListResponseError(
+                              f"{provider_name} model-list response exceeded maximum "
+                              f"bytes ({MAX_MODEL_LIST_RESPONSE_BYTES})"
+                          )
+          
+                  parts: list[bytes] = []
+                  received = 0
+                  async for chunk in response.aiter_bytes():
+                      received += len(chunk)
+                      if received > MAX_MODEL_LIST_RESPONSE_BYTES:
+                          raise ModelListResponseError(
+                              f"{provider_name} model-list response exceeded maximum "
+                              f"bytes ({MAX_MODEL_LIST_RESPONSE_BYTES})"
+                          )
+                      parts.append(chunk)
+                  try:
+                      return json.loads(b"".join(parts))
+                  except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                      raise ModelListResponseError(
+                          f"{provider_name} model-list response is malformed: invalid JSON"
+                      ) from exc
+              finally:
+                  await maybe_await_aclose(response)
+          
+          
+          async def maybe_await_aclose(response: Any) -> None:
+          ''',
+          )
+
+          replace_once(
+              "src/free_claude_code/providers/cloudflare/client.py",
+              "from free_claude_code.providers.http import maybe_await_aclose",
+              "from free_claude_code.providers.http import request_model_list_json",
+          )
+          replace_once(
+              "src/free_claude_code/providers/cloudflare/client.py",
+              '''        async def request() -> httpx.Response:
+                      response = await self._model_list_client.get(
+                          self._model_search_url,
+                          params={"format": "openrouter"},
+                          headers=self._model_list_headers(),
+                      )
+                      try:
+                          response.raise_for_status()
+                      except Exception:
+                          await maybe_await_aclose(response)
+                          raise
+                      return response
+          
+                  response = await self._admission.run_with_retry(request)
+                  try:
+                      try:
+                          payload = response.json()
+                      except ValueError as exc:
+                          raise ModelListResponseError(
+                              "CLOUDFLARE model-list response is malformed: invalid JSON"
+                          ) from exc
+                      return extract_openai_model_infos(payload, provider_name="CLOUDFLARE")
+                  finally:
+                      await maybe_await_aclose(response)
+          ''',
+              '''        async def request() -> Any:
+                      return await request_model_list_json(
+                          self._model_list_client,
+                          "GET",
+                          self._model_search_url,
+                          provider_name="CLOUDFLARE",
+                          params={"format": "openrouter"},
+                          headers=self._model_list_headers(),
+                      )
+          
+                  payload = await self._admission.run_with_retry(request)
+                  return extract_openai_model_infos(payload, provider_name="CLOUDFLARE")
+          ''',
+          )
+
+          replace_once(
+              "src/free_claude_code/providers/github_models/client.py",
+              "from free_claude_code.providers.http import maybe_await_aclose",
+              "from free_claude_code.providers.http import request_model_list_json",
+          )
+          replace_once(
+              "src/free_claude_code/providers/github_models/client.py",
+              '''from free_claude_code.providers.model_listing import (
+              ModelListResponseError,
+              model_infos_from_ids,
+          )''',
+              '''from free_claude_code.providers.model_listing import (
+              ModelListResponseError,
+              ensure_model_list_record_limit,
+              model_infos_from_ids,
+          )''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/github_models/client.py",
+              '''        async def request() -> httpx.Response:
+                      response = await self._model_list_client.get(
+                          self._catalog_url,
+                          headers=self._model_list_headers(),
+                      )
+                      try:
+                          response.raise_for_status()
+                      except Exception:
+                          await maybe_await_aclose(response)
+                          raise
+                      return response
+          
+                  response = await self._admission.run_with_retry(request)
+                  try:
+                      try:
+                          payload = response.json()
+                      except ValueError as exc:
+                          raise ModelListResponseError(
+                              "GITHUB_MODELS model-list response is malformed: invalid JSON"
+                          ) from exc
+                      return model_infos_from_ids(
+                          _extract_supported_github_model_ids(payload),
+                      )
+                  finally:
+                      await maybe_await_aclose(response)
+          ''',
+              '''        async def request() -> Any:
+                      return await request_model_list_json(
+                          self._model_list_client,
+                          "GET",
+                          self._catalog_url,
+                          provider_name="GITHUB_MODELS",
+                          headers=self._model_list_headers(),
+                      )
+          
+                  payload = await self._admission.run_with_retry(request)
+                  return model_infos_from_ids(
+                      _extract_supported_github_model_ids(payload),
+                  )
+          ''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/github_models/client.py",
+              '''    if not _is_sequence(payload):
+                  raise ModelListResponseError(
+                      "GITHUB_MODELS model-list response is malformed: expected top-level array"
+                  )
+          
+              model_ids: set[str] = set()
+          ''',
+              '''    if not _is_sequence(payload):
+                  raise ModelListResponseError(
+                      "GITHUB_MODELS model-list response is malformed: expected top-level array"
+                  )
+              ensure_model_list_record_limit(
+                  payload, provider_name="GITHUB_MODELS", field_name="top-level array"
+              )
+          
+              model_ids: set[str] = set()
+          ''',
+          )
+
+          replace_once(
+              "src/free_claude_code/providers/vertex/client.py",
+              "from free_claude_code.providers.http import maybe_await_aclose",
+              "from free_claude_code.providers.http import request_model_list_json",
+          )
+          replace_once(
+              "src/free_claude_code/providers/vertex/client.py",
+              '''from free_claude_code.providers.model_listing import (
+              ModelListResponseError,
+              model_infos_from_ids,
+          )''',
+              '''from free_claude_code.providers.model_listing import (
+              MAX_MODEL_LIST_PAGES,
+              MAX_MODEL_LIST_RECORDS,
+              ModelListResponseError,
+              model_infos_from_ids,
+          )''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/vertex/client.py",
+              '''        while True:
+                      payload = await self._list_model_page(page_token)
+                      page_ids, page_token = extract_vertex_model_page(payload)
+                      model_ids.update(page_ids)
+                      if page_token is None:
+                          break
+                      if page_token in seen_page_tokens:
+                          raise ModelListResponseError(
+                              "VERTEX model-list response is malformed: repeated nextPageToken"
+                          )
+                      seen_page_tokens.add(page_token)
+          ''',
+              '''        for _page_number in range(1, MAX_MODEL_LIST_PAGES + 1):
+                      payload = await self._list_model_page(page_token)
+                      page_ids, page_token = extract_vertex_model_page(payload)
+                      model_ids.update(page_ids)
+                      if len(model_ids) > MAX_MODEL_LIST_RECORDS:
+                          raise ModelListResponseError(
+                              "VERTEX model-list response exceeded maximum records "
+                              f"({MAX_MODEL_LIST_RECORDS})"
+                          )
+                      if page_token is None:
+                          break
+                      if page_token in seen_page_tokens:
+                          raise ModelListResponseError(
+                              "VERTEX model-list response is malformed: repeated nextPageToken"
+                          )
+                      seen_page_tokens.add(page_token)
+                  else:
+                      raise ModelListResponseError(
+                          "VERTEX model-list response exceeded maximum pages "
+                          f"({MAX_MODEL_LIST_PAGES})"
+                      )
+          ''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/vertex/client.py",
+              '''    async def _list_model_page(self, page_token: str | None) -> Any:
+                  async def request() -> httpx.Response:
+                      token = await self._access_token_provider()
+                      response = await self._model_list_client.get(
+                          self._models_url,
+                          params={"pageToken": page_token} if page_token else None,
+                          headers={
+                              "Authorization": f"Bearer {token}",
+                              "x-goog-user-project": self._project_id,
+                          },
+                      )
+                      try:
+                          response.raise_for_status()
+                      except Exception:
+                          await maybe_await_aclose(response)
+                          raise
+                      return response
+          
+                  response = await self._admission.run_with_retry(request)
+                  try:
+                      try:
+                          return response.json()
+                      except ValueError as exc:
+                          raise ModelListResponseError(
+                              "VERTEX model-list response is malformed: invalid JSON"
+                          ) from exc
+                  finally:
+                      await maybe_await_aclose(response)
+          ''',
+              '''    async def _list_model_page(self, page_token: str | None) -> Any:
+                  async def request() -> Any:
+                      token = await self._access_token_provider()
+                      return await request_model_list_json(
+                          self._model_list_client,
+                          "GET",
+                          self._models_url,
+                          provider_name="VERTEX",
+                          params={"pageToken": page_token} if page_token else None,
+                          headers={
+                              "Authorization": f"Bearer {token}",
+                              "x-goog-user-project": self._project_id,
+                          },
+                      )
+          
+                  return await self._admission.run_with_retry(request)
+          ''',
+          )
+
+          replace_once(
+              "src/free_claude_code/providers/vertex/models.py",
+              "from free_claude_code.providers.model_listing import ModelListResponseError",
+              '''from free_claude_code.providers.model_listing import (
+              ModelListResponseError,
+              ensure_model_list_record_limit,
+          )''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/vertex/models.py",
+              '''    if not _is_sequence(models):
+                  raise _malformed("expected top-level publisherModels array")
+          
+              model_ids: set[str] = set()
+          ''',
+              '''    if not _is_sequence(models):
+                  raise _malformed("expected top-level publisherModels array")
+              ensure_model_list_record_limit(
+                  models, provider_name="VERTEX", field_name="publisherModels array"
+              )
+          
+              model_ids: set[str] = set()
+          ''',
+          )
+
+          replace_once(
+              "src/free_claude_code/providers/opencode_go/provider.py",
+              "from free_claude_code.providers.http import close_provider_stream",
+              '''from free_claude_code.providers.http import (
+              close_provider_stream,
+              request_model_list_json,
+          )''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/opencode_go/provider.py",
+              '''        async def fetch() -> Any:
+                      self._authorize_egress(f"{self._base_url}/models")
+                      response = await self._native_http.get(
+                          f"{self._base_url}/models",
+                          headers=self._auth_headers(),
+                      )
+                      response.raise_for_status()
+                      return response.json()
+          ''',
+              '''        async def fetch() -> Any:
+                      self._authorize_egress(f"{self._base_url}/models")
+                      return await request_model_list_json(
+                          self._native_http,
+                          "GET",
+                          f"{self._base_url}/models",
+                          provider_name="OPENCODE_GO",
+                          headers=self._auth_headers(),
+                      )
+          ''',
+          )
+
+          replace_once(
+              "src/free_claude_code/providers/openai_codex/provider.py",
+              '''from free_claude_code.providers.failure_policy import (
+              RetryableProviderProtocolError,
+              classify_provider_failure,
+          )
+          ''',
+              '''from free_claude_code.providers.failure_policy import (
+              RetryableProviderProtocolError,
+              classify_provider_failure,
+          )
+          from free_claude_code.providers.http import request_model_list_json
+          from free_claude_code.providers.model_listing import ensure_model_list_record_limit
+          ''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/openai_codex/provider.py",
+              '''        async def fetch() -> Any:
+                      access = await self._auth.access()
+                      response = await self._client.get(
+                          "models",
+                          params={"client_version": FCC_VERSION},
+                          headers={**self._client_headers, **_auth_headers(access)},
+                      )
+                      if response.status_code == 401:
+                          access = await self._auth.recover_unauthorized(access.access_token)
+                          response = await self._client.get(
+                              "models",
+                              params={"client_version": FCC_VERSION},
+                              headers={**self._client_headers, **_auth_headers(access)},
+                          )
+                      response.raise_for_status()
+                      return response.json()
+          ''',
+              '''        async def fetch() -> Any:
+                      access = await self._auth.access()
+                      try:
+                          return await request_model_list_json(
+                              self._client,
+                              "GET",
+                              "models",
+                              provider_name="OPENAI",
+                              params={"client_version": FCC_VERSION},
+                              headers={**self._client_headers, **_auth_headers(access)},
+                          )
+                      except httpx.HTTPStatusError as exc:
+                          if exc.response.status_code != 401:
+                              raise
+                      access = await self._auth.recover_unauthorized(access.access_token)
+                      return await request_model_list_json(
+                          self._client,
+                          "GET",
+                          "models",
+                          provider_name="OPENAI",
+                          params={"client_version": FCC_VERSION},
+                          headers={**self._client_headers, **_auth_headers(access)},
+                      )
+          ''',
+          )
+          replace_once(
+              "src/free_claude_code/providers/openai_codex/provider.py",
+              '''def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:
+              if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+                  raise ValueError("OpenAI model-list response is missing the models array.")
+              infos: set[ProviderModelInfo] = set()
+              for item in payload["models"]:
+          ''',
+              '''def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:
+              if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+                  raise ValueError("OpenAI model-list response is missing the models array.")
+              models = payload["models"]
+              ensure_model_list_record_limit(
+                  models, provider_name="OPENAI", field_name="models array"
+              )
+              infos: set[ProviderModelInfo] = set()
+              for item in models:
+          ''',
+          )
+
+          for test_path in (
+              "tests/providers/test_cloudflare.py",
+              "tests/providers/test_github_models.py",
+              "tests/providers/test_vertex.py",
+              "tests/providers/test_native_model_discovery_egress.py",
+          ):
+              p = Path(test_path)
+              text = p.read_text(encoding="utf-8")
+              text, count = re.subn(r'(_model_list_client,\n\s*)"get"', r'\1"send"', text)
+              assert count >= 1, f"expected model-list get mocks: {test_path}"
+              p.write_text(text, encoding="utf-8")
+
+          replace_once(
+              "tests/providers/test_cloudflare.py",
+              '''    mock_get.assert_awaited_once_with(
+                  _MODEL_SEARCH_URL,
+                  params={"format": "openrouter"},
+                  headers={"Authorization": "Bearer test-cloudflare-token"},
+              )
+          ''',
+              '''    request = mock_get.await_args.args[0]
+              assert str(request.url).startswith(_MODEL_SEARCH_URL)
+              assert request.url.params.get("format") == "openrouter"
+              assert request.headers["Authorization"] == "Bearer test-cloudflare-token"
+              assert mock_get.await_args.kwargs == {"stream": True}
+          ''',
+          )
+          replace_once(
+              "tests/providers/test_github_models.py",
+              '''    mock_get.assert_awaited_once_with(
+                  GITHUB_MODELS_CATALOG_URL,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": "Bearer test-github-models-token",
+                      "X-GitHub-Api-Version": "2026-03-10",
+                  },
+              )
+          ''',
+              '''    request = mock_get.await_args.args[0]
+              assert str(request.url) == GITHUB_MODELS_CATALOG_URL
+              assert request.headers["Accept"] == "application/vnd.github+json"
+              assert request.headers["Authorization"] == "Bearer test-github-models-token"
+              assert request.headers["X-GitHub-Api-Version"] == "2026-03-10"
+              assert mock_get.await_args.kwargs == {"stream": True}
+          ''',
+          )
+          replace_once(
+              "tests/providers/test_vertex.py",
+              '''    assert get.await_args_list[0].kwargs == {
+                  "params": None,
+                  "headers": {
+                      "Authorization": "Bearer access-token",
+                      "x-goog-user-project": _PROJECT_ID,
+                  },
+              }
+              assert get.await_args_list[1].kwargs == {
+                  "params": {"pageToken": "page-2"},
+                  "headers": {
+                      "Authorization": "Bearer access-token",
+                      "x-goog-user-project": _PROJECT_ID,
+                  },
+              }
+          ''',
+              '''    first_request = get.await_args_list[0].args[0]
+              second_request = get.await_args_list[1].args[0]
+              assert first_request.url.params.get("pageToken") is None
+              assert second_request.url.params.get("pageToken") == "page-2"
+              for request in (first_request, second_request):
+                  assert request.headers["Authorization"] == "Bearer access-token"
+                  assert request.headers["x-goog-user-project"] == _PROJECT_ID
+              assert all(call.kwargs == {"stream": True} for call in get.await_args_list)
+          ''',
+          )
+
+          Path("tests/providers/test_model_list_bounds.py").write_text(
+              '''"""Provider model discovery must stay within explicit wire and record budgets."""
+          
+          from collections.abc import AsyncIterator
+          from typing import cast
+          from unittest.mock import AsyncMock, patch
+          
+          import httpx
+          import pytest
+          
+          from free_claude_code.config.provider_catalog import VERTEX_AI_API_ROOT
+          from free_claude_code.providers.base import ProviderConfig
+          from free_claude_code.providers.github_models.client import (
+              _extract_supported_github_model_ids,
+          )
+          from free_claude_code.providers.http import request_model_list_json
+          from free_claude_code.providers.model_listing import (
+              MAX_MODEL_LIST_PAGES,
+              MAX_MODEL_LIST_RECORDS,
+              MAX_MODEL_LIST_RESPONSE_BYTES,
+              ModelListResponseError,
+              model_list_items,
+          )
+          from free_claude_code.providers.openai_codex.provider import _model_infos
+          from free_claude_code.providers.vertex import VertexProvider
+          from free_claude_code.providers.vertex.auth import GoogleAccessTokenProvider
+          from free_claude_code.providers.vertex.models import extract_vertex_model_page
+          from tests.providers.support import immediate_admission
+          
+          
+          class _Chunks(httpx.AsyncByteStream):
+              def __init__(self, chunks: list[bytes]) -> None:
+                  self._chunks = chunks
+                  self.iterated = False
+                  self.closed = False
+          
+              async def __aiter__(self) -> AsyncIterator[bytes]:
+                  self.iterated = True
+                  for chunk in self._chunks:
+                      yield chunk
+          
+              async def aclose(self) -> None:
+                  self.closed = True
+          
+          
+          @pytest.mark.asyncio
+          async def test_model_list_content_length_rejects_before_body_read() -> None:
+              stream = _Chunks([b"should-not-be-read"])
+          
+              async def handler(request: httpx.Request) -> httpx.Response:
+                  return httpx.Response(
+                      200,
+                      headers={"content-length": str(MAX_MODEL_LIST_RESPONSE_BYTES + 1)},
+                      stream=stream,
+                      request=request,
+                  )
+          
+              client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+              try:
+                  with pytest.raises(ModelListResponseError, match="maximum bytes"):
+                      await request_model_list_json(
+                          client,
+                          "GET",
+                          "https://provider.test/models",
+                          provider_name="TEST",
+                      )
+              finally:
+                  await client.aclose()
+          
+              assert stream.iterated is False
+              assert stream.closed is True
+          
+          
+          @pytest.mark.asyncio
+          async def test_model_list_chunked_response_is_capped_while_streaming() -> None:
+              stream = _Chunks([b"x" * MAX_MODEL_LIST_RESPONSE_BYTES, b"y"])
+          
+              async def handler(request: httpx.Request) -> httpx.Response:
+                  return httpx.Response(200, stream=stream, request=request)
+          
+              client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+              try:
+                  with pytest.raises(ModelListResponseError, match="maximum bytes"):
+                      await request_model_list_json(
+                          client,
+                          "GET",
+                          "https://provider.test/models",
+                          provider_name="TEST",
+                      )
+              finally:
+                  await client.aclose()
+          
+              assert stream.iterated is True
+              assert stream.closed is True
+          
+          
+          def test_shared_openai_model_list_record_count_is_bounded() -> None:
+              with pytest.raises(ModelListResponseError, match="maximum records"):
+                  model_list_items(
+                      {"data": [object()] * (MAX_MODEL_LIST_RECORDS + 1)},
+                      provider_name="TEST",
+                  )
+          
+          
+          def test_custom_model_catalog_parsers_share_record_ceiling() -> None:
+              with pytest.raises(ModelListResponseError, match="maximum records"):
+                  _extract_supported_github_model_ids(
+                      [{}] * (MAX_MODEL_LIST_RECORDS + 1)
+                  )
+              with pytest.raises(ModelListResponseError, match="maximum records"):
+                  extract_vertex_model_page(
+                      {"publisherModels": [{}] * (MAX_MODEL_LIST_RECORDS + 1)}
+                  )
+              with pytest.raises(ModelListResponseError, match="maximum records"):
+                  _model_infos({"models": [{}] * (MAX_MODEL_LIST_RECORDS + 1)})
+          
+          
+          @pytest.mark.asyncio
+          async def test_vertex_model_discovery_has_hard_page_ceiling() -> None:
+              token_provider = cast(
+                  GoogleAccessTokenProvider, AsyncMock(return_value="access-token")
+              )
+              provider = VertexProvider(
+                  ProviderConfig(api_key="", base_url=VERTEX_AI_API_ROOT),
+                  project_id="project-123",
+                  location="global",
+                  admission=immediate_admission(),
+                  access_token_provider=token_provider,
+              )
+              calls = 0
+          
+              async def page(_page_token: str | None) -> object:
+                  nonlocal calls
+                  calls += 1
+                  return {
+                      "publisherModels": [
+                          {"name": f"publishers/google/models/model-{calls}"}
+                      ],
+                      "nextPageToken": f"page-{calls}",
+                  }
+          
+              try:
+                  with (
+                      patch.object(provider, "_list_model_page", side_effect=page) as load_page,
+                      pytest.raises(ModelListResponseError, match="maximum pages"),
+                  ):
+                      await provider.list_model_infos()
+                  assert load_page.await_count == MAX_MODEL_LIST_PAGES
+              finally:
+                  await provider.cleanup()
+          ''',
+              encoding="utf-8",
+          )
+      - name: Validate
+        run: |
+          uv sync --locked
+          uv run --no-sync ruff format \
+            src/free_claude_code/providers/model_listing.py \
+            src/free_claude_code/providers/http.py \
+            src/free_claude_code/providers/cloudflare/client.py \
+            src/free_claude_code/providers/github_models/client.py \
+            src/free_claude_code/providers/vertex/client.py \
+            src/free_claude_code/providers/vertex/models.py \
+            src/free_claude_code/providers/opencode_go/provider.py \
+            src/free_claude_code/providers/openai_codex/provider.py \
+            tests/providers/test_cloudflare.py \
+            tests/providers/test_github_models.py \
+            tests/providers/test_vertex.py \
+            tests/providers/test_native_model_discovery_egress.py \
+            tests/providers/test_model_list_bounds.py
+          uv run --no-sync ruff check \
+            src/free_claude_code/providers/model_listing.py \
+            src/free_claude_code/providers/http.py \
+            src/free_claude_code/providers/cloudflare/client.py \
+            src/free_claude_code/providers/github_models/client.py \
+            src/free_claude_code/providers/vertex/client.py \
+            src/free_claude_code/providers/vertex/models.py \
+            src/free_claude_code/providers/opencode_go/provider.py \
+            src/free_claude_code/providers/openai_codex/provider.py \
+            tests/providers/test_cloudflare.py \
+            tests/providers/test_github_models.py \
+            tests/providers/test_vertex.py \
+            tests/providers/test_native_model_discovery_egress.py \
+            tests/providers/test_model_list_bounds.py
+          uv run --no-sync ty check
+          uv run --no-sync pytest -q --tb=short \
+            tests/providers/test_model_list_bounds.py \
+            tests/providers/test_model_listing_metadata.py \
+            tests/providers/test_cloudflare.py \
+            tests/providers/test_github_models.py \
+            tests/providers/test_vertex.py \
+            tests/providers/test_native_model_discovery_egress.py \
+            tests/providers/test_openai_codex_provider.py \
+            tests/providers/test_openai_codex_egress_policy.py \
+            tests/providers/test_opencode_go_provider.py
+      - name: Commit clean repair
+        run: |
+          rm .github/workflows/audit-model-discovery-bounds-repair.yml
+          git config user.name "Tejas Verma"
+          git config user.email "145865683+tverma101@users.noreply.github.com"
+          git add src tests .github/workflows/audit-model-discovery-bounds-repair.yml
+          git commit -m "fix: bound provider model discovery"
+          git push origin HEAD:fix/bound-provider-model-discovery
