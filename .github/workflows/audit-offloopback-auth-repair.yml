@@ -23,6 +23,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+
           python - <<'PY'
           from pathlib import Path
 
@@ -53,6 +58,13 @@ jobs:
           from pydantic import ValidationError
 
           from free_claude_code.config.settings import Settings
+
+
+          @pytest.fixture(autouse=True)
+          def isolate_managed_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+              monkeypatch.setitem(Settings.model_config, "env_file", ())
+              monkeypatch.delenv("HOST", raising=False)
+              monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
 
 
           @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
@@ -91,10 +103,8 @@ jobs:
           uv run ruff check --fix src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
           uv run ty check
           uv run pytest -q -n 0 tests/config/test_server_binding_auth.py tests/config/test_config.py
-          git diff --check
+          git diff --check origin/main...HEAD
 
-          git config user.name "AgentSwitchboard audit repair"
-          git config user.email "audit-repair@users.noreply.github.com"
           git rm .github/workflows/audit-offloopback-auth-repair.yml
           git add src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
           git commit -m "fix: require auth for non-loopback server binds"
