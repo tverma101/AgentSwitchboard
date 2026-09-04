@@ -40,7 +40,9 @@ async def test_cloudflare_native_discovery_is_blocked_before_http() -> None:
         account_id="account-123",
         admission=immediate_admission(),
     )
-    with patch.object(provider._model_list_client, "get", new_callable=AsyncMock) as get:
+    with patch.object(
+        provider._model_list_client, "get", new_callable=AsyncMock
+    ) as get:
         try:
             with pytest.raises(ProviderPolicyError, match="before network I/O"):
                 await provider.list_model_infos()
@@ -62,7 +64,9 @@ async def test_github_models_native_discovery_is_blocked_before_http() -> None:
         ),
         admission=immediate_admission(),
     )
-    with patch.object(provider._model_list_client, "get", new_callable=AsyncMock) as get:
+    with patch.object(
+        provider._model_list_client, "get", new_callable=AsyncMock
+    ) as get:
         try:
             with pytest.raises(ProviderPolicyError, match="before network I/O"):
                 await provider.list_model_infos()
@@ -89,7 +93,9 @@ async def test_vertex_native_discovery_is_blocked_before_token_or_http() -> None
         admission=immediate_admission(),
         access_token_provider=token_provider,
     )
-    with patch.object(provider._model_list_client, "get", new_callable=AsyncMock) as get:
+    with patch.object(
+        provider._model_list_client, "get", new_callable=AsyncMock
+    ) as get:
         try:
             with pytest.raises(ProviderPolicyError, match="before network I/O"):
                 await provider.list_model_infos()
