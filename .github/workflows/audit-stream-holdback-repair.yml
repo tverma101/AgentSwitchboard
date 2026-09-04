@@ -1,0 +1,537 @@
+name: audit-stream-holdback-repair
+
+on:
+  push:
+    branches: [fix/stream-holdback-wallclock]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Apply and validate shared wall-clock holdback repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if text.count(old) != 1:
+                  raise RuntimeError(f"{label} anchor changed: {text.count(old)}")
+              return text.replace(old, new, 1)
+
+          path = Path("src/free_claude_code/providers/stream_recovery.py")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              "import time\nfrom collections.abc import Callable\nfrom dataclasses import dataclass\nfrom enum import StrEnum\n",
+              "import asyncio\nimport time\nfrom collections.abc import AsyncIterator, Callable\nfrom dataclasses import dataclass\nfrom enum import StrEnum\nfrom typing import TypeVar\n",
+              "stream recovery imports",
+          )
+          text = replace_once(
+              text,
+              "RECOVERY_BUFFER_MAX_BYTES = 65_536\n\n\nclass TruncatedProviderStreamError",
+              "RECOVERY_BUFFER_MAX_BYTES = 65_536\n\nT = TypeVar(\"T\")\n\n\nclass TruncatedProviderStreamError",
+              "stream recovery typevar",
+          )
+          text = replace_once(
+              text,
+              "class RecoveryFailureAction(StrEnum):\n",
+              "class RecoveryStreamSignal(StrEnum):\n    \"\"\"Control signal emitted while a held stream waits for upstream data.\"\"\"\n\n    HOLDBACK_DEADLINE = \"holdback_deadline\"\n\n\nclass RecoveryFailureAction(StrEnum):\n",
+              "stream signal enum",
+          )
+          text = replace_once(
+              text,
+              """    def flush(self) -> list[str]:\n        if self.committed:\n            return []\n""",
+              """    def restart_deadline(self) -> None:\n        \"\"\"Start the holdback clock from accepted upstream stream ownership.\"\"\"\n        if self.committed or not self._events:\n            return\n        self._started_at = self._now()\n\n    def remaining_holdback_seconds(self) -> float | None:\n        \"\"\"Return wall-clock time left before buffered output must commit.\"\"\"\n        if self.committed or self._started_at is None:\n            return None\n        elapsed = self._now() - self._started_at\n        return max(0.0, self._holdback_seconds - elapsed)\n\n    def flush(self) -> list[str]:\n        if self.committed:\n            return []\n""",
+              "holdback deadline methods",
+          )
+          text = replace_once(
+              text,
+              """class RecoveryController:\n    \"\"\"Own commit-boundary holdback for one provider stream lifecycle.\"\"\"\n\n    def __init__(self) -> None:\n        self._holdback = RecoveryHoldbackBuffer()\n""",
+              """class RecoveryController:\n    \"\"\"Own commit-boundary holdback for one provider stream lifecycle.\"\"\"\n\n    def __init__(\n        self,\n        *,\n        holdback_seconds: float = EARLY_HOLDBACK_SECONDS,\n        max_bytes: int = RECOVERY_BUFFER_MAX_BYTES,\n        now: Callable[[], float] | None = None,\n    ) -> None:\n        self._holdback_seconds = holdback_seconds\n        self._max_bytes = max_bytes\n        self._now = now\n        self._holdback = self._new_holdback()\n\n    def _new_holdback(self) -> RecoveryHoldbackBuffer:\n        return RecoveryHoldbackBuffer(\n            holdback_seconds=self._holdback_seconds,\n            max_bytes=self._max_bytes,\n            now=self._now,\n        )\n""",
+              "controller constructor",
+          )
+          text = replace_once(
+              text,
+              """    def push(self, event: str) -> list[str]:\n        return self._holdback.push(event)\n\n    def flush(self) -> list[str]:\n""",
+              """    def push(self, event: str) -> list[str]:\n        return self._holdback.push(event)\n\n    def restart_holdback_deadline(self) -> None:\n        \"\"\"Restart the holdback clock after upstream accepts the stream.\"\"\"\n        self._holdback.restart_deadline()\n\n    async def iterate_with_holdback_deadline(\n        self, source: AsyncIterator[T]\n    ) -> AsyncIterator[T | RecoveryStreamSignal]:\n        \"\"\"Yield a deadline signal without cancelling the pending upstream read.\n\n        Once the caller handles the signal by flushing this controller, the\n        same pending read is awaited to completion and all later items are\n        forwarded directly without per-item task creation or pacing.\n        \"\"\"\n        iterator = source.__aiter__()\n        pending: asyncio.Task[T] | None = None\n        try:\n            while not self.committed:\n                remaining = self._holdback.remaining_holdback_seconds()\n                if remaining is None:\n                    break\n                if pending is None:\n                    pending = asyncio.create_task(anext(iterator))\n                done, _ = await asyncio.wait({pending}, timeout=remaining)\n                if not done:\n                    yield RecoveryStreamSignal.HOLDBACK_DEADLINE\n                    if not self.committed:\n                        raise RuntimeError(\n                            \"holdback deadline signal must be committed before resuming\"\n                        )\n                    try:\n                        yield await pending\n                    except StopAsyncIteration:\n                        return\n                    pending = None\n                    break\n                try:\n                    yield await pending\n                except StopAsyncIteration:\n                    return\n                pending = None\n\n            if pending is not None:\n                try:\n                    yield await pending\n                except StopAsyncIteration:\n                    return\n                pending = None\n            async for item in iterator:\n                yield item\n        finally:\n            if pending is not None and not pending.done():\n                pending.cancel()\n                await asyncio.gather(pending, return_exceptions=True)\n\n    def flush(self) -> list[str]:\n""",
+              "controller deadline iterator",
+          )
+          text = replace_once(
+              text,
+              "            self._holdback = RecoveryHoldbackBuffer()\n",
+              "            self._holdback = self._new_holdback()\n",
+              "holdback recreation",
+          )
+          path.write_text(text)
+
+          path = Path("src/free_claude_code/providers/openai_codex/provider.py")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              "from free_claude_code.providers.stream_recovery import RecoveryController\n",
+              "from free_claude_code.providers.stream_recovery import (\n    RecoveryController,\n    RecoveryStreamSignal,\n)\n",
+              "codex recovery import",
+          )
+          text = replace_once(
+              text,
+              """                stream_opened = True\n\n                async for event_type, payload in _iter_sse(response):\n                    if not attempt.accepted:\n                        await attempt.succeeded()\n""",
+              """                stream_opened = True\n                recovery.restart_holdback_deadline()\n\n                async for item in recovery.iterate_with_holdback_deadline(\n                    _iter_sse(response)\n                ):\n                    if item is RecoveryStreamSignal.HOLDBACK_DEADLINE:\n                        for held in recovery.flush():\n                            yield held\n                        continue\n                    event_type, payload = item\n                    if not attempt.accepted:\n                        await attempt.succeeded()\n""",
+              "codex deadline iteration",
+          )
+          text = replace_once(
+              text,
+              "                if attempt is not None and not attempt.accepted:\n                    await attempt.retry(error)\n",
+              """                if (\n                    attempt is not None\n                    and not attempt.accepted\n                    and not recovery.committed\n                ):\n                    await attempt.retry(error)\n""",
+              "codex committed retry guard",
+          )
+          path.write_text(text)
+
+          path = Path("src/free_claude_code/providers/openai_chat/provider.py")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              """    RecoveryController,\n    RecoveryFailureAction,\n""",
+              """    RecoveryController,\n    RecoveryFailureAction,\n    RecoveryStreamSignal,\n""",
+              "chat recovery import",
+          )
+          text = replace_once(
+              text,
+              """                stream_opened = True\n                tool_argument_aliases = self._provider._tool_argument_aliases(body)\n                async for chunk in stream:\n                    if not attempt.accepted:\n                        await attempt.succeeded()\n""",
+              """                stream_opened = True\n                recovery.restart_holdback_deadline()\n                tool_argument_aliases = self._provider._tool_argument_aliases(body)\n                async for chunk in recovery.iterate_with_holdback_deadline(stream):\n                    if chunk is RecoveryStreamSignal.HOLDBACK_DEADLINE:\n                        for held in recovery.flush():\n                            yield held\n                        continue\n                    if not attempt.accepted:\n                        await attempt.succeeded()\n""",
+              "chat deadline iteration",
+          )
+          text = replace_once(
+              text,
+              """                if attempt is not None and not attempt.accepted:\n                    await attempt.retry(\n""",
+              """                if (\n                    attempt is not None\n                    and not attempt.accepted\n                    and not recovery.committed\n                ):\n                    await attempt.retry(\n""",
+              "chat committed retry guard",
+          )
+          path.write_text(text)
+
+          path = Path("src/free_claude_code/providers/opencode_go/provider.py")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              "from free_claude_code.providers.stream_recovery import RecoveryController\n",
+              "from free_claude_code.providers.stream_recovery import (\n    RecoveryController,\n    RecoveryStreamSignal,\n)\n",
+              "go recovery import",
+          )
+          text = replace_once(
+              text,
+              """                    stream_opened = True\n                    for event in stream_view.start():\n                        ready_events = recovery.push(event)\n""",
+              """                    stream_opened = True\n                    for event in stream_view.start():\n                        ready_events = recovery.push(event)\n""",
+              "go stream-open anchor",
+          )
+          text = replace_once(
+              text,
+              """                        for ready_event in ready_events:\n                            yield ready_event\n                    async for event in upstream:\n                        if not attempt.accepted:\n                            await attempt.succeeded()\n""",
+              """                        for ready_event in ready_events:\n                            yield ready_event\n                    recovery.restart_holdback_deadline()\n                    async for event in recovery.iterate_with_holdback_deadline(upstream):\n                        if event is RecoveryStreamSignal.HOLDBACK_DEADLINE:\n                            for ready_event in recovery.flush():\n                                evidence.output_committed = True\n                                if evidence.time_to_first_token_ms is None:\n                                    evidence.time_to_first_token_ms = max(\n                                        0, round((monotonic() - started_at) * 1000)\n                                    )\n                                yield ready_event\n                            continue\n                        if not attempt.accepted:\n                            await attempt.succeeded()\n""",
+              "go deadline iteration",
+          )
+          text = replace_once(
+              text,
+              """                    if attempt is not None and not attempt.accepted:\n                        should_retry = await attempt.retry(error)\n""",
+              """                    if (\n                        attempt is not None\n                        and not attempt.accepted\n                        and not recovery.committed\n                    ):\n                        should_retry = await attempt.retry(error)\n""",
+              "go committed retry guard",
+          )
+          path.write_text(text)
+          PY
+
+          cat > tests/providers/test_stream_holdback_deadline.py <<'PY'
+          import asyncio
+
+          import pytest
+
+          from free_claude_code.providers.stream_recovery import (
+              RecoveryController,
+              RecoveryStreamSignal,
+          )
+
+
+          @pytest.mark.asyncio
+          async def test_deadline_signal_preserves_same_pending_upstream_read() -> None:
+              recovery = RecoveryController(holdback_seconds=0.01)
+              assert recovery.push("event: message_start\n\n") == []
+              recovery.restart_holdback_deadline()
+              gate = asyncio.Event()
+              cancelled = False
+
+              async def source():
+                  nonlocal cancelled
+                  try:
+                      await gate.wait()
+                      yield "upstream-item"
+                  except asyncio.CancelledError:
+                      cancelled = True
+                      raise
+
+              wrapped = recovery.iterate_with_holdback_deadline(source())
+              signal = await asyncio.wait_for(anext(wrapped), timeout=0.1)
+              assert signal is RecoveryStreamSignal.HOLDBACK_DEADLINE
+              assert cancelled is False
+              assert recovery.flush() == ["event: message_start\n\n"]
+              gate.set()
+              assert await asyncio.wait_for(anext(wrapped), timeout=0.1) == "upstream-item"
+              assert cancelled is False
+              await wrapped.aclose()
+
+
+          @pytest.mark.asyncio
+          async def test_after_commit_iteration_has_no_deadline_signal() -> None:
+              recovery = RecoveryController(holdback_seconds=0.01)
+              assert recovery.push("start") == []
+              assert recovery.flush() == ["start"]
+
+              async def source():
+                  yield "a"
+                  yield "b"
+
+              assert [item async for item in recovery.iterate_with_holdback_deadline(source())] == [
+                  "a",
+                  "b",
+              ]
+          PY
+
+          cat > tests/providers/test_openai_codex_holdback_deadline.py <<'PY'
+          import asyncio
+          from collections.abc import AsyncIterator
+          from unittest.mock import patch
+
+          import httpx
+          import pytest
+
+          from free_claude_code.core.anthropic.models import MessagesRequest
+          from free_claude_code.core.failures import ExecutionFailure
+          from free_claude_code.providers.admission import ProviderAdmissionController
+          from free_claude_code.providers.base import ProviderConfig
+          from free_claude_code.providers.openai_codex.auth import OpenAIAccess, OpenAIAuthManager
+          from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
+          from free_claude_code.providers.stream_recovery import RecoveryController
+
+
+          class _FakeAuth(OpenAIAuthManager):
+              async def access(self, *, force_refresh: bool = False) -> OpenAIAccess:
+                  del force_refresh
+                  return OpenAIAccess("access", "account", False)
+
+              async def recover_unauthorized(self, rejected_token: str) -> OpenAIAccess:
+                  raise AssertionError(f"unexpected auth recovery for {rejected_token}")
+
+
+          class _DelayedReadFailure(httpx.AsyncByteStream):
+              async def __aiter__(self) -> AsyncIterator[bytes]:
+                  await asyncio.sleep(0.04)
+                  raise httpx.ReadError("upstream stream stalled then disconnected")
+                  yield b""
+
+
+          def _config() -> ProviderConfig:
+              return ProviderConfig(
+                  api_key="",
+                  base_url="https://chatgpt.com/backend-api/codex",
+                  rate_limit=100,
+                  rate_window=1,
+                  max_concurrency=2,
+              )
+
+
+          def _request() -> MessagesRequest:
+              return MessagesRequest(
+                  model="gpt-test",
+                  max_tokens=1024,
+                  messages=[{"role": "user", "content": "hello"}],
+                  stream=True,
+              )
+
+
+          async def _drain(stream: AsyncIterator[str]) -> None:
+              async for _chunk in stream:
+                  pass
+
+
+          @pytest.mark.asyncio
+          async def test_quiet_codex_stream_commits_deadline_without_poisoning_retry_gate() -> None:
+              def handler(request: httpx.Request) -> httpx.Response:
+                  return httpx.Response(
+                      200,
+                      headers={"content-type": "text/event-stream"},
+                      stream=_DelayedReadFailure(),
+                      request=request,
+                  )
+
+              client = httpx.AsyncClient(
+                  base_url="https://chatgpt.com/backend-api/codex/",
+                  transport=httpx.MockTransport(handler),
+              )
+              admission = ProviderAdmissionController(
+                  provider_name="openai",
+                  rate_limit=100,
+                  rate_window=1,
+                  max_concurrency=2,
+                  max_attempts=2,
+                  base_delay=0,
+                  max_delay=0,
+                  jitter=0,
+              )
+              provider = OpenAICodexProvider(
+                  _config(), auth=_FakeAuth(), admission=admission, client=client
+              )
+
+              with patch(
+                  "free_claude_code.providers.openai_codex.provider.RecoveryController",
+                  side_effect=lambda: RecoveryController(holdback_seconds=0.01),
+              ):
+                  stream = provider.stream_response(_request())
+                  first = await asyncio.wait_for(anext(stream), timeout=0.1)
+                  assert "message_start" in first
+                  with pytest.raises(ExecutionFailure):
+                      await asyncio.wait_for(_drain(stream), timeout=0.2)
+
+              probe = await asyncio.wait_for(
+                  admission.open_attempt(admission.new_retry_session()), timeout=0.1
+              )
+              await probe.aclose()
+              await client.aclose()
+          PY
+
+          cat > tests/providers/test_openai_chat_holdback_deadline.py <<'PY'
+          import asyncio
+          from types import SimpleNamespace
+          from unittest.mock import AsyncMock, patch
+
+          import pytest
+
+          from free_claude_code.core.anthropic import ReasoningReplayMode
+          from free_claude_code.core.anthropic.models import MessagesRequest
+          from free_claude_code.providers.base import ProviderConfig
+          from free_claude_code.providers.openai_chat import (
+              OpenAIChatProfile,
+              OpenAIChatProvider,
+              OpenAIChatRequestPolicy,
+          )
+          from free_claude_code.providers.openai_chat.reasoning import NO_REASONING
+          from free_claude_code.providers.stream_recovery import RecoveryController
+          from tests.providers.support import immediate_admission
+
+
+          class _Attempt:
+              accepted = False
+              failure_retryable = None
+
+              async def succeeded(self) -> None:
+                  self.accepted = True
+
+              async def aclose(self) -> None:
+                  return None
+
+
+          class _Provider(OpenAIChatProvider):
+              def __init__(self) -> None:
+                  super().__init__(
+                      ProviderConfig(
+                          api_key="test",
+                          base_url="https://example.invalid/v1",
+                          rate_limit=100,
+                          rate_window=1,
+                      ),
+                      profile=OpenAIChatProfile(
+                          OpenAIChatRequestPolicy(
+                              provider_name="DEADLINE_TEST",
+                              reasoning_replay=ReasoningReplayMode.DISABLED,
+                          ),
+                          NO_REASONING,
+                      ),
+                      admission=immediate_admission(),
+                  )
+
+              def _build_request_body(self, request, *, reasoning):
+                  del reasoning
+                  return {"model": request.model, "messages": []}
+
+
+          async def _delayed_stream():
+              await asyncio.sleep(0.04)
+              yield SimpleNamespace(
+                  choices=[
+                      SimpleNamespace(
+                          delta=SimpleNamespace(
+                              content="ok", reasoning_content=None, tool_calls=None
+                          ),
+                          finish_reason=None,
+                      )
+                  ],
+                  usage=None,
+              )
+              yield SimpleNamespace(
+                  choices=[
+                      SimpleNamespace(
+                          delta=SimpleNamespace(
+                              content=None, reasoning_content=None, tool_calls=None
+                          ),
+                          finish_reason="stop",
+                      )
+                  ],
+                  usage=None,
+              )
+
+
+          @pytest.mark.asyncio
+          async def test_openai_chat_releases_message_start_at_wall_clock_deadline() -> None:
+              provider = _Provider()
+              request = MessagesRequest.model_validate(
+                  {
+                      "model": "test-model",
+                      "max_tokens": 16,
+                      "messages": [{"role": "user", "content": "hello"}],
+                  }
+              )
+              attempt = _Attempt()
+              create = AsyncMock(
+                  return_value=(_delayed_stream(), {"model": "test-model"}, attempt)
+              )
+              try:
+                  with (
+                      patch.object(provider, "_create_stream", new=create),
+                      patch(
+                          "free_claude_code.providers.openai_chat.provider.RecoveryController",
+                          side_effect=lambda: RecoveryController(holdback_seconds=0.01),
+                      ),
+                  ):
+                      stream = provider.stream_response(request)
+                      first = await asyncio.wait_for(anext(stream), timeout=0.1)
+                      assert "message_start" in first
+                      await stream.aclose()
+              finally:
+                  await provider.cleanup()
+          PY
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/providers/test_opencode_go_native.py")
+          text = path.read_text()
+          if "import asyncio\n" not in text:
+              text = text.replace('"""Contracts for OpenCode Go native protocol routing."""\n\n', '"""Contracts for OpenCode Go native protocol routing."""\n\nimport asyncio\n', 1)
+          text = text.replace(
+              "from unittest.mock import AsyncMock\n",
+              "from unittest.mock import AsyncMock, patch\n",
+              1,
+          )
+          anchor = """class _FailingResponsesStream:\n"""
+          addition = """class _DelayedResponsesStream(_ResponsesStream):\n    def __init__(self, events: list[dict[str, object]], delay: float) -> None:\n        super().__init__(events)\n        self._delay = delay\n        self._first = True\n\n    async def __anext__(self) -> _ResponsesEvent:\n        if self._first:\n            self._first = False\n            await asyncio.sleep(self._delay)\n        return await super().__anext__()\n\n\nclass _FailingResponsesStream:\n"""
+          if text.count(anchor) != 1:
+              raise RuntimeError("Go delayed stream anchor changed")
+          text = text.replace(anchor, addition, 1)
+          path.write_text(text)
+          PY
+
+          cat >> tests/providers/test_opencode_go_native.py <<'PY'
+
+
+          @pytest.mark.asyncio
+          async def test_go_responses_releases_message_start_at_wall_clock_deadline() -> None:
+              from free_claude_code.providers.stream_recovery import RecoveryController
+
+              provider = OpenCodeGoProvider(
+                  ProviderConfig(
+                      api_key="test-key",
+                      base_url="https://example.invalid/v1",
+                  ),
+                  admission=ProviderAdmissionController(
+                      provider_name="OPENCODE_GO",
+                      max_attempts=2,
+                      base_delay=0,
+                      jitter=0,
+                  ),
+              )
+              provider._responses.responses.create = AsyncMock(
+                  return_value=_DelayedResponsesStream(
+                      [
+                          {"type": "response.output_text.delta", "delta": "ok"},
+                          {
+                              "type": "response.completed",
+                              "response": {
+                                  "id": "resp_deadline",
+                                  "usage": {"input_tokens": 1, "output_tokens": 1},
+                              },
+                          },
+                      ],
+                      delay=0.04,
+                  )
+              )
+              try:
+                  with patch(
+                      "free_claude_code.providers.opencode_go.provider.RecoveryController",
+                      side_effect=lambda: RecoveryController(holdback_seconds=0.01),
+                  ):
+                      stream = provider.stream_response(
+                          _provider_request("gpt-5.6-luna"),
+                          request_id="req_deadline",
+                      )
+                      first = await asyncio.wait_for(anext(stream), timeout=0.1)
+                      assert "message_start" in first
+                      await stream.aclose()
+              finally:
+                  await provider.cleanup()
+          PY
+
+          uv sync --locked
+          uv run ruff format \
+            src/free_claude_code/providers/stream_recovery.py \
+            src/free_claude_code/providers/openai_codex/provider.py \
+            src/free_claude_code/providers/openai_chat/provider.py \
+            src/free_claude_code/providers/opencode_go/provider.py \
+            tests/providers/test_stream_holdback_deadline.py \
+            tests/providers/test_openai_codex_holdback_deadline.py \
+            tests/providers/test_openai_chat_holdback_deadline.py \
+            tests/providers/test_opencode_go_native.py
+          uv run ruff check --fix \
+            src/free_claude_code/providers/stream_recovery.py \
+            src/free_claude_code/providers/openai_codex/provider.py \
+            src/free_claude_code/providers/openai_chat/provider.py \
+            src/free_claude_code/providers/opencode_go/provider.py \
+            tests/providers/test_stream_holdback_deadline.py \
+            tests/providers/test_openai_codex_holdback_deadline.py \
+            tests/providers/test_openai_chat_holdback_deadline.py \
+            tests/providers/test_opencode_go_native.py
+          uv run ty check
+          uv run pytest -q -n 0 \
+            tests/providers/test_stream_recovery.py \
+            tests/providers/test_stream_holdback_deadline.py \
+            tests/providers/test_openai_codex_holdback_deadline.py \
+            tests/providers/test_openai_chat_holdback_deadline.py \
+            tests/providers/test_openai_codex_provider.py \
+            tests/providers/test_opencode_go_native.py \
+            tests/providers/test_streaming_errors.py
+          git diff --check origin/main...HEAD
+
+          git rm .github/workflows/audit-stream-holdback-repair.yml
+          git add \
+            src/free_claude_code/providers/stream_recovery.py \
+            src/free_claude_code/providers/openai_codex/provider.py \
+            src/free_claude_code/providers/openai_chat/provider.py \
+            src/free_claude_code/providers/opencode_go/provider.py \
+            tests/providers/test_stream_holdback_deadline.py \
+            tests/providers/test_openai_codex_holdback_deadline.py \
+            tests/providers/test_openai_chat_holdback_deadline.py \
+            tests/providers/test_opencode_go_native.py
+          git commit -m "fix: enforce stream holdback by wall clock"
+          git push origin HEAD:fix/stream-holdback-wallclock
