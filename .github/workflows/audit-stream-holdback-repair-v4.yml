@@ -1,0 +1,141 @@
+name: audit-stream-holdback-repair-v4
+
+on:
+  push:
+    branches: [fix/stream-holdback-wallclock]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Execute robust shared wall-clock holdback repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/audit-stream-holdback-repair.yml")
+          lines = workflow.read_text().splitlines()
+          start = next(index for index, line in enumerate(lines) if line.strip() == "run: |")
+          script = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in lines[start + 1 :]
+          ) + "\n"
+
+          old_guard = '''text = replace_once(
+    text,
+    """                if attempt is not None and not attempt.accepted:\\n                    await attempt.retry(\\n""",
+    """                if (\\n                    attempt is not None\\n                    and not attempt.accepted\\n                    and not recovery.committed\\n                ):\\n                    await attempt.retry(\\n""",
+    "chat committed retry guard",
+)'''
+          new_guard = '''text = replace_once(
+    text,
+    """                if attempt is not None and not attempt.accepted:\\n                    await attempt.retry(\\n                        error,\\n                        provider_failure_override=(\\n                            self._provider._provider_failure_override\\n                        ),\\n                    )\\n                generated_output = has_committed_sse_output(ledger)\\n""",
+    """                if (\\n                    attempt is not None\\n                    and not attempt.accepted\\n                    and not recovery.committed\\n                ):\\n                    await attempt.retry(\\n                        error,\\n                        provider_failure_override=(\\n                            self._provider._provider_failure_override\\n                        ),\\n                    )\\n                generated_output = has_committed_sse_output(ledger)\\n""",
+    "chat committed retry guard",
+)'''
+          if script.count(old_guard) != 1:
+              raise RuntimeError(f"primary chat guard patcher anchor changed: {script.count(old_guard)}")
+          script = script.replace(old_guard, new_guard, 1)
+
+          for old, new in (
+              ('pending: asyncio.Task[T] | None = None', 'pending: asyncio.Future[T] | None = None'),
+              ('pending = asyncio.create_task(anext(iterator))', 'pending = asyncio.ensure_future(anext(iterator))'),
+          ):
+              if script.count(old) != 1:
+                  raise RuntimeError(f"stream pending-read anchor changed: {old}")
+              script = script.replace(old, new, 1)
+
+          chat_import = '''from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.anthropic.models import MessagesRequest'''
+          chat_import_new = '''from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.providers.http import maybe_await_aclose'''
+          if script.count(chat_import) != 1:
+              raise RuntimeError("chat test import anchor changed")
+          script = script.replace(chat_import, chat_import_new, 1)
+
+          method_pattern = re.compile(
+              r'^    def _build_request_body\(self, request, \*, reasoning\):\n'
+              r'        del reasoning\n'
+              r'        return \{"model": request\.model, "messages": \[\]\}\n',
+              re.MULTILINE,
+          )
+          method_replacement = '''    def _build_request_body(
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> dict[str, Any]:
+        del reasoning
+        return {"model": request.model, "messages": []}
+'''
+          script, count = method_pattern.subn(method_replacement, script, count=1)
+          if count != 1:
+              raise RuntimeError(f"chat typed override anchor changed: {count}")
+
+          shared_import = '''from free_claude_code.providers.stream_recovery import (
+    RecoveryController,
+    RecoveryStreamSignal,
+)'''
+          shared_import_new = '''from free_claude_code.providers.http import maybe_await_aclose
+from free_claude_code.providers.stream_recovery import (
+    RecoveryController,
+    RecoveryStreamSignal,
+)'''
+          if script.count(shared_import) != 1:
+              raise RuntimeError("shared deadline test import anchor changed")
+          script = script.replace(shared_import, shared_import_new, 1)
+
+          go_import = '''async def test_go_responses_releases_message_start_at_wall_clock_deadline() -> None:
+    from free_claude_code.providers.stream_recovery import RecoveryController'''
+          go_import_new = '''async def test_go_responses_releases_message_start_at_wall_clock_deadline() -> None:
+    from free_claude_code.providers.http import maybe_await_aclose
+    from free_claude_code.providers.stream_recovery import RecoveryController'''
+          if script.count(go_import) != 1:
+              raise RuntimeError("Go deadline test import anchor changed")
+          script = script.replace(go_import, go_import_new, 1)
+
+          if script.count("await stream.aclose()") != 2:
+              raise RuntimeError(f"unexpected stream-close count: {script.count('await stream.aclose()')}")
+          script = script.replace("await stream.aclose()", "await maybe_await_aclose(stream)")
+          if script.count("await wrapped.aclose()") != 1:
+              raise RuntimeError("shared wrapped-close anchor changed")
+          script = script.replace("await wrapped.aclose()", "await maybe_await_aclose(wrapped)", 1)
+
+          cleanup_old = "git rm .github/workflows/audit-stream-holdback-repair.yml"
+          cleanup_new = '''git rm \\
+  .github/workflows/audit-stream-holdback-repair.yml \\
+  .github/workflows/audit-stream-holdback-repair-v2.yml \\
+  .github/workflows/audit-stream-holdback-repair-v3.yml \\
+  .github/workflows/audit-stream-holdback-repair-v4.yml'''
+          if script.count(cleanup_old) != 1:
+              raise RuntimeError("stream workflow cleanup anchor changed")
+          script = script.replace(cleanup_old, cleanup_new, 1)
+
+          Path("/tmp/audit-stream-holdback-repair.sh").write_text(script)
+          PY
+          bash /tmp/audit-stream-holdback-repair.sh
