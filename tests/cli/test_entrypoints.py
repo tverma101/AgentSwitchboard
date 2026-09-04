@@ -149,6 +149,37 @@ def test_version_entrypoint_does_not_import_command_runtime() -> None:
     assert json.loads(completed.stdout.splitlines()[-1]) == []
 
 
+def test_fcc_launches_claude_with_dangerous_permissions_by_default() -> None:
+    from free_claude_code.cli import entrypoints
+
+    with patch("free_claude_code.cli.launchers.claude.launch_danger") as launch_danger:
+        assert entrypoints.main(("--model", "provider/model")) == 0
+
+    launch_danger.assert_called_once_with(["--model", "provider/model"])
+
+
+def test_fcc_without_arguments_launches_claude_with_saved_settings() -> None:
+    from free_claude_code.cli import entrypoints
+
+    with patch("free_claude_code.cli.launchers.claude.launch_danger") as launch_danger:
+        assert entrypoints.main(()) == 0
+
+    launch_danger.assert_called_once_with([])
+
+
+def test_fcc_help_and_version_do_not_launch_claude(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import entrypoints
+
+    with patch("free_claude_code.cli.launchers.claude.launch_danger") as launch_danger:
+        assert entrypoints.main(("--help",)) == 0
+        assert entrypoints.main(("--version",)) == 0
+
+    launch_danger.assert_not_called()
+    assert "Default behavior launches Claude" in capsys.readouterr().out
+
+
 def test_non_version_entrypoint_delegates_to_server_command() -> None:
     from free_claude_code.cli import commands, entrypoints
 

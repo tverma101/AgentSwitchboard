@@ -21,13 +21,18 @@ FCC_CLAUDE_CONTEXT_TOKENS=256000
 REASONING_POLICY=client
 ```
 
-Start the server in a terminal:
+Start Claude in the current repository with the saved FCC configuration:
 
 ```bash
-fcc-server
+fcc
 ```
 
-The command opens the native Rust/Ratatui control center. Use the direct page
+`fcc` starts or attaches to the local proxy and launches Claude with
+`--dangerously-skip-permissions`. This is intended only for trusted local
+machines and repositories. For server-only operation, use `fcc-server`.
+
+The command opens the native Rust/Ratatui control center when running
+`fcc-server` directly. Use the direct page
 sidebar (or `Ctrl+0` then `↑↓`/`j`/`k`) to move between Dashboard, Providers,
 Repositories, Models, Routing, Context, Local Setup, Settings, Usage, and
 Diagnostics. `R`

@@ -121,3 +121,23 @@
 - `evidence`: implementation, source tests, installed artifact, and live loopback UI/API behavior are verified separately; no authenticated upstream inference request or user visual confirmation is claimed. The user-owned TUI process was not restarted.
 - `residual_gap`: the user-owned existing TUI process must be closed/relaunched to load this installed SHA; external provider inference, remote PR checks, and merge remain separate lifecycle states; no Actions mutation was performed.
 - `next_action`: push `141ad58e` to `feat/tui-tode-transplant`, verify the remote head and PR #215 metadata, then hand off relaunch for user visual confirmation.
+
+## 2026-09-03 — make `fcc` the saved-config Claude launcher
+
+- `scope`: top-level CLI dispatch on `feat/tui-tode-transplant`; canonical repo `tverma101/AgentSwitchboard` at `/Users/tejas/Projects/AgentSwitchboard`, HEAD `b4ad8f178917015da88c0c776829ce2d389f2bc0`.
+- `pre_existing_dirty_paths`: none at task start.
+- `sources_reviewed`: existing `fcc`/`fcc-server` entrypoints, Claude launchers, entrypoint tests, `README.md`, and `docs/CONFIGURATION.md`.
+- `changed`: ordinary `fcc` invocations, including no arguments, now delegate to the existing saved-config `launch_danger` path; account, help, and version commands remain explicit branches; command documentation distinguishes `fcc`, `fcc-claude`, `fccdanger`, and `fcc-server`.
+- `memory`: searched existing project memory; created implementation record W-0011. The prior repository-picker safety decision remains separate and unchanged.
+- `validation`: focused entrypoint tests (61 passed), Ruff format/check, `ty check`, `git diff --check`, and `./scripts/ci.sh --fast` (3865 passed, 4 skipped, 173 deselected).
+- `residual_gap`: changes are uncommitted and not pushed; no external or live provider action was performed.
+
+## 2026-09-03 — diagnose FCC connection refusal after a healthy session
+
+- `scope`: live FCC listener and launcher boundary for the reported Claude `ConnectionRefused` retry; canonical checkout `/Users/tejas/Projects/AgentSwitchboard` on `feat/tui-tode-transplant`.
+- `status`: diagnosed and locally recovered; no source or configuration mutation was made for this incident.
+- `evidence`: the listener was absent at inspection time; the prior server log showed successful `/health`, model/admin reads, and Claude `/v1/messages`/`count_tokens` requests before the listener stopped. A task-owned supervised `fcc-server --headless` was started and remained healthy on `127.0.0.1:8082` with `/health` returning 200 and Admin status `running`.
+- `validation`: focused launcher/control tests passed (`110 passed`); Ruff, format, and `ty` passed; live loopback health and status passed; provider discovery completed for the configured NVIDIA NIM, B.AI, OpenRouter, OpenCode, and Cline paths without issuing an inference request.
+- `root_cause`: the visible retry is the downstream effect of a stopped FCC listener, not evidence of an upstream model incompatibility. The available log does not distinguish a clean TUI-owned shutdown from an externally terminated process because it ends without a shutdown record.
+- `residual_gap`: the supervised recovery is live in the task PTY; the exact stop initiator remains unproven, and the existing uncommitted `fcc` launcher change still needs its own publication/installed-artifact lifecycle.
+- `next_action`: if the refusal recurs, capture the FCC owner/TUI process state at the same timestamp; then harden the owner lifecycle only against the reproduced stop path.

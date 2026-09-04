@@ -133,15 +133,26 @@ linting, or type checks.
 
 ### 2. Start FCC
 
-Run:
+The simplest machine-local entrypoint is:
+
+```bash
+fcc
+```
+
+`fcc` launches Claude in the current repository with the saved FCC configuration
+and dangerous permissions enabled. It starts or attaches to the local FCC proxy
+through the existing launcher flow, so no separate server terminal is needed.
+Use this only on a machine and in repositories you trust.
+
+For server-only operation, run:
 
 ```bash
 fcc-server
 ```
 
-Keep this terminal open. In the current AgentSwitchboard release, use the
-terminal command as the canonical server lifecycle on macOS, Linux, and
-Windows. Desktop/tray support
+Keep this terminal open when using a separate `fcc-claude` or `fccdanger` client.
+In the current AgentSwitchboard release, use the terminal command as the
+canonical server lifecycle on macOS, Linux, and Windows. Desktop/tray support
 may exist in the package, but it is not the documented release path and does
 not change the terminal-only browser policy.
 
@@ -247,18 +258,21 @@ proof of a free offer. Disable it with
 Claude Code:
 
 ```bash
-fcc-claude
+fcc
 ```
 
-For AgentSwitchboard's terminal-only, skip-permissions workflow:
+`fcc` is the default convenience launcher for the machine-local workflow. It
+runs Claude in the current repository, uses the saved FCC configuration, and
+enables `--dangerously-skip-permissions`. The explicit aliases remain
+available:
 
 ```bash
-fccdanger
+fcc-claude   # normal Claude permission prompts
+fccdanger    # explicit skip-permissions alias
 ```
 
-`fccdanger` is only a convenience alias for `fcc-claude` that adds
-`--dangerously-skip-permissions`; it still uses the FCC proxy and never opens a
-browser or starts a second server.
+Both aliases still use the FCC proxy and never open a browser or start a second
+server.
 
 Codex:
 

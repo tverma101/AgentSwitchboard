@@ -18,7 +18,7 @@ from free_claude_code.learning.config import (
 )
 
 _SERVER_USAGE = "fcc-server [--profile <name>] [--terminal|--no-browser] [--headless]"
-_FCC_USAGE = "fcc <accounts> [options]"
+_FCC_USAGE = "fcc [claude-options]"
 
 
 def serve(argv: Sequence[str] | None = None) -> None:
@@ -133,22 +133,28 @@ def _parse_server_options(args: Sequence[str]) -> bool | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Dispatch the top-level ``fcc`` command."""
+    """Launch Claude by default while preserving account-management commands."""
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in {"accounts", "account", "subs", "subscriptions"}:
         from free_claude_code.cli.codex_accounts import main as run_accounts
 
         return run_accounts(args[1:])
-    if not args or args[0] in {"--help", "-h"}:
+    if args and args[0] in {"--help", "-h"}:
         print(f"Usage: {_FCC_USAGE}")
         print("  fcc accounts       manage ChatGPT/Codex subscription accounts")
+        print("  fcc --version      print the installed FCC version")
+        print(
+            "\nDefault behavior launches Claude with saved FCC settings and dangerous permissions."
+        )
         return 0
-    if args[0] == "--version":
+    if args and args[0] == "--version":
         print(f"free-claude-code {package_version()}")
         return 0
-    print(f"fcc: unknown command {args[0]}", file=sys.stderr)
-    print(f"Usage: {_FCC_USAGE}", file=sys.stderr)
-    return 2
+
+    from free_claude_code.cli.launchers.claude import launch_danger
+
+    launch_danger(args)
+    return 0
 
 
 def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
