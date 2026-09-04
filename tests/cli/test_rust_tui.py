@@ -207,4 +207,200 @@ def test_standalone_tui_entrypoint_loads_server_settings() -> None:
     ):
         assert rust_tui.main(()) == 0
 
-    run.assert_called_once_with(settings)
+    run.assert_called_once_with(settings, notice=None)
+
+
+def test_tui_accepts_workspace_file_and_passes_parent_as_notice(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import commands
+
+    target = tmp_path / "notes.md"
+    target.write_text("hello", encoding="utf-8")
+    settings = _settings()
+    with (
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch.object(rust_tui, "run_native_control_center") as run,
+    ):
+        assert rust_tui.main((str(target),)) == 0
+
+    _, kwargs = run.call_args
+    assert kwargs["notice"] is not None
+    assert str(tmp_path) in kwargs["notice"]
+
+
+def test_tui_rejects_missing_workspace(capsys: pytest.CaptureFixture[str]) -> None:
+    assert rust_tui.main(("/definitely/not/here-xyz",)) == 2
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_tui_goto_parses_location(tmp_path: Path) -> None:
+    from free_claude_code.cli import commands
+
+    target = tmp_path / "app.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    settings = _settings()
+    with (
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch.object(rust_tui, "run_native_control_center") as run,
+    ):
+        assert rust_tui.main(("--goto", f"{target}:3:7")) == 0
+
+    _, kwargs = run.call_args
+    assert f"{target}:3:7" in (kwargs["notice"] or "")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("--goto", "file-only"),
+        ("--goto", "a.py:0:1"),
+        ("--goto", "a.py:1:x"),
+        ("--diff", "only-one"),
+        ("--split", "diagonal"),
+        ("--size", "0.5"),
+        ("--split", "right", "--size", "0.1"),
+        ("--theme", "neon"),
+        ("--bogus-flag",),
+        ("a", "b"),
+    ],
+)
+def test_tui_rejects_unhonorable_arguments(
+    argv: tuple[str, ...], capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert rust_tui.main(argv) == 2
+    assert "Usage:" in capsys.readouterr().err
+
+
+def test_tui_diff_prints_bounded_preview(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from free_claude_code.cli import commands
+
+    before = tmp_path / "before.txt"
+    after = tmp_path / "after.txt"
+    before.write_text("one\ntwo\n", encoding="utf-8")
+    after.write_text("one\nthree\n", encoding="utf-8")
+    with (
+        patch.object(commands, "load_server_settings", return_value=_settings()),
+        patch.object(rust_tui, "run_native_control_center"),
+    ):
+        assert rust_tui.main(("--diff", str(before), str(after))) == 0
+
+    out = capsys.readouterr().out
+    assert "-two" in out
+    assert "+three" in out
+
+
+def test_tui_diff_preview_truncates_long_diffs(tmp_path: Path) -> None:
+    before = tmp_path / "before.txt"
+    after = tmp_path / "after.txt"
+    before.write_text("".join(f"line {n}\n" for n in range(200)), encoding="utf-8")
+    after.write_text("".join(f"changed {n}\n" for n in range(200)), encoding="utf-8")
+    preview = rust_tui.render_diff_preview(before, after, limit=10)
+    assert len(preview) == 11
+    assert preview[-1].startswith("… truncated")
+
+
+def test_tui_split_without_tmux_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("TMUX", raising=False)
+    assert rust_tui.main(("--split", "right")) == 2
+    assert "tmux" in capsys.readouterr().err
+
+
+def test_tui_split_with_tmux_prints_hint_and_attaches(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from free_claude_code.cli import commands
+
+    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,123,0")
+    with (
+        patch.object(commands, "load_server_settings", return_value=_settings()),
+        patch.object(rust_tui, "run_native_control_center") as run,
+    ):
+        assert rust_tui.main(("--split", "right", "--size", "0.3")) == 0
+
+    assert "tmux split-window" in capsys.readouterr().out
+    run.assert_called_once()
+
+
+def test_tui_ssh_and_extensions_fail_closed_with_guidance(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert rust_tui.main(("--ssh", "user@host")) == 2
+    assert "loopback" in capsys.readouterr().err
+    assert rust_tui.main(("--install-extension", "some.id")) == 2
+    assert "Providers" in capsys.readouterr().err
+
+
+def test_tui_list_commands_covers_every_page(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert rust_tui.main(("--list-commands",)) == 0
+    out = capsys.readouterr().out
+    for label in (
+        "Dashboard",
+        "Repositories",
+        "Providers",
+        "Models",
+        "Routing",
+        "Context Window",
+        "Local Setup",
+        "App Settings",
+        "Usage",
+        "Diagnostics",
+    ):
+        assert f"Go to {label}" in out
+
+
+def test_tui_palette_commands_mirror_rust_titles() -> None:
+    assert len(rust_tui.PALETTE_COMMANDS) == len(set(rust_tui.PALETTE_COMMANDS))
+    assert "Open command palette" in rust_tui.PALETTE_COMMANDS
+    assert "Run route diagnostic" in rust_tui.PALETTE_COMMANDS
+
+
+def test_tui_shortcut_setup_reports_terminal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert rust_tui.main(("--shortcut-setup",)) == 0
+    out = capsys.readouterr().out
+    assert "Detected terminal:" in out
+    assert "Ctrl+K palette" in out
+
+
+def test_tui_detect_terminal_kind() -> None:
+    assert rust_tui.detect_terminal_kind({"KITTY_WINDOW_ID": "1"}) == "kitty"
+    assert rust_tui.detect_terminal_kind({"TERM_PROGRAM": "ghostty"}) == "ghostty"
+    assert rust_tui.detect_terminal_kind({"ITERM_SESSION_ID": "x"}) == "iterm2"
+    assert rust_tui.detect_terminal_kind({"TMUX": "y"}) == "tmux"
+    assert rust_tui.detect_terminal_kind({}) == "unknown"
+
+
+def test_tui_review_rejects_non_git_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert rust_tui.main((str(tmp_path), "--review")) == 2
+    assert "git" in capsys.readouterr().err.lower()
+
+
+def test_tui_timing_reports_stages(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import commands
+
+    with (
+        patch.object(commands, "load_server_settings", return_value=_settings()),
+        patch.object(rust_tui, "run_native_control_center"),
+    ):
+        assert rust_tui.main(("--timing",)) == 0
+
+    assert "fcc-tui timing:" in capsys.readouterr().err
+
+
+def test_tui_help_lists_workspace_surface(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert rust_tui.main(("--help",)) == 0
+    assert "--goto" in capsys.readouterr().out
