@@ -19,7 +19,18 @@ def test_apply_admin_values_validates_before_apply() -> None:
     with patch.object(
         local_admin,
         "_request_json",
-        side_effect=[{"valid": True}, {"applied": True, "valid": True}],
+        side_effect=[
+            {"valid": True},
+            {"applied": True, "valid": True},
+            {
+                "fields": [
+                    {
+                        "key": "MODEL",
+                        "value": "opencode_go/muse-spark-1.2-contributor",
+                    }
+                ]
+            },
+        ],
     ) as request:
         result = local_admin.apply_admin_values(settings, values)
 
@@ -37,6 +48,7 @@ def test_apply_admin_values_validates_before_apply() -> None:
             method="POST",
             payload={"values": values},
         ),
+        call(settings, "/admin/api/config"),
     ]
 
 
