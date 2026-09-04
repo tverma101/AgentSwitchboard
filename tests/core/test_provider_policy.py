@@ -34,6 +34,31 @@ def test_strict_policy_blocks_forbidden_provider_before_network() -> None:
     )
 
 
+def test_strict_policy_still_blocks_unrelated_openai_provider() -> None:
+    guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
+
+    with pytest.raises(ProviderPolicyError, match="before network I/O"):
+        guard.authorize_url(
+            "https://chatgpt.com/backend-api/codex",
+            provider_family="openai",
+        )
+
+    assert guard.receipt()["counts"] == {}
+    assert guard.receipt()["blocked_counts"] == {"openai": 1}
+
+
+def test_explicit_openai_primary_is_allowed_despite_fallback_denylist() -> None:
+    guard = ProviderEgressGuard(ProviderPolicy("openai", "gpt-5.6-luna"))
+
+    guard.authorize_url(
+        "https://chatgpt.com/backend-api/codex",
+        provider_family="openai",
+    )
+
+    assert guard.receipt()["counts"] == {"openai": 1}
+    assert guard.receipt()["blocked_counts"] == {}
+
+
 def test_strict_policy_allows_primary_and_local_tool() -> None:
     guard = ProviderEgressGuard(ProviderPolicy("opencode_go", "model"))
 
