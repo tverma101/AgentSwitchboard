@@ -126,9 +126,16 @@ class RecoveryController:
         self._holdback_seconds = holdback_seconds
         self._max_bytes = max_bytes
         self._now = now
+        self._uses_default_holdback_config = (
+            holdback_seconds == EARLY_HOLDBACK_SECONDS
+            and max_bytes == RECOVERY_BUFFER_MAX_BYTES
+            and now is None
+        )
         self._holdback = self._new_holdback()
 
     def _new_holdback(self) -> RecoveryHoldbackBuffer:
+        if self._uses_default_holdback_config:
+            return RecoveryHoldbackBuffer()
         return RecoveryHoldbackBuffer(
             holdback_seconds=self._holdback_seconds,
             max_bytes=self._max_bytes,
