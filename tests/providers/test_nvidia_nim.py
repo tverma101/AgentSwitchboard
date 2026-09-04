@@ -103,15 +103,6 @@ def _content_chunk(
     return mock_chunk
 
 
-def _make_bad_request_error(message: str) -> openai.BadRequestError:
-    response = Response(
-        status_code=400,
-        request=Request("POST", f"{NVIDIA_NIM_DEFAULT_BASE}/chat/completions"),
-    )
-    body = {"error": {"message": message, "type": "BadRequestError", "code": 400}}
-    return openai.BadRequestError(message, response=response, body=body)
-
-
 def _make_internal_server_error(message: str) -> openai.InternalServerError:
     response = Response(
         status_code=500,

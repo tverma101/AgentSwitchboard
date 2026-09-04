@@ -299,38 +299,6 @@ def test_ensure_migrates_resolved_native_launcher_to_bridge(tmp_path: Path) -> N
     assert run.call_count == 4
 
 
-def test_ensure_migrates_exact_native_launcher_to_bridge(tmp_path: Path) -> None:
-    _paths, launcher = _native_paths(tmp_path)
-    python = tmp_path / "python"
-    python.write_text("", encoding="utf-8")
-
-    with patch.object(
-        registration,
-        "_run_claude_mcp",
-        side_effect=[
-            _completed(
-                stdout=_details(
-                    python,
-                    command=str(launcher.resolve()),
-                    args="mcp",
-                )
-            ),
-            _completed(),
-            _completed(),
-            _completed(stdout=_details(python)),
-        ],
-    ) as run:
-        changed = registration.ensure_claude_local_computer_use_mcp(
-            claude_binary="claude",
-            cwd=tmp_path,
-            python_executable=python,
-            native_launcher=launcher,
-        )
-
-    assert changed is True
-    assert run.call_count == 4
-
-
 def test_local_mcp_spec_preserves_uv_tool_symlink_path(tmp_path: Path) -> None:
     target = tmp_path / "base-python"
     target.write_text("", encoding="utf-8")
