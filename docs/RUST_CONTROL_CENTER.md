@@ -48,25 +48,47 @@ The Local Setup page exposes the existing FCC controls for LM Studio, llama.cpp,
 
 ## Model routing
 
-The Models page opens on active/routable models and keeps FCC's complete
-cached/discovered inventory behind an explicit Catalog view. Provider filters
-come from registered providers, and the price filter is either All or Free
-only; there is no hidden free-first ordering and unknown pricing is never
-invented. Enabled custom-provider model IDs are included in Catalog even when
-discovery has not populated the server cache. The page exposes `Show catalog`
-and `Active only` as explicit actions, so the complete cached inventory is
-never hidden behind an undiscoverable key. Space or Shift/Ctrl-click marks one
-or more exact model references for a bulk change; `Toggle selected` inverts
-the actual ON/OFF state of those rows, including mixed selections, and
-`Disable all` clears the active allowlist. Every change is sent as one Admin
-transaction in the background; the page stays navigable while it saves and
-then refreshes the full snapshot before reporting success. Enter or Set MODEL
-assigns the exact highlighted model to `MODEL`:
+The Models page is one full-width list under a single header (`N shown ·
+M on · C catalog · K free`, active filters, and the one-line how-to). It opens on FCC's
+complete cached/discovered inventory with the provider filter on All, sorted
+free-first (free, then unknown pricing, then paid). Unknown pricing is shown
+unbadged and is never mislabeled; the exact `provider/model` route rides in
+the row itself, so there is no inspector half. Enabled custom-provider model
+IDs are included even when discovery has not populated the server cache. One
+tap is one enable/disable: `Space` or a single left-click on a row flips that
+exact reference immediately, with no mark-then-apply step and no "toggle"
+staging language anywhere in the UI. `V` flips the Catalog/Active-only view,
+`N` flips the All/Free-only filter, `P` opens the registered-provider picker,
+and `/` searches. `Disable all` asks for confirmation before it clears the
+active allowlist. Every change is sent as one Admin transaction in the
+background; the page stays navigable while it saves and then refreshes the
+full snapshot before reporting success. Enter (or the command palette) assigns
+the exact highlighted model to `MODEL`:
 
 - `MODEL`
 
 The Routing page owns the remaining server-side routing controls and tier
 overrides. Direct `provider/model` references remain the canonical routing IDs.
+
+## Repositories
+
+The Repositories page restores the classic repo picker inside the native UI:
+it scans the working directory plus `~/src`, `~/Projects`, and
+`~/Documents` for GitHub checkouts on first visit (worker thread) and on `R`.
+Only checkouts with a GitHub remote are listed and linked worktrees are
+excluded, matching the classic picker contract. The scan resolves the `gh`
+login on its worker thread and lists only that owner's checkouts; when no
+sign-in is found it falls back to every GitHub remote and says so in the
+header and the notice, so an unscoped list is never silent. There is no
+on-disk cache. One tap (click or
+Enter) points the next Claude launch at a checkout and marks it with `●`;
+`O` opens an arbitrary path. The Dashboard launch card shows the chosen repo.
+
+Provider rows are selection surfaces: a click only updates the inspector.
+`Configure`, `Sign in`, `Test`, and other side effects are explicit actions,
+so a tap never unexpectedly opens an editor or starts OAuth. When a selected
+model provider has no cached rows, the page starts one catalog recovery
+refresh and keeps the provider filter in place when the response arrives.
 
 ## Dashboard
 
@@ -138,7 +160,7 @@ The visible shell is only AgentSwitchboard: a top application bar, one direct
 page-navigation sidebar, the selected FCC page, an optional FCC status/provider
 alert panel, a status bar, and a transient footer. There is no editor activity
 rail, file-tab strip, workspace browser, or duplicate navigation column.
-Providers, Models, Routing, Context Window, Local Setup, Settings, Usage, and
+Providers, Models, Repositories, Routing, Context Window, Local Setup, Settings, Usage, and
 Diagnostics are reached directly from the page-navigation sidebar. Main list
 navigation and page-navigation movement stop at the first and last row; only
 choice controls that represent a finite cycle intentionally wrap.
@@ -148,10 +170,15 @@ Keybindings: `Ctrl+B` toggles page navigation, `Ctrl+J` the FCC status panel,
 `Tab`/`Shift-Tab` move focus without changing pages or an opened file;
 `↑↓`/`j`/`k` move in the focused control, `Enter` opens or applies the
 highlighted FCC action, `/` searches models when the Models page owns focus,
-`P` opens the registered-provider picker, `N` toggles All/Free only, `V`
-toggles Active/Catalog, `T` toggles the selected models' actual ON/OFF state,
-`Shift-X` disables all, and `R` refreshes the current FCC page. Mouse clicks
-activate modal choices in one step; PageUp/PageDown/Home/End stay within the
+`P` opens the registered-provider picker, `N` flips All/Free only, `V`
+flips Catalog/Active-only, `Space` or a single click turns the focused model
+row on/off at once, `Shift-X` confirms before disabling all,
+and `R` refreshes the current FCC page. On the Repositories page `Enter` or a
+click uses the checkout for the next launch, `O` opens a path, and `R`
+rescans. Mouse clicks
+activate modal choices in one step; a click on a model row turns it on/off
+directly instead of staging a selection, and a click on a repository row uses
+it directly. PageUp/PageDown/Home/End stay within the
 currently focused finite control. Optional
 `fcc-tui` path/diff/review flags remain bounded CLI conveniences; they do not
 turn the visible control center into an editor.

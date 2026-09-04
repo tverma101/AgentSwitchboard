@@ -94,7 +94,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_topbar(frame: &mut Frame, app: &App, area: Rect) {
     let c = app.colors;
     let (brand_width, status_width) = if area.width >= 90 {
-        (28, 34)
+        (28, 40)
     } else {
         let slot = (area.width / 3).max(1);
         (slot, slot)
@@ -828,6 +828,7 @@ fn render_page(frame: &mut Frame, app: &mut App, area: Rect) {
     match app.page {
         Page::Dashboard => render_dashboard(frame, app, area),
         Page::Providers => render_providers(frame, app, area),
+        Page::Repositories => render_repos(frame, app, area),
         Page::Models => render_models(frame, app, area),
         Page::Routing => render_field_page(frame, app, area, Page::Routing),
         Page::Context => render_context(frame, app, area),
@@ -1018,7 +1019,7 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
             kv(c, "MODEL", &launch_route),
             kv(c, "ACTIVE", &active_route),
             kv(c, "Context", &format_tokens(&app.current_context())),
-            kv(c, "Pending", &pending),
+            kv(c, "Repo", &app.launch_repo_name()),
         ],
     );
 
@@ -1040,7 +1041,7 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
                 &free_models.to_string(),
                 Style::default().fg(c.good),
             ),
-            kv(c, "Selected", &app.selected_models.len().to_string()),
+            kv(c, "View", app.model_scope_label()),
         ],
     );
     dashboard_card(
@@ -1253,7 +1254,6 @@ fn render_providers(frame: &mut Frame, app: &mut App, area: Rect) {
     let providers = app.config.provider_status.clone();
     let selected = providers.get(app.provider_selected).cloned();
     let mut actions = vec![
-        ("Configure", UiAction::ConfigureProvider),
         ("Test", UiAction::TestProvider),
         ("New custom", UiAction::NewCustomProvider),
     ];
@@ -1267,11 +1267,12 @@ fn render_providers(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     if selected
         .as_ref()
-        .map(|provider| provider.kind == "connected_account")
-        .unwrap_or(false)
+        .is_some_and(|provider| provider.kind == "connected_account")
     {
         actions.push(("Sign in", UiAction::LoginProvider));
         actions.push(("Disconnect", UiAction::DisconnectProvider));
+    } else if selected.as_ref().is_some_and(|provider| !provider.custom) {
+        actions.insert(0, ("Configure", UiAction::ConfigureProvider));
     }
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -1453,113 +1454,239 @@ fn render_provider_detail(
     );
 }
 
-fn render_models(frame: &mut Frame, app: &mut App, area: Rect) {
+/// Local GitHub checkouts for the next Claude launch. One tap (click or
+/// Enter) points the next launch at a checkout; `O` opens an arbitrary path
+/// and `R` rescans. Only checkouts with a GitHub remote are listed, matching
+/// the classic picker contract.
+fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
     let c = app.colors;
-    app.normalize_model_filters();
-    let models = app.filtered_models();
-    let view_action = if app.model_show_catalog {
-        "Active only"
-    } else {
-        "Show catalog"
-    };
     let actions = [
-        ("Search", UiAction::SearchModels),
-        ("Provider", UiAction::ChooseModelProvider),
-        ("All/Free", UiAction::CycleModelPrice),
-        (view_action, UiAction::ToggleModelCatalog),
-        ("Toggle selected", UiAction::ToggleSelectedModels),
-        ("Disable all", UiAction::DisableAllModels),
-        ("Set MODEL", UiAction::AssignModel("MODEL".to_string())),
-        ("Refresh", UiAction::Refresh),
+        ("Use for launch", UiAction::UseSelectedRepo),
+        ("Open path", UiAction::OpenRepoPath),
+        ("Refresh", UiAction::RescanRepos),
     ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(2),
-            Constraint::Min(8),
+            Constraint::Min(6),
             Constraint::Length(action_bar_height(area.width, &actions)),
         ])
         .split(area);
-    let query = if app.model_query.is_empty() {
-        "Search models…".to_string()
+    let range = if app.repos.is_empty() {
+        "0/0".to_string()
     } else {
-        format!("Search: {}", app.model_query)
+        format!(
+            "{}/{}",
+            app.repo_selected.saturating_add(1),
+            app.repos.len()
+        )
     };
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "MODELS",
-                Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(query, Style::default().fg(c.text)),
-            Span::raw("    "),
-            Span::styled(
-                format!(
-                    "{} shown · {} active · {} catalog · {} selected · {} failures",
-                    models.len(),
-                    app.models.models.len(),
-                    app.model_inventory().len(),
-                    app.selected_models.len(),
-                    app.models.failed_providers.len()
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    "REPOS",
+                    Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
                 ),
-                Style::default().fg(c.muted),
-            ),
-        ]))
+                Span::raw("  "),
+                Span::styled(
+                    format!(
+                        "{} found · {} · launch → {}",
+                        app.repos.len(),
+                        app.repo_scope_label(),
+                        app.launch_repo_name()
+                    ),
+                    Style::default().fg(c.muted),
+                ),
+            ]),
+            Line::from(Span::styled(
+                " Enter/click uses for next launch · O opens a path · R rescans",
+                Style::default().fg(c.text),
+            )),
+        ])
         .style(Style::default().bg(c.panel2))
         .block(bottom_border(c)),
         rows[0],
     );
-    render_model_filter_summary(frame, app, rows[1]);
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
-        .split(rows[2]);
-    render_model_list(frame, app, panes[0], &models);
-    render_model_detail(frame, app, panes[1], models.get(app.model_selected));
-    action_bar(frame, app, rows[3], &actions);
-}
-
-fn model_scope_button_label(app: &App) -> &'static str {
-    if app.model_show_catalog {
-        "Catalog"
+    let block_title = format!("Repositories · {range}");
+    let block = section_block(c, &block_title);
+    let inner = block.inner(rows[1]);
+    frame.render_widget(block, rows[1]);
+    if app.repos.is_empty() {
+        let message = if app.background_busy() {
+            "Scanning local checkouts…"
+        } else if !app.repos_scanned {
+            "Preparing repository scan…"
+        } else {
+            "No GitHub checkouts under the working directory, ~/src, ~/Projects, or ~/Documents. O opens a path · R rescans."
+        };
+        frame.render_widget(
+            Paragraph::new(message)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(c.muted)),
+            inner,
+        );
     } else {
-        "Active"
+        let offset = list_offset(app.repo_selected, app.repos.len(), inner.height as usize);
+        for (visible, repo) in app
+            .repos
+            .iter()
+            .skip(offset)
+            .take(inner.height as usize)
+            .enumerate()
+        {
+            let index = offset + visible;
+            let row = Rect {
+                x: inner.x,
+                y: inner.y + visible as u16,
+                width: inner.width,
+                height: 1,
+            };
+            let selected = index == app.repo_selected;
+            let focused = selected && app.focus == Focus::Editor;
+            let style = if focused {
+                Style::default()
+                    .bg(c.accent_dim)
+                    .fg(c.text)
+                    .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default().bg(c.panel2).fg(c.text)
+            } else {
+                Style::default().bg(c.bg).fg(c.text)
+            };
+            // `●` is the checkout the next Claude launch runs in; `▌`/`·`
+            // is the keyboard cursor. They are independent on purpose.
+            let marker = if app
+                .launch_repo
+                .as_ref()
+                .is_some_and(|path| *path == repo.path)
+            {
+                "● "
+            } else if focused {
+                "▌ "
+            } else if selected {
+                "· "
+            } else {
+                "  "
+            };
+            let text = format!(
+                "{marker}{}  {}  {}",
+                repo.identity(),
+                repo.branch,
+                repo.display_path()
+            );
+            frame.render_widget(
+                Paragraph::new(trim_to(&text, inner.width as usize)).style(style),
+                row,
+            );
+            app.hitboxes.push(Hitbox {
+                rect: row,
+                action: UiAction::UseRepo(index),
+            });
+        }
     }
+    action_bar(frame, app, rows[2], &actions);
 }
 
-fn render_model_filter_summary(frame: &mut Frame, app: &App, area: Rect) {
+fn render_models(frame: &mut Frame, app: &mut App, area: Rect) {
     let c = app.colors;
-    frame.render_widget(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(c.border))
-            .style(Style::default().bg(c.bg)),
-        area,
+    app.normalize_model_filters();
+    let models = app.filtered_models();
+    let free_action = if app.model_price_filter == crate::app::ModelPriceFilter::FreeOnly {
+        "Free: ON"
+    } else {
+        "Free: OFF"
+    };
+    // MODEL assignment lives on Enter and the palette; the bar stays at
+    // five one-tap actions so it fits one row on narrow terminals too.
+    let actions = [
+        ("Search", UiAction::SearchModels),
+        ("Provider", UiAction::ChooseModelProvider),
+        (free_action, UiAction::CycleModelPrice),
+        ("Disable all", UiAction::DisableAllModels),
+        ("Refresh", UiAction::Refresh),
+    ];
+    // One header block (counts + active filters + one-line how-to), then one
+    // full-width list. The inspector half, the second filter bar, and the
+    // catalog/active view button were chrome around a one-boolean choice;
+    // the exact route rides in the row itself and `V` still flips the view.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(action_bar_height(area.width, &actions)),
+        ])
+        .split(area);
+    let free_count = models
+        .iter()
+        .filter(|model| app.model_price_state(model) == crate::app::ModelPriceState::Free)
+        .count();
+    let catalog_count = app.model_inventory().len();
+    let failures = app.models.failed_providers.len();
+    let mut counts = format!(
+        "{} shown · {} on · {} catalog · {} free (free first)",
+        models.len(),
+        app.models.models.len(),
+        catalog_count,
+        free_count,
     );
+    if failures > 0 {
+        counts.push_str(&format!(" · {failures} failed"));
+    }
+    let free_word = if app.model_price_filter == crate::app::ModelPriceFilter::FreeOnly {
+        "Free: ON"
+    } else {
+        "Free: OFF"
+    };
+    // Single-line filter state plus the whole interaction model in one breath.
+    // "Turn on/off" on purpose: no jargon, and the row tap is the action.
+    // Compact terminals get state only; the how-to needs ~100 columns.
     let provider = if app.model_provider_filter == "all" {
-        "All registered".to_string()
+        "All".to_string()
     } else {
         app.model_provider_label()
     };
-    let summary = format!(
-        "Provider: {provider}  ·  {}  ·  View: {}  ·  Selected: {}",
-        app.model_free_filter_label(),
-        model_scope_button_label(app),
-        app.selected_models.len()
-    );
+    let filters = if area.width >= 100 {
+        format!(
+            " Provider: {provider} · {free_word} · View: {} · / search · Space/click on-off · Enter sets MODEL",
+            app.model_scope_label(),
+        )
+    } else {
+        format!(
+            " Provider: {provider} · {free_word} · View: {}",
+            app.model_scope_label(),
+        )
+    };
+    let query = if app.model_query.is_empty() {
+        String::new()
+    } else {
+        format!(" · search: {}", app.model_query)
+    };
     frame.render_widget(
-        Paragraph::new(summary)
-            .wrap(Wrap { trim: true })
-            .style(Style::default().fg(c.text).bg(c.bg)),
-        Rect {
-            x: area.x + 1,
-            y: area.y,
-            width: area.width.saturating_sub(2),
-            height: area.height,
-        },
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    "MODELS",
+                    Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(counts, Style::default().fg(c.muted)),
+            ]),
+            Line::from(Span::styled(
+                format!("{filters}{query}"),
+                Style::default().fg(c.text),
+            )),
+        ])
+        .style(Style::default().bg(c.panel2))
+        .block(bottom_border(c)),
+        rows[0],
     );
+    render_model_list(frame, app, rows[1], &models);
+    action_bar(frame, app, rows[2], &actions);
 }
 
 fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[String]) {
@@ -1582,18 +1709,20 @@ fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[Str
                     .unwrap_or("other")
                     .eq_ignore_ascii_case(&app.model_provider_filter)
             });
-        let message = if app.model_show_catalog {
+        let message = if app.background_busy() {
+            "Loading the model catalog for this provider…"
+        } else if app.model_show_catalog {
             if app.model_price_filter == crate::app::ModelPriceFilter::FreeOnly
                 && provider_has_catalog
             {
-                "No free models reported for this provider. Choose All/Free to show its full catalog."
+                "No free models for this provider. Free: OFF shows its full catalog."
             } else if app.model_provider_filter == "all" {
-                "No catalog models match. Press R to refresh."
+                "No catalog models match. Adjust search or press R to refresh."
             } else {
-                "No cached models for this provider. Press R to refresh."
+                "No catalog rows for this provider. R retries discovery · P shows all providers."
             }
         } else {
-            "No active models match. Choose Show catalog to view and enable catalog rows."
+            "No active models match. Catalog shows every row."
         };
         frame.render_widget(
             Paragraph::new(message)
@@ -1621,12 +1750,6 @@ fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[Str
         let focused = selected && app.focus == Focus::Editor;
         let label = app.model_label(model);
         let routable = app.model_is_routable(model);
-        let pending = app.selected_models.contains(model);
-        let free_badge = if app.model_price_state(model) == crate::app::ModelPriceState::Free {
-            " FREE"
-        } else {
-            ""
-        };
         let style = if focused {
             Style::default()
                 .bg(c.accent_dim)
@@ -1644,125 +1767,47 @@ fn render_model_list(frame: &mut Frame, app: &mut App, area: Rect, models: &[Str
         } else {
             "  "
         };
-        // Keep pending selection visually separate from actual access state;
-        // `ON`/`OFF` is the server-backed state, while `[S]` is only the
-        // user's staged selection for the next Toggle action.
-        let marker = if pending { "[S]" } else { "[ ]" };
-        let access = if app.model_is_default(model) {
-            "DEFAULT"
+        // One boolean per row: the server-backed access state. Tapping the
+        // row flips it immediately, so there is no second pending marker.
+        // Glyphs and badges share fixed cell widths so every label column
+        // starts at the same cell on every row.
+        let (glyph, glyph_color) = if app.model_is_default(model) {
+            ("● DEFAULT", c.accent)
         } else if routable {
-            "ON"
+            ("● ON     ", c.good)
         } else {
-            "OFF"
+            ("○ OFF    ", c.muted)
         };
-        // The server-provided label already carries the provider display name
-        // when needed for disambiguation. Repeating the raw provider ID here
-        // produced rows such as `bai · B.AI · DeepSeek`, which added noise
-        // without improving model identity; the exact route remains visible
-        // in the inspector.
-        let details = format!("{marker} {access}{free_badge}  {label}");
+        // The exact route rides in the row: with no inspector pane, the row
+        // is the only place the routable ID appears. Skip it when the label
+        // already is the route.
+        let display = if label == *model {
+            label.clone()
+        } else {
+            format!("{label}  ·  {model}")
+        };
+        let badge = if app.model_price_state(model) == crate::app::ModelPriceState::Free {
+            " FREE "
+        } else {
+            "      "
+        };
         let available = inner.width.saturating_sub(prefix.chars().count() as u16) as usize;
+        let suffix = format!("{badge}  {display}");
+        let suffix_width = available.saturating_sub(glyph.chars().count());
         frame.render_widget(
-            Paragraph::new(trim_to(&details, available)).style(style),
+            Paragraph::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(c.accent)),
+                Span::styled(glyph, Style::default().fg(glyph_color)),
+                Span::styled(trim_to(&suffix, suffix_width), Style::default().fg(c.text)),
+            ]))
+            .style(style),
             row,
         );
         app.hitboxes.push(Hitbox {
             rect: row,
-            action: UiAction::SelectModel(index),
+            action: UiAction::ToggleModel(index),
         });
     }
-}
-
-fn render_model_detail(frame: &mut Frame, app: &App, area: Rect, model: Option<&String>) {
-    let c = app.colors;
-    let block = section_block(c, "Model inspector");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let Some(model) = model else {
-        frame.render_widget(
-            Paragraph::new("Select a model").style(Style::default().fg(c.muted)),
-            inner,
-        );
-        return;
-    };
-    let label = app.model_label(model);
-    let evidence = app.model_evidence(model).cloned().unwrap_or(Value::Null);
-    let source = evidence
-        .get("evidence_source")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let access = if app.model_is_default(model) {
-        "DEFAULT · routable"
-    } else if app.model_is_routable(model) {
-        "ON · routable"
-    } else {
-        "OFF · catalog only"
-    };
-    let pending = if app.selected_models.contains(model) {
-        "selected for toggle"
-    } else {
-        "not selected"
-    };
-    let capabilities = capability_summary(&evidence);
-    let lines = vec![
-        Line::from(Span::styled(
-            label,
-            Style::default().fg(c.text).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            model.to_string(),
-            Style::default().fg(c.muted),
-        )),
-        Line::from(""),
-        kv(c, "Access", access),
-        kv(c, "Selection", pending),
-        kv(c, "Evidence", source),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Selection",
-            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
-        )),
-        Line::from("Space selects · Shift/Ctrl-click adds or removes · T toggles"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Capabilities",
-            Style::default().fg(c.muted).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(capabilities, Style::default().fg(c.text))),
-    ];
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
-        inner,
-    );
-}
-
-fn capability_summary(evidence: &Value) -> String {
-    let Some(capabilities) = evidence.get("capabilities").and_then(Value::as_object) else {
-        return "Not reported".to_string();
-    };
-    if capabilities.is_empty() {
-        return "Not reported".to_string();
-    }
-    let mut entries = capabilities
-        .iter()
-        .map(|(name, value)| {
-            let state = value
-                .get("state")
-                .and_then(Value::as_str)
-                .or_else(|| value.get("confidence").and_then(Value::as_str))
-                .unwrap_or("reported");
-            (
-                name.to_string(),
-                format!("{}: {state}", name.replace('_', " ")),
-            )
-        })
-        .collect::<Vec<_>>();
-    entries.sort_by_key(|(name, _)| name.to_ascii_lowercase());
-    entries
-        .into_iter()
-        .map(|(_, summary)| summary)
-        .collect::<Vec<_>>()
-        .join(" · ")
 }
 
 fn render_field_page(frame: &mut Frame, app: &mut App, area: Rect, page: Page) {
@@ -2356,6 +2401,14 @@ fn render_modal(frame: &mut Frame, app: &mut App, area: Rect) {
             "Search models",
             input,
             "Enter filters · Esc cancels",
+        ),
+        Modal::OpenRepo { input } => render_simple_input(
+            frame,
+            app.colors,
+            rect,
+            "Open repository",
+            input,
+            "Enter uses that GitHub checkout for the next launch · Esc cancels",
         ),
         Modal::SearchFiles { input } => render_simple_input(
             frame,
@@ -3279,8 +3332,11 @@ mod tests {
         )))
         .unwrap();
         app.move_focused(2);
-        assert_eq!(app.page, Page::Models);
+        assert_eq!(app.page, Page::Repositories);
         assert_eq!(app.sidebar_cursor, 2);
+        app.move_focused(1);
+        assert_eq!(app.page, Page::Models);
+        assert_eq!(app.sidebar_cursor, 3);
         app.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Enter,
             KeyModifiers::NONE,
@@ -3389,20 +3445,54 @@ mod tests {
         );
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let text = buffer_text(&terminal);
-        assert!(text.contains("Provider: All"));
-        assert!(text.contains("Free only: OFF"));
-        assert!(text.contains("View: Active"));
-        assert!(text.contains("Show catalog"));
-        assert!(text.contains("Toggle selected"));
-        assert!(text.contains("Set MODEL"));
+        assert!(text.contains("Provider: All ·"));
+        assert!(text.contains("Free: OFF"));
+        assert!(text.contains("View: Catalog"));
+        assert!(text.contains("Enter sets MODEL"));
+        assert!(text.contains("Space/click on-off"));
+        assert!(!text.contains("Set MODEL"));
         assert!(text.contains("FREE"));
+        // The exact route rides in the row: no inspector pane is needed.
+        assert!(text.contains("bai/paid-model"));
+        assert!(!text.contains("Model inspector"));
+        // Free rows sort before paid rows in the same list.
+        let free_pos = text.find("FREE").expect("free badge renders");
+        let paid_pos = text.find("bai/paid-model").expect("paid row renders");
+        assert!(free_pos < paid_pos);
         assert!(!text.contains("MODEL CATALOG"));
         assert!(!text.contains("Routing shortcuts"));
         assert!(!text.contains("(policy)"));
         assert!(!text.contains("PRICE?"));
         assert!(!text.contains(" PAID"));
+        assert!(!text.contains("Toggle selected"));
+        assert!(!text.contains("Toggle"));
+        assert!(!text.contains("[S]"));
         assert!(!text.contains("? help"));
         assert!(!text.contains("Keyboard shortcuts"));
+    }
+
+    #[test]
+    fn models_header_counts_agree_with_the_visible_rows() {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["bai/free-model".to_string()];
+        app.models.catalog_models =
+            vec!["bai/free-model".to_string(), "bai/paid-model".to_string()];
+        app.models.catalog_model_evidence.insert(
+            "bai/free-model".to_string(),
+            serde_json::json!({"is_free": true}),
+        );
+        app.models.catalog_model_evidence.insert(
+            "bai/paid-model".to_string(),
+            serde_json::json!({"is_free": false}),
+        );
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("2 shown · 1 on · 2 catalog · 1 free"));
+        assert!(text.contains("Models · 1/2"));
+        assert!(text.contains("Space/click on-off"));
     }
 
     #[test]
@@ -3411,14 +3501,16 @@ mod tests {
         let mut app = App::fixture();
         app.page = Page::Models;
         app.models.models = vec!["bai/free-model".to_string()];
+        // Catalog is the default view: both the full inventory and the
+        // `V` key that narrows it work without any prior toggle.
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let text = buffer_text(&terminal);
         assert!(text.contains("View:"));
-        assert!(text.contains("Show catalog"));
-        app.model_show_catalog = true;
+        assert!(text.contains("View: Catalog"));
+        app.model_show_catalog = false;
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let text = buffer_text(&terminal);
-        assert!(text.contains("Active only"));
+        assert!(text.contains("View: Active only"));
         let actions = app
             .hitboxes
             .iter()
@@ -3426,15 +3518,152 @@ mod tests {
                 UiAction::SearchModels
                 | UiAction::ChooseModelProvider
                 | UiAction::CycleModelPrice
-                | UiAction::ToggleModelCatalog
-                | UiAction::ToggleSelectedModels
                 | UiAction::DisableAllModels
-                | UiAction::AssignModel(_)
                 | UiAction::Refresh => Some(&hitbox.action),
                 _ => None,
             })
             .count();
-        assert_eq!(actions, 8);
+        assert_eq!(actions, 5);
+    }
+
+    #[test]
+    fn repositories_page_uses_a_checkout_with_one_tap() {
+        use crate::app::RepoEntry;
+        use std::path::PathBuf;
+
+        let mut app = App::fixture();
+        app.page = Page::Repositories;
+        app.repos = vec![
+            RepoEntry {
+                name: "alpha".to_string(),
+                path: PathBuf::from("/tmp/alpha"),
+                branch: "main".to_string(),
+                remote: "acme/alpha".to_string(),
+            },
+            RepoEntry {
+                name: "beta".to_string(),
+                path: PathBuf::from("/tmp/beta"),
+                branch: "dev".to_string(),
+                remote: "acme/beta".to_string(),
+            },
+        ];
+        app.repos_scanned = true;
+        for (width, height) in [(160, 50), (80, 24)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+            let text = buffer_text(&terminal);
+            assert!(
+                text.contains("Repositories"),
+                "missing title at {width}x{height}"
+            );
+            assert!(
+                text.contains("acme/alpha"),
+                "missing row at {width}x{height}"
+            );
+            assert!(
+                text.contains("Use for launch"),
+                "missing action at {width}x{height}"
+            );
+            assert!(
+                !text.contains("Model inspector"),
+                "no model chrome at {width}x{height}"
+            );
+        }
+        let rect = app
+            .hitboxes
+            .iter()
+            .find_map(|hitbox| match &hitbox.action {
+                UiAction::UseRepo(1) => Some(hitbox.rect),
+                _ => None,
+            })
+            .expect("second repo row should have a use hitbox");
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        assert_eq!(app.launch_repo, Some(PathBuf::from("/tmp/beta")));
+        assert_eq!(app.launch_repo_name(), "beta");
+    }
+
+    #[test]
+    fn provider_rows_select_with_one_tap_without_side_effects() {
+        let mut app = App::fixture();
+        app.page = Page::Providers;
+        app.config.provider_status = vec![ProviderStatus {
+            provider_id: "lab".to_string(),
+            display_name: "Lab".to_string(),
+            kind: "custom".to_string(),
+            status: "configured".to_string(),
+            label: "Configured".to_string(),
+            custom: true,
+            ..ProviderStatus::default()
+        }];
+        app.custom_providers = vec![CustomProvider {
+            provider_id: "lab".to_string(),
+            display_name: "Lab".to_string(),
+            base_url: "https://example.invalid/v1".to_string(),
+            enabled: true,
+            ..CustomProvider::default()
+        }];
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let rect = app
+            .hitboxes
+            .iter()
+            .find_map(|hitbox| match &hitbox.action {
+                UiAction::SelectProvider(0) => Some(hitbox.rect),
+                _ => None,
+            })
+            .expect("provider row should have an open hitbox");
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        assert_eq!(app.provider_selected, 0);
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn connected_provider_tap_does_not_start_oauth() {
+        let mut app = App::fixture();
+        app.page = Page::Providers;
+        app.config.provider_status = vec![ProviderStatus {
+            provider_id: "openai".to_string(),
+            display_name: "OpenAI / ChatGPT".to_string(),
+            kind: "connected_account".to_string(),
+            status: "connected".to_string(),
+            label: "Connected".to_string(),
+            ..ProviderStatus::default()
+        }];
+        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let rect = app
+            .hitboxes
+            .iter()
+            .find_map(|hitbox| match &hitbox.action {
+                UiAction::SelectProvider(0) => Some(hitbox.rect),
+                _ => None,
+            })
+            .expect("connected provider row should have a select hitbox");
+
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+
+        assert!(app.modal.is_none());
+        assert!(app.notice.is_none());
+        assert_eq!(app.provider_selected, 0);
     }
 
     #[test]

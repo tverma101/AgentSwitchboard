@@ -28,6 +28,7 @@ enum RefreshTask {
     All(Receiver<SnapshotResults>),
     Models(Receiver<Result<ModelsResponse>>),
     ModelPolicy(Receiver<Result<ApplyResponse>>, String),
+    Repos(Receiver<RepoScanOutcome>),
 }
 
 pub const CONTEXT_KEY: &str = "FCC_CLAUDE_CONTEXT_TOKENS";
@@ -63,6 +64,7 @@ const LOCAL_KEYS: &[&str] = &[
 pub enum Page {
     Dashboard,
     Providers,
+    Repositories,
     Models,
     Routing,
     Context,
@@ -73,9 +75,10 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Dashboard,
         Self::Providers,
+        Self::Repositories,
         Self::Models,
         Self::Routing,
         Self::Context,
@@ -89,6 +92,7 @@ impl Page {
         match self {
             Self::Dashboard => "Dashboard",
             Self::Providers => "Providers",
+            Self::Repositories => "Repositories",
             Self::Models => "Models",
             Self::Routing => "Routing",
             Self::Context => "Context Window",
@@ -128,7 +132,16 @@ pub enum ModelPriceState {
 #[derive(Debug, Clone)]
 pub enum UiAction {
     Navigate(Page),
+    /// A provider row is a selection surface. It updates the inspector and
+    /// leaves configuration/sign-in as an explicit action; tapping a row must
+    /// never unexpectedly launch OAuth or open an editor.
     SelectProvider(usize),
+    /// One mouse tap both focuses a repository row and uses it for the next
+    /// Claude launch. There is no separate select-then-confirm step.
+    UseRepo(usize),
+    UseSelectedRepo,
+    RescanRepos,
+    OpenRepoPath,
     SelectModel(usize),
     SelectRouting(usize),
     SelectLocal(usize),
@@ -146,11 +159,15 @@ pub enum UiAction {
     AssignModel(String),
     SearchModels,
     ChooseModelProvider,
-    ToggleModelSelection(usize),
+    /// A single left-click on a model row both focuses it and flips its
+    /// actual ON/OFF access state. There is no separate mark-then-apply
+    /// staging step: one tap is one enable/disable.
+    ToggleModel(usize),
+    /// Keyboard/mouse-agnostic alias for flipping the focused row.
+    ToggleCurrentModel,
     CycleModelProvider,
     CycleModelPrice,
     ToggleModelCatalog,
-    ToggleSelectedModels,
     DisableAllModels,
     RunDiagnostic,
     LaunchClaude(bool),
@@ -322,6 +339,54 @@ pub struct SearchHit {
     pub path: PathBuf,
     pub line: usize,
     pub text: String,
+}
+
+/// One local GitHub checkout shown by the Repositories page.
+///
+/// This mirrors the Python `repo_picker.RepoEntry` contract: only checkouts
+/// with a GitHub remote are listed, linked worktrees are excluded, and the
+/// identity prefers the `owner/repo` remote slug over the folder name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub branch: String,
+    pub remote: String,
+}
+
+impl RepoEntry {
+    pub fn identity(&self) -> String {
+        if self.remote.is_empty() {
+            self.name.clone()
+        } else {
+            self.remote.clone()
+        }
+    }
+
+    pub fn repository_name(&self) -> String {
+        self.remote
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&self.name)
+            .to_string()
+    }
+
+    pub fn display_path(&self) -> String {
+        let path = self.path.to_string_lossy().into_owned();
+        if let Ok(home) = std::env::var("HOME") {
+            let home = home.trim_end_matches('/');
+            if !home.is_empty() {
+                if path == home {
+                    return "~".to_string();
+                }
+                if let Some(rest) = path.strip_prefix(&format!("{home}/")) {
+                    return format!("~/{rest}");
+                }
+            }
+        }
+        path
+    }
 }
 
 pub const MAX_TREE_ENTRIES: usize = 500;
@@ -580,6 +645,7 @@ pub enum ConfirmAction {
     ClearField(String),
     DeleteCustom(String),
     DisconnectProvider(String),
+    DisableAllModels,
 }
 
 #[derive(Debug, Clone)]
@@ -606,6 +672,9 @@ pub enum Modal {
         editing: Option<TextInput>,
     },
     SearchModels {
+        input: TextInput,
+    },
+    OpenRepo {
         input: TextInput,
     },
     SearchFiles {
@@ -665,11 +734,25 @@ pub struct App {
     pub routing_selected: usize,
     pub local_selected: usize,
     pub setting_selected: usize,
+    /// Local GitHub checkout inventory for the Repositories page. It is
+    /// scanned lazily on first visit (worker thread) and on `R`; there is
+    /// no on-disk cache.
+    pub repos: Vec<RepoEntry>,
+    pub repo_selected: usize,
+    pub repos_scanned: bool,
+    /// `gh` login that scoped the last scan. `None` means the inventory
+    /// covers every GitHub remote because no sign-in was found.
+    pub github_user: Option<String>,
+    /// Checkout chosen for the next Claude launch. `None` keeps the folder
+    /// the control center started in.
+    pub launch_repo: Option<PathBuf>,
     pub model_query: String,
     pub model_provider_filter: String,
     pub model_price_filter: ModelPriceFilter,
+    /// The full cached inventory is the default view: the page must show
+    /// every discovered model on first paint instead of hiding the catalog
+    /// behind an explicit toggle.
     pub model_show_catalog: bool,
-    pub selected_models: HashSet<String>,
     pub show_advanced: bool,
     pub modal: Option<Modal>,
     pub notice: Option<String>,
@@ -749,6 +832,7 @@ impl App {
                 Value::Null
             }
         };
+        let models_snapshot_available = models_result.is_ok();
         let models = match models_result {
             Ok(value) => value,
             Err(error) => {
@@ -777,7 +861,7 @@ impl App {
                 Value::Null
             }
         };
-        Ok(Self {
+        let mut app = Self {
             api,
             page: Page::Dashboard,
             colors: Colors::fallback(),
@@ -810,14 +894,18 @@ impl App {
             routing_selected: 0,
             local_selected: 0,
             setting_selected: 0,
+            repos: Vec::new(),
+            repo_selected: 0,
+            repos_scanned: false,
+            github_user: None,
+            launch_repo: None,
             model_query: String::new(),
             model_provider_filter: "all".to_string(),
             model_price_filter: ModelPriceFilter::default(),
-            // Keep the first screen useful. The complete cache is an
-            // explicit view because a 400-row metadata dump is not a model
-            // selector.
-            model_show_catalog: false,
-            selected_models: HashSet::new(),
+            // Keep the first screen useful. The complete cache is the
+            // default view because hiding the inventory behind the
+            // Active-only view reads as an empty page.
+            model_show_catalog: true,
             show_advanced: false,
             modal: None,
             notice,
@@ -830,7 +918,15 @@ impl App {
             mouse: None,
             refresh_task: None,
             next_refresh_notice: None,
-        })
+        };
+        // A cold server can legitimately have an empty discovery cache. Do
+        // the recovery once at startup so Models does not present an empty
+        // dead end that requires the user to know an undocumented refresh
+        // action. The request runs on the background worker.
+        if models_snapshot_available && app.models.catalog_models.is_empty() {
+            app.begin_model_refresh();
+        }
+        Ok(app)
     }
 
     /// Point the control center at a workspace directory for status and
@@ -1266,6 +1362,139 @@ impl App {
         self.set_notice("Refreshing model catalog…".to_string());
     }
 
+    /// Start the checkout scan when the Repositories page is shown before
+    /// any scan has completed. Every navigation path (sidebar arrows, Enter,
+    /// mouse, palette) funnels through here.
+    fn maybe_start_repo_scan(&mut self) {
+        if self.page == Page::Repositories && !self.repos_scanned {
+            self.begin_repo_scan();
+        }
+    }
+
+    /// Scan local roots for GitHub checkouts without blocking input. The
+    /// first visit to the Repositories page starts this automatically; `R`
+    /// rescans on demand.
+    pub fn begin_repo_scan(&mut self) {
+        if self.refresh_task.is_some() {
+            self.set_notice("Refresh already in progress".to_string());
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            // The `gh` identity scopes the scan to the user's own checkouts,
+            // exactly like the classic picker. It runs on the worker so a
+            // slow or missing `gh` never freezes input.
+            let github_user = github_authenticated_user();
+            let repos = discover_repos_in(&repo_scan_roots(), github_user.as_deref());
+            let _ = sender.send(RepoScanOutcome { repos, github_user });
+        });
+        self.refresh_task = Some(RefreshTask::Repos(receiver));
+        self.set_notice("Scanning local checkouts…".to_string());
+    }
+
+    /// Use one scanned checkout for the next Claude launch and point the
+    /// file viewer at it. One tap: no separate select-then-confirm step.
+    pub fn use_selected_repo(&mut self, index: usize) {
+        let Some(repo) = self.repos.get(index).cloned() else {
+            return;
+        };
+        self.repo_selected = index;
+        self.launch_repo = Some(repo.path.clone());
+        self.set_workspace(repo.path.clone());
+        self.set_notice(format!("Next Claude launch runs in {}", repo.identity()));
+    }
+
+    fn use_focused_repo(&mut self) {
+        if self.repos.is_empty() {
+            self.set_error("No repositories found; press R to rescan".to_string());
+            return;
+        }
+        self.use_selected_repo(self.repo_selected);
+    }
+
+    /// Add an explicitly opened path to the inventory when it is a GitHub
+    /// checkout, and use it immediately. Mirrors the Python picker's rule:
+    /// checkouts without a GitHub remote are not listed.
+    pub fn open_repo_path(&mut self, value: &str) {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let candidate = PathBuf::from(trimmed);
+        let github_user = self.github_user.clone();
+        let Some(repo) = repo_from_path(&candidate, github_user.as_deref()) else {
+            let message = match &github_user {
+                Some(user) => format!("That path is not a checkout owned by {user}."),
+                None => "That path is not inside a GitHub checkout.".to_string(),
+            };
+            self.set_error(message);
+            return;
+        };
+        let path = repo.path.clone();
+        match self.repos.iter().position(|known| known.path == path) {
+            Some(index) => self.repo_selected = index,
+            None => {
+                self.repos.push(repo);
+                self.sort_repos();
+                self.repo_selected = self
+                    .repos
+                    .iter()
+                    .position(|known| known.path == path)
+                    .unwrap_or(0);
+            }
+        }
+        self.use_focused_repo();
+    }
+
+    fn sort_repos(&mut self) {
+        self.repos.sort_by(|left, right| {
+            left.identity()
+                .to_ascii_lowercase()
+                .cmp(&right.identity().to_ascii_lowercase())
+                .then_with(|| {
+                    left.repository_name()
+                        .to_ascii_lowercase()
+                        .cmp(&right.repository_name().to_ascii_lowercase())
+                })
+                .then_with(|| left.path.cmp(&right.path))
+        });
+    }
+
+    /// Checkout the next Claude launch runs in. `None` keeps the folder the
+    /// control center started in.
+    pub fn launch_cwd(&self) -> Option<PathBuf> {
+        self.launch_repo.clone()
+    }
+
+    /// Whether a background refresh/scan/policy save is still in flight.
+    /// The render path uses this to show transient "scanning…" states.
+    pub fn background_busy(&self) -> bool {
+        self.refresh_task.is_some()
+    }
+
+    /// Owner the repository inventory is scoped to. Shown in the header so
+    /// an unscoped scan (no `gh` sign-in found) is visible, not silent.
+    pub fn repo_scope_label(&self) -> String {
+        match &self.github_user {
+            Some(user) => user.clone(),
+            None => "all GitHub checkouts".to_string(),
+        }
+    }
+
+    /// Short name shown on the Dashboard launch card and the Repos header.
+    pub fn launch_repo_name(&self) -> String {
+        if let Some(path) = &self.launch_repo {
+            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                return name.to_string();
+            }
+        }
+        self.workspace
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| self.workspace.to_string_lossy().into_owned())
+    }
+
     /// Apply completed background work between frames. A pending task is
     /// intentionally non-blocking; the next 200ms event-poll tick redraws the
     /// same screen and lets the user continue navigating.
@@ -1312,7 +1541,6 @@ impl App {
             },
             RefreshTask::ModelPolicy(receiver, success_notice) => match receiver.try_recv() {
                 Ok(Ok(result)) if result.valid && result.applied => {
-                    self.selected_models.clear();
                     self.begin_refresh_all_with_notice(Some(success_notice));
                 }
                 Ok(Ok(result)) => {
@@ -1329,6 +1557,40 @@ impl App {
                 Err(TryRecvError::Disconnected) => self.set_error(
                     "Model catalog worker stopped before returning a result".to_string(),
                 ),
+            },
+            RefreshTask::Repos(receiver) => match receiver.try_recv() {
+                Ok(outcome) => {
+                    self.repos = outcome.repos;
+                    self.github_user = outcome.github_user;
+                    self.repos_scanned = true;
+                    self.clamp_selections();
+                    let scope = self.repo_scope_label();
+                    if self.repos.is_empty() {
+                        if self.github_user.is_some() {
+                            self.set_notice(format!(
+                                "No checkouts owned by {scope}; press O to open a path"
+                            ));
+                        } else {
+                            self.set_notice(
+                                "No GitHub checkouts found (gh sign-in not found); press O to open a path"
+                                    .to_string(),
+                            );
+                        }
+                    } else if self.github_user.is_some() {
+                        self.set_notice(format!("Found {} repositories", self.repos.len()));
+                    } else {
+                        self.set_notice(format!(
+                            "Found {} repositories (unscoped: gh sign-in not found)",
+                            self.repos.len()
+                        ));
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    self.refresh_task = Some(RefreshTask::Repos(receiver));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.set_error("Repository scan stopped before returning data".to_string());
+                }
             },
         }
     }
@@ -1409,12 +1671,12 @@ impl App {
             KeyCode::Char('e') if self.editor_file_active() => {
                 return self.launch_external_editor();
             }
-            KeyCode::Char(' ') if self.model_page_focused() => self.toggle_selected_model(),
+            KeyCode::Char(' ') if self.model_page_focused() => self.toggle_current_model(),
             KeyCode::Char('p') if self.model_page_focused() => self.open_model_provider_picker(),
             KeyCode::Char('v') if self.model_page_focused() => self.toggle_model_catalog(),
             KeyCode::Char('n') if self.model_page_focused() => self.cycle_model_price(),
-            KeyCode::Char('t') if self.model_page_focused() => self.toggle_selected_models(),
-            KeyCode::Char('X') if self.model_page_focused() => self.disable_all_models(),
+            KeyCode::Char('t') if self.model_page_focused() => self.toggle_current_model(),
+            KeyCode::Char('X') if self.model_page_focused() => self.confirm_disable_all_models(),
             KeyCode::Char('e') => self.edit_action()?,
             KeyCode::Char('t') if self.page == Page::Providers => self.test_selected_provider(),
             KeyCode::Char('n') if self.page == Page::Providers => self.new_custom_provider(),
@@ -1428,6 +1690,11 @@ impl App {
             KeyCode::Char('/') if self.model_page_focused() => {
                 self.modal = Some(Modal::SearchModels {
                     input: TextInput::new(self.model_query.clone(), false, false),
+                });
+            }
+            KeyCode::Char('o') | KeyCode::Char('O') if self.repo_page_focused() => {
+                self.modal = Some(Modal::OpenRepo {
+                    input: TextInput::new(String::new(), false, false),
                 });
             }
             KeyCode::Char('a') if self.page == Page::Settings => {
@@ -1495,16 +1762,6 @@ impl App {
             .find(|hitbox| contains(hitbox.rect, mouse.column, mouse.row))
             .map(|hitbox| hitbox.action.clone());
         if let Some(action) = action {
-            let action = match action {
-                UiAction::SelectModel(index)
-                    if mouse
-                        .modifiers
-                        .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) =>
-                {
-                    UiAction::ToggleModelSelection(index)
-                }
-                other => other,
-            };
             return self.invoke_ui_action(action);
         }
         Ok(None)
@@ -1518,6 +1775,21 @@ impl App {
                 self.editor_focus = EditorFocus::Page;
                 self.focus = Focus::Editor;
                 self.content_scroll = 0;
+                if page == Page::Repositories {
+                    self.maybe_start_repo_scan();
+                }
+            }
+            UiAction::UseRepo(index) => {
+                self.use_selected_repo(index);
+                self.focus = Focus::Editor;
+                self.editor_focus = EditorFocus::Page;
+            }
+            UiAction::UseSelectedRepo => self.use_focused_repo(),
+            UiAction::RescanRepos => self.begin_repo_scan(),
+            UiAction::OpenRepoPath => {
+                self.modal = Some(Modal::OpenRepo {
+                    input: TextInput::new(String::new(), false, false),
+                });
             }
             UiAction::SelectProvider(index) => {
                 self.provider_selected = index;
@@ -1529,16 +1801,16 @@ impl App {
                 self.focus = Focus::Editor;
                 self.editor_focus = EditorFocus::Page;
             }
-            UiAction::ToggleModelSelection(index) => {
-                self.toggle_model_selection(index);
+            UiAction::ToggleModel(index) => {
+                self.toggle_single_model(index);
                 self.focus = Focus::Editor;
                 self.editor_focus = EditorFocus::Page;
             }
+            UiAction::ToggleCurrentModel => self.toggle_current_model(),
             UiAction::CycleModelProvider => self.cycle_model_provider(),
             UiAction::CycleModelPrice => self.cycle_model_price(),
             UiAction::ToggleModelCatalog => self.toggle_model_catalog(),
-            UiAction::ToggleSelectedModels => self.toggle_selected_models(),
-            UiAction::DisableAllModels => self.disable_all_models(),
+            UiAction::DisableAllModels => self.confirm_disable_all_models(),
             UiAction::SelectRouting(index) => {
                 self.routing_selected = index;
                 self.focus = Focus::Editor;
@@ -1658,6 +1930,14 @@ impl App {
         self.focus == Focus::Editor && matches!(self.editor_focus, EditorFocus::File(_))
     }
 
+    /// Repository-page shortcuts belong to the page itself, not to the
+    /// surrounding navigation chrome.
+    pub fn repo_page_focused(&self) -> bool {
+        self.page == Page::Repositories
+            && self.focus == Focus::Editor
+            && matches!(self.editor_focus, EditorFocus::Page)
+    }
+
     /// Model-page shortcuts belong to the page itself, not to the surrounding
     /// navigation chrome. This prevents Space or a filter key from changing
     /// model state while the sidebar or an opened file owns focus.
@@ -1679,6 +1959,7 @@ impl App {
                 self.page = Page::ALL[next];
                 self.editor_focus = EditorFocus::Page;
                 self.content_scroll = 0;
+                self.maybe_start_repo_scan();
             }
             return;
         }
@@ -1708,6 +1989,7 @@ impl App {
             self.page = Page::ALL[index];
             self.editor_focus = EditorFocus::Page;
             self.content_scroll = 0;
+            self.maybe_start_repo_scan();
             return;
         }
         if matches!(self.editor_focus, EditorFocus::File(_)) {
@@ -1733,6 +2015,7 @@ impl App {
         };
         match self.page {
             Page::Providers => self.provider_selected = index,
+            Page::Repositories => self.repo_selected = index,
             Page::Models => self.model_selected = index,
             Page::Routing => self.routing_selected = index,
             Page::Local => self.local_selected = index,
@@ -1744,6 +2027,7 @@ impl App {
     fn page_selection_len(&self) -> usize {
         match self.page {
             Page::Providers => self.config.provider_status.len(),
+            Page::Repositories => self.repos.len(),
             Page::Models => self.filtered_models().len(),
             Page::Routing => self.routing_field_indices().len(),
             Page::Local => self.local_field_indices().len(),
@@ -1879,6 +2163,7 @@ impl App {
                 self.page = page;
                 self.editor_focus = EditorFocus::Page;
                 self.focus = Focus::Editor;
+                self.maybe_start_repo_scan();
             }
             return Ok(());
         }
@@ -1887,6 +2172,7 @@ impl App {
         }
         match self.page {
             Page::Providers => self.configure_selected_provider(),
+            Page::Repositories => self.use_focused_repo(),
             Page::Models => self.assign_selected_model("MODEL"),
             Page::Routing | Page::Context | Page::Local | Page::Settings => self.edit_action()?,
             Page::Diagnostics => self.run_diagnostic(),
@@ -1911,6 +2197,7 @@ impl App {
     fn refresh_current(&mut self) {
         match self.page {
             Page::Models => self.begin_model_refresh(),
+            Page::Repositories => self.begin_repo_scan(),
             _ => self.begin_refresh_all(),
         }
     }
@@ -1928,6 +2215,7 @@ impl App {
     fn move_selection(&mut self, delta: isize) {
         let len = match self.page {
             Page::Providers => self.config.provider_status.len(),
+            Page::Repositories => self.repos.len(),
             Page::Models => self.filtered_models().len(),
             Page::Routing => self.routing_field_indices().len(),
             Page::Local => self.local_field_indices().len(),
@@ -1936,6 +2224,7 @@ impl App {
         };
         let selection = match self.page {
             Page::Providers => &mut self.provider_selected,
+            Page::Repositories => &mut self.repo_selected,
             Page::Models => &mut self.model_selected,
             Page::Routing => &mut self.routing_selected,
             Page::Local => &mut self.local_selected,
@@ -1955,10 +2244,8 @@ impl App {
 
     fn clamp_selections(&mut self) {
         self.provider_selected = clamp(self.provider_selected, self.config.provider_status.len());
+        self.repo_selected = clamp(self.repo_selected, self.repos.len());
         self.normalize_model_filters();
-        let inventory = self.model_inventory();
-        self.selected_models
-            .retain(|model| inventory.iter().any(|candidate| candidate == model));
         self.model_selected = clamp(self.model_selected, self.filtered_models().len());
         self.routing_selected = clamp(self.routing_selected, self.routing_field_indices().len());
         self.local_selected = clamp(self.local_selected, self.local_field_indices().len());
@@ -1994,15 +2281,30 @@ impl App {
             };
             registered_or_unreported && provider_matches && price_matches && search_matches
         });
+        // Free models sort first so the cheapest usable rows are visible
+        // without scrolling; unknown pricing stays between free and paid and
+        // is never mislabeled. The header states this ordering explicitly.
         models.sort_by(|left, right| {
-            let left_label = self.model_label(left);
-            let right_label = self.model_label(right);
-            left_label
-                .to_ascii_lowercase()
-                .cmp(&right_label.to_ascii_lowercase())
-                .then_with(|| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()))
+            let left_rank = self.model_price_rank(left);
+            let right_rank = self.model_price_rank(right);
+            left_rank.cmp(&right_rank).then_with(|| {
+                let left_label = self.model_label(left);
+                let right_label = self.model_label(right);
+                left_label
+                    .to_ascii_lowercase()
+                    .cmp(&right_label.to_ascii_lowercase())
+                    .then_with(|| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()))
+            })
         });
         models
+    }
+
+    fn model_price_rank(&self, model: &str) -> u8 {
+        match self.model_price_state(model) {
+            ModelPriceState::Free => 0,
+            ModelPriceState::Unknown => 1,
+            ModelPriceState::Paid => 2,
+        }
     }
 
     fn model_candidates(&self) -> Vec<String> {
@@ -2133,14 +2435,6 @@ impl App {
         }
     }
 
-    pub fn model_free_filter_label(&self) -> &'static str {
-        if self.model_price_filter == ModelPriceFilter::FreeOnly {
-            "Free only: ON"
-        } else {
-            "Free only: OFF"
-        }
-    }
-
     pub fn model_provider_label(&self) -> String {
         self.model_provider_options()
             .into_iter()
@@ -2153,18 +2447,19 @@ impl App {
         model_price_state(model, self.model_evidence(model))
     }
 
-    pub fn toggle_model_selection(&mut self, index: usize) {
+    /// Flip one row's actual ON/OFF access state immediately. One tap is
+    /// one enable/disable; there is no staging set to confirm afterwards.
+    pub fn toggle_single_model(&mut self, index: usize) {
         if self.model_policy_in_flight() {
-            self.set_notice("Model selection save is still in progress".to_string());
+            self.set_notice("Model save is still in progress".to_string());
             return;
         }
-        let Some(model) = self.filtered_models().get(index).cloned() else {
+        let models = self.filtered_models();
+        let Some(model) = models.get(index).cloned() else {
             return;
         };
-        if !self.selected_models.insert(model.clone()) {
-            self.selected_models.remove(&model);
-        }
         self.model_selected = index;
+        self.apply_single_model_toggle(&model);
     }
 
     fn model_policy_in_flight(&self) -> bool {
@@ -2172,14 +2467,64 @@ impl App {
             || self.next_refresh_notice.is_some()
     }
 
-    fn toggle_selected_model(&mut self) {
-        self.toggle_model_selection(self.model_selected);
+    fn toggle_current_model(&mut self) {
+        if self.model_policy_in_flight() {
+            self.set_notice("Model save is still in progress".to_string());
+            return;
+        }
+        let models = self.filtered_models();
+        let Some(model) = models.get(self.model_selected).cloned() else {
+            self.set_error("No model is focused; move to a row first".to_string());
+            return;
+        };
+        self.apply_single_model_toggle(&model);
+    }
+
+    /// Plan and send the allowlist change for exactly one model reference.
+    fn apply_single_model_toggle(&mut self, model: &str) {
+        let selected = HashSet::from([model.to_string()]);
+        let allowlist = self.model_catalog_allowlist();
+        let mode = self.model_catalog_mode();
+        let inventory = self.model_inventory();
+        let active = self.models.models.clone();
+        let enabling = !active.iter().any(|candidate| candidate == model);
+        let next =
+            plan_toggled_allowlist(mode.as_deref(), &allowlist, &inventory, &active, &selected);
+        self.apply_model_catalog(
+            next,
+            format!("{} {model}", if enabling { "Enabled" } else { "Disabled" }),
+        );
+    }
+
+    fn set_model_provider_filter(&mut self, value: String) {
+        self.model_provider_filter = value;
+        self.model_selected = 0;
+        self.refresh_missing_provider_catalog();
+    }
+
+    /// Recover a provider-specific empty catalog after the user chooses that
+    /// provider. This is triggered by the filter change rather than every
+    /// render, so a slow provider cannot create a refresh loop.
+    fn refresh_missing_provider_catalog(&mut self) {
+        if !self.model_show_catalog
+            || self.model_provider_filter == "all"
+            || !self.model_query.trim().is_empty()
+            || self.model_price_filter == ModelPriceFilter::FreeOnly
+        {
+            return;
+        }
+        let has_rows = self.model_inventory().iter().any(|model| {
+            Self::model_provider_id(model).eq_ignore_ascii_case(&self.model_provider_filter)
+        });
+        if !has_rows && self.refresh_task.is_none() {
+            self.begin_model_refresh();
+        }
     }
 
     fn cycle_model_provider(&mut self) {
         let options = self.model_provider_options();
         if options.is_empty() {
-            self.model_provider_filter = "all".to_string();
+            self.set_model_provider_filter("all".to_string());
             return;
         }
         let current = options
@@ -2187,8 +2532,7 @@ impl App {
             .position(|(_, value)| value.eq_ignore_ascii_case(&self.model_provider_filter))
             .unwrap_or(0);
         let next = (current + 1) % options.len();
-        self.model_provider_filter = options[next].1.clone();
-        self.model_selected = 0;
+        self.set_model_provider_filter(options[next].1.clone());
     }
 
     fn open_model_provider_picker(&mut self) {
@@ -2226,6 +2570,7 @@ impl App {
         self.model_show_catalog = !self.model_show_catalog;
         self.model_selected = 0;
         self.normalize_model_filters();
+        self.refresh_missing_provider_catalog();
     }
 
     pub fn model_catalog_allowlist(&self) -> HashSet<String> {
@@ -2278,31 +2623,19 @@ impl App {
         self.set_notice("Saving model selection…".to_string());
     }
 
-    fn toggle_selected_models(&mut self) {
-        if self.selected_models.is_empty() {
-            self.set_error("Select models with Space or Shift/Ctrl-click first".to_string());
+    /// Disabling everything is the one destructive model action, so it
+    /// asks first. Single-row toggles stay one tap because they are trivially
+    /// reversible; wiping the whole allowlist is not.
+    fn confirm_disable_all_models(&mut self) {
+        if self.model_policy_in_flight() {
+            self.set_notice("Model save is still in progress".to_string());
             return;
         }
-        let selected = self.selected_models.clone();
-        let allowlist = self.model_catalog_allowlist();
-        let mode = self.model_catalog_mode();
-        let inventory = self.model_inventory();
-        let active = self.models.models.clone();
-
-        // A single toggle action is deterministic for mixed selections: an
-        // active row is removed from the effective allowlist and an inactive
-        // catalog row is added. The provider/model ID shown in each row is
-        // the exact value written to the server.
-        let next =
-            plan_toggled_allowlist(mode.as_deref(), &allowlist, &inventory, &active, &selected);
-        self.apply_model_catalog(
-            next,
-            format!("Toggled {} selected model(s)", selected.len()),
-        );
-    }
-
-    fn disable_all_models(&mut self) {
-        self.apply_model_catalog(HashSet::new(), "All discovered models disabled".to_string());
+        self.modal = Some(Modal::Confirm {
+            title: "Disable all models".to_string(),
+            body: "Turn OFF every discovered model? Single rows can be re-enabled with Space or a click.".to_string(),
+            action: ConfirmAction::DisableAllModels,
+        });
     }
 
     pub fn model_inventory(&self) -> Vec<String> {
@@ -2472,7 +2805,10 @@ impl App {
             return;
         }
         if provider.kind == "connected_account" {
-            self.login_provider("browser");
+            self.set_notice(format!(
+                "{} is a connected account; use Sign in explicitly",
+                provider.display_name
+            ));
             return;
         }
         let indices = self.provider_field_indices(&provider);
@@ -2810,8 +3146,7 @@ impl App {
                 let field_key = key.clone();
                 self.modal = None;
                 if field_key == "__FCC_MODEL_PROVIDER__" {
-                    self.model_provider_filter = option.value;
-                    self.model_selected = 0;
+                    self.set_model_provider_filter(option.value);
                 } else {
                     let value = match option.value.as_str() {
                         "true" => Value::Bool(true),
@@ -2913,6 +3248,23 @@ impl App {
                     UiAction::DisconnectProvider,
                 );
             }
+            Page::Repositories => {
+                push(
+                    "Use repo for next launch",
+                    "repositories checkout folder",
+                    UiAction::UseSelectedRepo,
+                );
+                push(
+                    "Rescan repositories",
+                    "repositories reload",
+                    UiAction::RescanRepos,
+                );
+                push(
+                    "Open repo path",
+                    "repositories folder",
+                    UiAction::OpenRepoPath,
+                );
+            }
             Page::Models => {
                 push("Search models", "models filter", UiAction::SearchModels);
                 push(
@@ -2921,9 +3273,9 @@ impl App {
                     UiAction::ChooseModelProvider,
                 );
                 push(
-                    "Toggle selected models",
-                    "models catalog",
-                    UiAction::ToggleSelectedModels,
+                    "Turn focused model on/off",
+                    "models single tap enable disable",
+                    UiAction::ToggleCurrentModel,
                 );
                 push(
                     "Disable all models",
@@ -2993,6 +3345,14 @@ impl App {
                     self.model_selected = 0;
                 }
                 InputOutcome::Continue => self.modal = Some(Modal::SearchModels { input }),
+            },
+            Modal::OpenRepo { mut input } => match edit_input(&mut input, key) {
+                InputOutcome::Cancel => {}
+                InputOutcome::Submit => {
+                    let path = input.value.clone();
+                    self.open_repo_path(&path);
+                }
+                InputOutcome::Continue => self.modal = Some(Modal::OpenRepo { input }),
             },
             Modal::SearchFiles { mut input } => match edit_input(&mut input, key) {
                 InputOutcome::Cancel => {}
@@ -3085,8 +3445,7 @@ impl App {
                     KeyCode::Enter => {
                         if let Some(option) = options.get(selected) {
                             if field_key == "__FCC_MODEL_PROVIDER__" {
-                                self.model_provider_filter = option.value.clone();
-                                self.model_selected = 0;
+                                self.set_model_provider_filter(option.value.clone());
                                 return Ok(None);
                             }
                             let value = if option.value == "true" {
@@ -3259,6 +3618,12 @@ impl App {
                     Err(error) => self.set_error(error.to_string()),
                 }
             }
+            ConfirmAction::DisableAllModels => {
+                self.apply_model_catalog(
+                    HashSet::new(),
+                    "All discovered models disabled".to_string(),
+                );
+            }
         }
     }
 
@@ -3370,11 +3735,15 @@ impl App {
             routing_selected: 0,
             local_selected: 0,
             setting_selected: 0,
+            repos: Vec::new(),
+            repo_selected: 0,
+            repos_scanned: false,
+            github_user: None,
+            launch_repo: None,
             model_query: String::new(),
             model_provider_filter: "all".to_string(),
             model_price_filter: ModelPriceFilter::default(),
-            model_show_catalog: false,
-            selected_models: HashSet::new(),
+            model_show_catalog: true,
             show_advanced: false,
             modal: None,
             notice: None,
@@ -3682,6 +4051,302 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
 
 pub fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+/// Bounded local checkout discovery for the Repositories page.
+///
+/// This mirrors the Python `repo_picker.discover_repos` contract: scan roots
+/// are the working directory plus `~/src`, `~/Projects`, and `~/Documents`;
+/// dot-directories and build-artifact folders are pruned; a `.git` marker
+/// avoids a subprocess for ordinary folders; linked worktrees are excluded;
+/// and only checkouts with a GitHub remote are listed. The scan runs on a
+/// worker thread (see `begin_repo_scan`) so a large tree can never freeze
+/// input; unlike the Python picker there is no on-disk cache. The `gh`
+/// login scopes the scan to its owner's checkouts (see
+/// `github_authenticated_user`); without one, the first GitHub remote wins.
+pub const MAX_REPOS: usize = 500;
+
+const REPO_SKIP_DIRS: &[&str] = &[
+    ".cache",
+    ".git",
+    ".idea",
+    ".mypy_cache",
+    ".next",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "Library",
+    "Trash",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+    "vendor",
+];
+
+fn run_git(dir: &std::path::Path, args: &[&str]) -> String {
+    let Ok(output) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+    else {
+        return String::new();
+    };
+    if !output.status.success() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+fn git_toplevel(dir: &std::path::Path) -> Option<PathBuf> {
+    let output = run_git(dir, &["rev-parse", "--show-toplevel"]);
+    if output.is_empty() {
+        return None;
+    }
+    let root = PathBuf::from(&output);
+    if root.is_dir() {
+        Some(root)
+    } else {
+        None
+    }
+}
+
+fn repo_is_linked_worktree(root: &std::path::Path) -> bool {
+    let marker = root.join(".git");
+    if !marker.is_file() {
+        return false;
+    }
+    let Ok(first) = std::fs::read_to_string(&marker)
+        .map(|text| text.lines().next().unwrap_or_default().trim().to_owned())
+    else {
+        return false;
+    };
+    let Some(gitdir) = first
+        .strip_prefix("gitdir:")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    let gitdir = if PathBuf::from(gitdir).is_absolute() {
+        PathBuf::from(gitdir)
+    } else {
+        root.join(gitdir)
+    };
+    gitdir
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("worktrees"))
+}
+
+fn github_slug(url: &str) -> Option<String> {
+    let value = url.trim().strip_suffix(".git").unwrap_or(url.trim());
+    let value = value.trim_end_matches('/');
+    let lowered = value.to_ascii_lowercase();
+    if let Some(rest) = lowered.strip_prefix("git@github.com:") {
+        let start = value.len() - rest.len();
+        return Some(value[start..].to_string());
+    }
+    if let Some(index) = lowered.find("github.com/") {
+        let start = index + "github.com/".len();
+        let slug = value[start..].to_string();
+        if !slug.is_empty() {
+            return Some(slug);
+        }
+    }
+    None
+}
+
+fn repo_github_remote(root: &std::path::Path, github_user: Option<&str>) -> Option<String> {
+    // Mirrors the Python picker: with a `gh` identity, only a remote owned
+    // by that account counts; without one, the first GitHub remote wins.
+    // Either way a checkout with no GitHub remote is never listed.
+    let output = run_git(root, &["config", "--get-regexp", r"^remote\..*\.url$"]);
+    let mut first: Option<String> = None;
+    for line in output.lines() {
+        let (_, url) = line.split_once(' ').unwrap_or(("", line));
+        let Some(slug) = github_slug(url.trim()) else {
+            continue;
+        };
+        if first.is_none() {
+            first = Some(slug.clone());
+        }
+        match github_user {
+            None => return first,
+            Some(user)
+                if slug
+                    .split_once('/')
+                    .map(|(owner, _)| owner)
+                    .is_some_and(|owner| owner.eq_ignore_ascii_case(user)) =>
+            {
+                return Some(slug);
+            }
+            Some(_) => {}
+        }
+    }
+    if github_user.is_none() {
+        first
+    } else {
+        None
+    }
+}
+
+fn repo_branch(root: &std::path::Path) -> String {
+    let branch = run_git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if !branch.is_empty() {
+        return branch;
+    }
+    let detached = run_git(root, &["rev-parse", "--short", "HEAD"]);
+    if !detached.is_empty() {
+        return format!("detached:{detached}");
+    }
+    "?".to_string()
+}
+
+fn repo_from_path(dir: &std::path::Path, github_user: Option<&str>) -> Option<RepoEntry> {
+    let root = git_toplevel(dir)?;
+    if repo_is_linked_worktree(&root) {
+        return None;
+    }
+    let remote = repo_github_remote(&root, github_user)?;
+    let name = root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Some(RepoEntry {
+        name,
+        branch: repo_branch(&root),
+        remote,
+        path: root,
+    })
+}
+
+fn repo_scan_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(current) = std::env::current_dir() {
+        roots.push(current);
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        for leaf in ["src", "Projects", "Documents"] {
+            roots.push(PathBuf::from(&home).join(leaf));
+        }
+    }
+    roots
+}
+
+/// What a repository scan found, plus the identity that scoped it. The
+/// identity is the `gh` login when the CLI is signed in; `None` means the
+/// scan fell back to every GitHub remote, exactly like the classic picker.
+#[derive(Debug, Clone, Default)]
+pub struct RepoScanOutcome {
+    pub repos: Vec<RepoEntry>,
+    pub github_user: Option<String>,
+}
+
+/// Return the active GitHub CLI login without exposing any token. Mirrors
+/// the Python picker's `github_authenticated_user`: empty or whitespace
+/// bearing output never counts as an identity. The caller runs this on a
+/// worker thread with its own deadline because `std::process` has no
+/// wait-timeout; a stuck `gh` only delays one scan, never input.
+pub fn github_authenticated_user() -> Option<String> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let login = std::process::Command::new("gh")
+            .args(["api", "user", "--hostname", "github.com", "--jq", ".login"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .filter(|login| !login.is_empty() && !login.chars().any(char::is_whitespace));
+        let _ = sender.send(login);
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .ok()
+        .flatten()
+}
+
+/// Walk explicit roots for GitHub checkouts, deduplicated and sorted by
+/// identity. Split out so tests can scan a temporary tree instead of the
+/// user's home directory.
+pub fn discover_repos_in(roots: &[PathBuf], github_user: Option<&str>) -> Vec<RepoEntry> {
+    let mut normalized: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let Ok(candidate) = root.canonicalize() else {
+            continue;
+        };
+        if !candidate.is_dir() {
+            continue;
+        }
+        if normalized
+            .iter()
+            .any(|parent| candidate == *parent || candidate.starts_with(parent))
+        {
+            continue;
+        }
+        normalized.retain(|parent| !parent.starts_with(&candidate));
+        normalized.push(candidate);
+    }
+    let mut found: std::collections::HashMap<PathBuf, RepoEntry> = std::collections::HashMap::new();
+    for root in normalized {
+        if found.len() >= MAX_REPOS {
+            break;
+        }
+        if let Some(repo) = repo_from_path(&root, github_user) {
+            // A root inside a checkout is already fully represented; do not
+            // walk every child just to rediscover the same repository.
+            found.insert(repo.path.clone(), repo);
+            continue;
+        }
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            if found.len() >= MAX_REPOS {
+                break;
+            }
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            let mut children: Vec<_> = entries.filter_map(Result::ok).collect();
+            children.sort_by_key(|entry| entry.file_name());
+            for entry in children {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') || REPO_SKIP_DIRS.contains(&name.as_str()) {
+                    continue;
+                }
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                // Most directories are ordinary folders. Checking for the
+                // marker first avoids a Git subprocess for every one of them.
+                let has_marker = path.join(".git").is_dir() || path.join(".git").is_file();
+                if !has_marker {
+                    stack.push(path);
+                    continue;
+                }
+                if let Some(repo) = repo_from_path(&path, github_user) {
+                    found.insert(repo.path.clone(), repo);
+                }
+            }
+        }
+    }
+    let mut repos: Vec<RepoEntry> = found.into_values().collect();
+    repos.sort_by(|left, right| {
+        left.identity()
+            .to_ascii_lowercase()
+            .cmp(&right.identity().to_ascii_lowercase())
+            .then_with(|| {
+                left.repository_name()
+                    .to_ascii_lowercase()
+                    .cmp(&right.repository_name().to_ascii_lowercase())
+            })
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    repos
 }
 
 pub fn rendered_line_count(body: &str, width: u16) -> usize {
@@ -4014,13 +4679,15 @@ mod tests {
             "Hidden Free".to_string(),
         );
 
-        assert_eq!(app.filtered_models(), ["provider/free"]);
-        app.model_show_catalog = true;
+        // Catalog is the default view, so both rows are visible immediately.
         assert_eq!(app.filtered_models().len(), 2);
         assert!(app
             .filtered_models()
             .iter()
             .any(|model| model == "provider/hidden-free"));
+        app.model_show_catalog = false;
+        assert_eq!(app.filtered_models(), ["provider/free"]);
+        app.model_show_catalog = true;
         app.model_query = "hidden".to_string();
         app.clamp_selections();
         assert_eq!(app.model_selected, 0);
@@ -4053,8 +4720,10 @@ mod tests {
             KeyModifiers::NONE,
         )))
         .unwrap();
-        assert!(app.selected_models.is_empty());
+        assert!(app.refresh_task.is_none());
 
+        // Space on the focused row flips that row immediately: one tap is
+        // one enable/disable with no staging step.
         app.focus = Focus::Editor;
         app.model_selected = 0;
         app.handle_event(Event::Key(KeyEvent::new(
@@ -4062,7 +4731,11 @@ mod tests {
             KeyModifiers::NONE,
         )))
         .unwrap();
-        assert_eq!(app.selected_models, HashSet::from(["bai/one".to_string()]));
+        assert!(matches!(
+            app.refresh_task,
+            Some(RefreshTask::ModelPolicy(_, _))
+        ));
+        assert_eq!(app.notice.as_deref(), Some("Saving model selection…"));
     }
 
     #[test]
@@ -4194,7 +4867,6 @@ mod tests {
     #[test]
     fn completed_model_policy_save_starts_snapshot_refresh() {
         let mut app = App::fixture();
-        app.selected_models.insert("bai/one".to_string());
         let (sender, receiver) = std::sync::mpsc::channel();
         app.refresh_task = Some(RefreshTask::ModelPolicy(
             receiver,
@@ -4211,25 +4883,24 @@ mod tests {
         app.poll_background();
 
         assert!(matches!(app.refresh_task, Some(RefreshTask::All(_))));
-        assert!(app.selected_models.is_empty());
         assert_eq!(app.notice.as_deref(), Some("Refreshing FCC snapshot…"));
         assert_eq!(app.next_refresh_notice.as_deref(), Some("Models changed"));
     }
 
     #[test]
-    fn model_selection_is_locked_while_policy_save_refreshes() {
+    fn model_toggle_is_locked_while_policy_save_refreshes() {
         let mut app = App::fixture();
         app.page = Page::Models;
         app.models.models = vec!["bai/one".to_string()];
         let (_sender, receiver) = std::sync::mpsc::channel();
         app.refresh_task = Some(RefreshTask::ModelPolicy(receiver, "done".to_string()));
 
-        app.toggle_model_selection(0);
+        app.toggle_single_model(0);
 
-        assert!(app.selected_models.is_empty());
+        assert!(app.refresh_task.is_some());
         assert_eq!(
             app.notice.as_deref(),
-            Some("Model selection save is still in progress")
+            Some("Model save is still in progress")
         );
     }
 
@@ -4258,7 +4929,7 @@ mod tests {
     }
 
     #[test]
-    fn model_rows_are_selectable_with_a_mouse_click() {
+    fn model_rows_toggle_with_a_single_mouse_click() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
 
@@ -4275,11 +4946,13 @@ mod tests {
             .hitboxes
             .iter()
             .find_map(|hitbox| match &hitbox.action {
-                UiAction::SelectModel(1) => Some(hitbox.rect),
+                UiAction::ToggleModel(1) => Some(hitbox.rect),
                 _ => None,
             })
-            .expect("second model row should have a hitbox");
+            .expect("second model row should have a toggle hitbox");
 
+        // One click both focuses the row and flips its ON/OFF state: no
+        // Shift/Ctrl staging step is needed.
         app.handle_event(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: rect.x,
@@ -4291,38 +4964,11 @@ mod tests {
         assert_eq!(app.model_selected, 1);
         assert_eq!(app.focus, Focus::Editor);
         assert_eq!(app.selected_model().as_deref(), Some("provider/two"));
-
-        let first_rect = app
-            .hitboxes
-            .iter()
-            .find_map(|hitbox| match &hitbox.action {
-                UiAction::SelectModel(0) => Some(hitbox.rect),
-                _ => None,
-            })
-            .expect("first model row should have a hitbox");
-        app.handle_event(Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: first_rect.x,
-            row: first_rect.y,
-            modifiers: KeyModifiers::CONTROL,
-        }))
-        .unwrap();
-        assert_eq!(
-            app.selected_models,
-            HashSet::from(["provider/one".to_string()])
-        );
-
-        app.handle_event(Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: rect.x,
-            row: rect.y,
-            modifiers: KeyModifiers::SHIFT,
-        }))
-        .unwrap();
-        assert_eq!(
-            app.selected_models,
-            HashSet::from(["provider/one".to_string(), "provider/two".to_string()])
-        );
+        assert!(matches!(
+            app.refresh_task,
+            Some(RefreshTask::ModelPolicy(_, _))
+        ));
+        assert_eq!(app.notice.as_deref(), Some("Saving model selection…"));
     }
 
     #[test]
@@ -4445,9 +5091,11 @@ mod tests {
             serde_json::json!({"is_free": false}),
         );
 
+        // Free rows sort first, unknown pricing stays visible in the middle,
+        // and paid rows sort last. Unknown is never mislabeled as free.
         assert_eq!(
             app.filtered_models(),
-            ["bai/free-model", "bai/paid-model", "bai/unknown-model"]
+            ["bai/free-model", "bai/unknown-model", "bai/paid-model"]
         );
         assert_eq!(
             app.model_price_state("bai/free-model"),
@@ -4466,7 +5114,7 @@ mod tests {
     }
 
     #[test]
-    fn model_keyboard_controls_are_deterministic_and_multi_selectable() {
+    fn model_keyboard_controls_are_deterministic_and_single_tap() {
         let mut app = App::fixture();
         app.page = Page::Models;
         app.models.models = vec!["bai/one".to_string(), "cline/two".to_string()];
@@ -4486,25 +5134,24 @@ mod tests {
             },
         ];
 
+        // Catalog is the default view; Space flips the focused row at once.
+        assert!(app.model_show_catalog);
         app.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Char(' '),
             KeyModifiers::NONE,
         )))
         .unwrap();
-        assert_eq!(app.selected_models, HashSet::from(["bai/one".to_string()]));
-        app.handle_event(Event::Key(KeyEvent::new(
-            KeyCode::Char(' '),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        assert!(app.selected_models.is_empty());
+        assert!(matches!(
+            app.refresh_task,
+            Some(RefreshTask::ModelPolicy(_, _))
+        ));
 
         app.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Char('v'),
             KeyModifiers::NONE,
         )))
         .unwrap();
-        assert!(app.model_show_catalog);
+        assert!(!app.model_show_catalog);
         app.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Char('n'),
             KeyModifiers::NONE,
@@ -4552,6 +5199,47 @@ mod tests {
         .unwrap();
         assert_eq!(app.model_provider_filter, "cline");
         assert_eq!(app.filtered_models(), ["cline/two"]);
+    }
+
+    #[test]
+    fn provider_filter_matches_catalog_only_rows_by_provider_id() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.models = vec!["bai/active".to_string()];
+        app.models.catalog_models =
+            vec!["bai/active".to_string(), "openai/gpt-5.6-luna".to_string()];
+        app.config.provider_status = vec![ProviderStatus {
+            provider_id: "openai".to_string(),
+            display_name: "OpenAI / ChatGPT".to_string(),
+            kind: "connected_account".to_string(),
+            status: "connected".to_string(),
+            ..ProviderStatus::default()
+        }];
+
+        app.set_model_provider_filter("openai".to_string());
+
+        assert_eq!(app.filtered_models(), ["openai/gpt-5.6-luna"]);
+        assert!(app.refresh_task.is_none());
+    }
+
+    #[test]
+    fn empty_provider_catalog_triggers_one_recovery_refresh() {
+        let mut app = App::fixture();
+        app.page = Page::Models;
+        app.models.catalog_models = vec!["bai/active".to_string()];
+        app.config.provider_status = vec![ProviderStatus {
+            provider_id: "openai".to_string(),
+            display_name: "OpenAI / ChatGPT".to_string(),
+            kind: "connected_account".to_string(),
+            status: "connected".to_string(),
+            ..ProviderStatus::default()
+        }];
+
+        app.set_model_provider_filter("openai".to_string());
+
+        assert!(matches!(app.refresh_task, Some(RefreshTask::Models(_))));
+        assert_eq!(app.model_provider_filter, "openai");
+        assert_eq!(app.model_selected, 0);
     }
 
     #[test]
@@ -4611,6 +5299,286 @@ mod tests {
             plan_toggled_allowlist(Some("curated"), &allowlist, &inventory, &active, &selected,),
             HashSet::from(["bai/catalog-only".to_string(), "cline/retained".to_string(),])
         );
+    }
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+
+    fn init_repo(root: &std::path::Path, remote: Option<&str>) {
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("git command runs");
+            assert!(output.status.success());
+        };
+        git(&["init"]);
+        if let Some(url) = remote {
+            git(&["config", "remote.origin.url", url]);
+        }
+    }
+
+    fn repo_workbench(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("fcc-repos-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn github_slug_parsing_prefers_owner_slash_repo() {
+        assert_eq!(
+            github_slug("git@github.com:acme/widgets.git"),
+            Some("acme/widgets".to_string())
+        );
+        assert_eq!(
+            github_slug("https://github.com/acme/widgets"),
+            Some("acme/widgets".to_string())
+        );
+        assert_eq!(github_slug("https://example.com/solo.git"), None);
+        assert_eq!(github_slug(""), None);
+    }
+
+    #[test]
+    fn linked_worktree_markers_are_excluded() {
+        let dir = repo_workbench("worktree");
+        let main = dir.join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::write(
+            main.join(".git"),
+            "gitdir: /nowhere/checkouts/main/.git/worktrees/wt1\n",
+        )
+        .unwrap();
+        assert!(repo_is_linked_worktree(&main));
+        let plain = dir.join("plain");
+        std::fs::create_dir_all(plain.join(".git")).unwrap();
+        assert!(!repo_is_linked_worktree(&plain));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repo_discovery_lists_github_checkouts_and_skips_the_rest() {
+        if !git_available() {
+            return;
+        }
+        let dir = repo_workbench("discover");
+        let github = dir.join("gh-proj");
+        std::fs::create_dir_all(&github).unwrap();
+        init_repo(&github, Some("git@github.com:acme/widgets.git"));
+        let other = dir.join("other-proj");
+        std::fs::create_dir_all(&other).unwrap();
+        init_repo(&other, Some("https://github.com/other/gadget.git"));
+        let local = dir.join("local-only");
+        std::fs::create_dir_all(&local).unwrap();
+        init_repo(&local, Some("https://example.com/solo.git"));
+        std::fs::create_dir_all(dir.join("plain")).unwrap();
+
+        // Without a `gh` identity every GitHub remote counts.
+        let repos = discover_repos_in(std::slice::from_ref(&dir), None);
+        assert_eq!(repos.len(), 2);
+        // With one, only that owner's checkouts are listed.
+        let repos = discover_repos_in(std::slice::from_ref(&dir), Some("acme"));
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].identity(), "acme/widgets");
+        assert_eq!(repos[0].repository_name(), "widgets");
+        assert!(!repos[0].branch.is_empty());
+        // Owner matching ignores case, like the classic picker.
+        let repos = discover_repos_in(std::slice::from_ref(&dir), Some("ACME"));
+        assert_eq!(repos.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repo_identity_falls_back_to_folder_name() {
+        let repo = RepoEntry {
+            name: "solo".to_string(),
+            path: PathBuf::from("/tmp/solo"),
+            branch: "main".to_string(),
+            remote: String::new(),
+        };
+        assert_eq!(repo.identity(), "solo");
+        assert_eq!(repo.repository_name(), "solo");
+    }
+
+    #[test]
+    fn using_a_repo_points_the_next_launch_at_that_checkout() {
+        let dir = repo_workbench("use");
+        let first = dir.join("alpha");
+        let second = dir.join("beta");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let mut app = App::fixture();
+        app.repos = vec![
+            RepoEntry {
+                name: "alpha".to_string(),
+                path: first.clone(),
+                branch: "main".to_string(),
+                remote: "acme/alpha".to_string(),
+            },
+            RepoEntry {
+                name: "beta".to_string(),
+                path: second.clone(),
+                branch: "main".to_string(),
+                remote: "acme/beta".to_string(),
+            },
+        ];
+        app.repos_scanned = true;
+
+        app.use_selected_repo(1);
+
+        assert_eq!(app.repo_selected, 1);
+        assert_eq!(app.launch_repo, Some(second.clone()));
+        assert_eq!(app.launch_cwd(), Some(second.clone()));
+        assert_eq!(app.workspace, second);
+        assert_eq!(app.launch_repo_name(), "beta");
+        assert!(app
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("acme/beta")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opening_a_non_checkout_path_is_an_error_not_a_row() {
+        let dir = repo_workbench("open");
+        std::fs::create_dir_all(dir.join("plain")).unwrap();
+        let mut app = App::fixture();
+        app.open_repo_path(dir.join("plain").to_str().unwrap());
+        assert!(app.repos.is_empty());
+        assert!(app.launch_repo.is_none());
+        assert!(app.error.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opening_a_github_checkout_uses_it_immediately() {
+        if !git_available() {
+            return;
+        }
+        let dir = repo_workbench("open-github");
+        let checkout = dir.join("widgets");
+        std::fs::create_dir_all(&checkout).unwrap();
+        init_repo(&checkout, Some("https://github.com/acme/widgets.git"));
+        let mut app = App::fixture();
+        app.open_repo_path(checkout.to_str().unwrap());
+        assert_eq!(app.repos.len(), 1);
+        assert_eq!(app.repos[0].identity(), "acme/widgets");
+        // `git rev-parse` returns the canonical path, which may differ from
+        // the un-resolved temporary path on symlinked filesystems (macOS).
+        assert_eq!(app.launch_cwd(), Some(app.repos[0].path.clone()));
+        assert_eq!(app.workspace, app.repos[0].path.clone());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn completed_repo_scan_marks_the_inventory_scanned() {
+        let mut app = App::fixture();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.refresh_task = Some(RefreshTask::Repos(receiver));
+        sender
+            .send(RepoScanOutcome {
+                repos: vec![RepoEntry {
+                    name: "widgets".to_string(),
+                    path: PathBuf::from("/tmp/widgets"),
+                    branch: "main".to_string(),
+                    remote: "acme/widgets".to_string(),
+                }],
+                github_user: Some("acme".to_string()),
+            })
+            .unwrap();
+        app.poll_background();
+        assert!(app.refresh_task.is_none());
+        assert!(app.repos_scanned);
+        assert_eq!(app.repos.len(), 1);
+        assert_eq!(app.github_user.as_deref(), Some("acme"));
+        assert_eq!(app.repo_scope_label(), "acme");
+        assert_eq!(app.notice.as_deref(), Some("Found 1 repositories"));
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.refresh_task = Some(RefreshTask::Repos(receiver));
+        sender
+            .send(RepoScanOutcome {
+                repos: vec![],
+                github_user: None,
+            })
+            .unwrap();
+        app.poll_background();
+        assert!(app.repos_scanned);
+        assert_eq!(app.repo_scope_label(), "all GitHub checkouts");
+        assert!(app
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("gh sign-in not found")));
+    }
+
+    #[test]
+    fn scoped_open_repo_path_rejects_other_owners() {
+        if !git_available() {
+            return;
+        }
+        let dir = repo_workbench("open-scoped");
+        let checkout = dir.join("gadget");
+        std::fs::create_dir_all(&checkout).unwrap();
+        init_repo(&checkout, Some("https://github.com/other/gadget.git"));
+        let mut app = App::fixture();
+        app.github_user = Some("acme".to_string());
+        app.open_repo_path(checkout.to_str().unwrap());
+        assert!(app.repos.is_empty());
+        assert!(app.launch_repo.is_none());
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("acme")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repo_keys_use_rows_and_open_paths_without_leaving_the_page() {
+        let dir = repo_workbench("keys");
+        let first = dir.join("alpha");
+        let second = dir.join("beta");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let mut app = App::fixture();
+        app.page = Page::Repositories;
+        app.repos = vec![
+            RepoEntry {
+                name: "alpha".to_string(),
+                path: first.clone(),
+                branch: "main".to_string(),
+                remote: "acme/alpha".to_string(),
+            },
+            RepoEntry {
+                name: "beta".to_string(),
+                path: second.clone(),
+                branch: "main".to_string(),
+                remote: "acme/beta".to_string(),
+            },
+        ];
+        app.repos_scanned = true;
+
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('o'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert!(matches!(app.modal, Some(Modal::OpenRepo { .. })));
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        assert!(app.modal.is_none());
+
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert_eq!(app.launch_repo, Some(first.clone()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

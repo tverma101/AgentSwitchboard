@@ -152,16 +152,23 @@ help modal that did not improve the actual workflow.
 
 ### Recovery
 
-The native page now starts with active/routable models, keeps the full cached
-catalog behind an explicit View toggle, filters by registered provider and
-All/Free-only pricing, and preserves exact provider/model references in the
-inspector. Enabled custom-provider model IDs are visible in Catalog before
-discovery fills the server cache. Space or Shift/Ctrl-click creates a pending
-multi-selection; `Toggle selected` inverts the actual ON/OFF state of those
-exact rows and `Disable all` clears the active allowlist in one validated
+The native page now starts with the full cached catalog on All providers,
+sorted free-first, in one full-width list under a single header, filters by
+registered provider and All/Free-only pricing, and carries the exact
+provider/model reference in the row itself with no inspector half.
+Enabled custom-provider model IDs are visible before
+discovery fills the server cache. Space or a single click turns one row
+on or off at once with no staging step; `Disable all` confirms
+before it clears the active allowlist in one validated
 Admin transaction. Model-policy saves run off the input thread and trigger a
-full snapshot refresh before success is shown. `Show catalog` and `Active
-only` are explicit page actions. Only Enter/Set MODEL assigns `MODEL`.
+full snapshot refresh before success is shown. `Catalog` and `Active
+only` flip with `V`. Only Enter (or the palette) assigns `MODEL`. A Repositories
+page restores the classic GitHub-checkout picker (scan scoped to the `gh`
+login with a labeled fallback, one-tap use for the
+next launch, open-path) that the transplant had dropped. Provider rows select
+on one tap without opening an editor or starting OAuth; configuration, sign-in,
+and tests are explicit actions. Selecting a provider with no cached model rows
+starts one recovery refresh and preserves that provider filter.
 Routing shortcuts and the decorative help affordance were removed from Models.
 
 ### Validation

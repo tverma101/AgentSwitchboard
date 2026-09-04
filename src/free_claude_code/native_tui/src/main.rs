@@ -242,7 +242,12 @@ fn launch_claude(
     }
     let mut child = Command::new(command);
     child.args(&launch_args);
-    if let Some(cwd) = args.launch_cwd.as_deref() {
+    // A checkout picked on the Repositories page wins over the folder the
+    // control center started in.
+    let cwd = app
+        .launch_cwd()
+        .or_else(|| args.launch_cwd.as_deref().map(std::path::PathBuf::from));
+    if let Some(cwd) = cwd.as_deref() {
         child.current_dir(cwd);
     }
     suspend_terminal(terminal)?;

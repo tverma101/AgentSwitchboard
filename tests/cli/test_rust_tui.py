@@ -299,6 +299,7 @@ def test_tui_list_commands_covers_every_page(
     for label in (
         "Dashboard",
         "Providers",
+        "Repositories",
         "Models",
         "Routing",
         "Context Window",
@@ -315,7 +316,11 @@ def test_tui_palette_commands_mirror_rust_titles() -> None:
     assert "Open command palette" in rust_tui.PALETTE_COMMANDS
     assert "Set MODEL to selected model" in rust_tui.PALETTE_COMMANDS
     assert "Choose model provider" in rust_tui.PALETTE_COMMANDS
-    assert "Toggle selected models" in rust_tui.PALETTE_COMMANDS
+    assert "Turn focused model on/off" in rust_tui.PALETTE_COMMANDS
+    assert "Toggle focused model on/off" not in rust_tui.PALETTE_COMMANDS
+    assert "Use repo for next launch" in rust_tui.PALETTE_COMMANDS
+    assert "Rescan repositories" in rust_tui.PALETTE_COMMANDS
+    assert "Open repo path" in rust_tui.PALETTE_COMMANDS
     assert "Enable selected models" not in rust_tui.PALETTE_COMMANDS
     assert "Disable selected models" not in rust_tui.PALETTE_COMMANDS
     assert "Disable all models" in rust_tui.PALETTE_COMMANDS

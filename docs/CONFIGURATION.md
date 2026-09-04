@@ -29,15 +29,22 @@ fcc-server
 
 The command opens the native Rust/Ratatui control center. Use the direct page
 sidebar (or `Ctrl+0` then `↑↓`/`j`/`k`) to move between Dashboard, Providers,
-Models, Routing, Context, Local Setup, Settings, Usage, and Diagnostics. `R`
+Repositories, Models, Routing, Context, Local Setup, Settings, Usage, and
+Diagnostics. `R`
 refreshes the current server snapshot; `C` launches `fcc-claude`; `!` launches
 `fccdanger`; and `Q` exits. Providers support status, tests, connected-account
-actions, and custom-provider CRUD. Models open on active/routable models; the
-registered-provider picker, All/Free-only filter, and Active/Catalog controls
-make the full cache an explicit choice. Enabled custom-provider model lists are
-shown in Catalog even before discovery. `/` searches, `Space` or
-`Shift/Ctrl-click` selects rows, `T` toggles the selected models' actual ON/OFF
-state, `Shift-X` disables all, and `Enter` assigns exactly the highlighted
+actions, and custom-provider CRUD. A provider row click only selects it;
+`Configure`, `Sign in`, and `Test` are explicit actions. Repositories scans for GitHub checkouts;
+`Enter` or a click points the next Claude launch at one. Models open on the
+full cached inventory
+with the provider filter on All, sorted free-first; the registered-provider
+picker, All/Free-only filter, and Catalog/Active-only view narrow it.
+Enabled custom-provider model lists are
+shown even before discovery. `/` searches, `Space` or a single click
+turns the focused row on or off at once, `V` flips
+Catalog/Active-only, `N` flips the free filter, `P` opens the provider
+picker, `Shift-X` confirms before disabling all, and `Enter` assigns exactly
+the highlighted
 routable model as `MODEL`. Settings and
 local/provider fields use the canonical Admin API, and blank configured
 secret/proxy edits preserve the existing value. `Tab`/`Shift-Tab` move focus
@@ -91,17 +98,20 @@ requests retain the exact provider/model reference. `MODEL_CATALOG_MODE=all`
 exposes discovered models; `curated` applies the exact references and wildcard
 rules in [model_visibility.py](../src/free_claude_code/config/model_visibility.py).
 
-The loopback Admin model picker opens on active/routable models and keeps the
-full cached discovery inventory behind the explicit `Catalog` view. Provider
+The loopback Admin model picker opens on the full cached discovery inventory,
+sorted free-first. Provider
 filters are built from registered providers (configured, connected, or
 not-yet-checked), not from every metadata provider in the cache. It never
-treats every discovered model as user-selected: checkboxes are pending
-selections for the explicit allowlist. `Toggle selected` inverts the actual
-ON/OFF state of the selected rows, and `Disable all` clears the active
+treats every discovered model as user-selected: each row shows its actual
+server-backed ON/OFF state, and a single tap (`Space` or click) turns
+exactly that row on or off. `Disable all` asks for confirmation before it
+clears the
+active
 allowlist without deleting the cached inventory, so disabled discoveries
 remain available to search and re-enable.
 Search and provider filters operate on that in-memory inventory without
-re-querying providers; use the page's `Refresh` action when a new discovery
+re-querying providers. A provider filter with no cached rows starts one
+recovery refresh automatically; use the page's `Refresh` action when a new discovery
 snapshot is wanted. The same response carries a sanitized provider-status
 inventory, so a registered provider remains visible in the filter before its
 first discovery completes and its empty state points to `Refresh`. The
