@@ -82,7 +82,8 @@ jobs:
           uv run pytest -q -n 0 \
             tests/cli/test_local_admin.py \
             tests/cli/test_model_selection_persistence.py \
-            tests/cli/test_terminal_control.py \
+            tests/cli/test_terminal_control_center.py \
+            tests/cli/test_terminal_settings.py \
             tests/test_redundancy_audit.py
           git diff --check
 
