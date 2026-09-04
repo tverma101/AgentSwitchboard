@@ -1,0 +1,37 @@
+name: PR215 replay diagnostic
+
+on:
+  push:
+    branches:
+      - feat/tui-tode-transplant
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Diagnose transplant replay onto current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git config user.name "PR215 diagnostic"
+          git config user.email "pr215-diagnostic@users.noreply.github.com"
+          git checkout --detach origin/main
+          set +e
+          git cherry-pick --no-commit aff93c5b076efc4c4914b6ca4319defa75f370aa
+          rc=$?
+          set -e
+          echo "CHERRY_PICK_EXIT=$rc"
+          echo "--- STATUS ---"
+          git status --short
+          echo "--- UNMERGED FILES ---"
+          git diff --name-only --diff-filter=U
+          echo "--- CONFLICT DIFF ---"
+          git diff --cc
+          exit 0
