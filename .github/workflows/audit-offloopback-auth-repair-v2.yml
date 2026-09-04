@@ -1,0 +1,150 @@
+name: audit-offloopback-auth-repair-v2
+
+on:
+  push:
+    branches: [fix/offloopback-auth-required]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Apply and validate final effective auth invariant
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/free_claude_code/config/settings.py")
+          text = path.read_text()
+          import_anchor = '"""Flat application settings schema loaded by Pydantic Settings."""\n\n'
+          if "import ipaddress\n" not in text:
+              if text.count(import_anchor) != 1:
+                  raise RuntimeError("settings import anchor changed")
+              text = text.replace(import_anchor, import_anchor + "import ipaddress\n", 1)
+
+          comment_old = """    # Optional proxy bearer token protecting public API endpoints.\n    # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.\n"""
+          comment_new = """    # Optional proxy bearer token protecting public API endpoints.\n    # Set via env `ANTHROPIC_AUTH_TOKEN`. Empty is allowed only on loopback.\n"""
+          if text.count(comment_old) != 1:
+              raise RuntimeError("auth comment anchor changed")
+          text = text.replace(comment_old, comment_new, 1)
+
+          anchor = """    @model_validator(mode=\"after\")\n    def prefer_dotenv_anthropic_auth_token(self) -> Settings:\n        \"\"\"Let explicit .env auth config override stale shell/client tokens.\"\"\"\n        dotenv_value = env_file_override(self.model_config, ANTHROPIC_AUTH_TOKEN_ENV)\n        if dotenv_value is not None:\n            self.anthropic_auth_token = dotenv_value\n        return self\n\n"""
+          validator = """    @model_validator(mode=\"after\")\n    def require_auth_for_non_loopback_host(self) -> Settings:\n        \"\"\"Prevent an unauthenticated proxy from binding beyond this machine.\"\"\"\n        normalized_host = self.host.strip().strip(\"[]\").casefold()\n        is_loopback = normalized_host == \"localhost\"\n        if not is_loopback:\n            try:\n                is_loopback = ipaddress.ip_address(normalized_host).is_loopback\n            except ValueError:\n                is_loopback = False\n        if not is_loopback and not self.anthropic_auth_token.strip():\n            raise ValueError(\n                \"ANTHROPIC_AUTH_TOKEN is required when HOST is not loopback; \"\n                \"use HOST=127.0.0.1 for an unauthenticated local server\"\n            )\n        return self\n\n"""
+          if text.count(anchor) != 1:
+              raise RuntimeError("auth validator anchor changed")
+          text = text.replace(anchor, anchor + validator, 1)
+          path.write_text(text)
+          PY
+
+          cat > tests/config/test_server_binding_auth.py <<'PY'
+          from unittest.mock import patch
+
+          import pytest
+          from pydantic import ValidationError
+
+          from free_claude_code.config.settings import Settings
+
+
+          @pytest.fixture(autouse=True)
+          def clear_server_auth_env(monkeypatch) -> None:
+              monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+              monkeypatch.delenv("HOST", raising=False)
+
+
+          @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+          def test_loopback_server_may_run_without_proxy_token(host: str) -> None:
+              with patch(
+                  "free_claude_code.config.settings.env_file_override",
+                  return_value=None,
+              ):
+                  settings = Settings(
+                      host=host,
+                      _env_file=None,
+                      voice_note_enabled=False,
+                  )
+              assert settings.host == host
+              assert settings.anthropic_auth_token == ""
+
+
+          @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "proxy.example.test"])
+          def test_non_loopback_server_requires_proxy_token(host: str) -> None:
+              with (
+                  patch(
+                      "free_claude_code.config.settings.env_file_override",
+                      return_value=None,
+                  ),
+                  pytest.raises(ValidationError, match="ANTHROPIC_AUTH_TOKEN is required"),
+              ):
+                  Settings(host=host, _env_file=None, voice_note_enabled=False)
+
+
+          def test_non_loopback_server_accepts_environment_proxy_token(monkeypatch) -> None:
+              monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "test-token")
+              with patch(
+                  "free_claude_code.config.settings.env_file_override",
+                  return_value=None,
+              ):
+                  settings = Settings(
+                      host="0.0.0.0",
+                      _env_file=None,
+                      voice_note_enabled=False,
+                  )
+              assert settings.host == "0.0.0.0"
+              assert settings.anthropic_auth_token == "test-token"
+
+
+          def test_managed_empty_token_rejects_non_loopback_bind(monkeypatch) -> None:
+              monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+              with (
+                  patch(
+                      "free_claude_code.config.settings.env_file_override",
+                      return_value="",
+                  ),
+                  pytest.raises(ValidationError, match="ANTHROPIC_AUTH_TOKEN is required"),
+              ):
+                  Settings(host="0.0.0.0", _env_file=None, voice_note_enabled=False)
+
+
+          def test_managed_nonempty_token_allows_non_loopback_bind() -> None:
+              with patch(
+                  "free_claude_code.config.settings.env_file_override",
+                  return_value="managed-token",
+              ):
+                  settings = Settings(
+                      host="0.0.0.0",
+                      _env_file=None,
+                      voice_note_enabled=False,
+                  )
+              assert settings.anthropic_auth_token == "managed-token"
+          PY
+
+          uv sync --locked
+          uv run ruff format src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
+          uv run ruff check --fix src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
+          uv run ty check
+          uv run pytest -q -n 0 tests/config/test_server_binding_auth.py tests/config/test_config.py
+          git diff --check origin/main...HEAD
+
+          git rm \
+            .github/workflows/audit-offloopback-auth-repair.yml \
+            .github/workflows/audit-offloopback-auth-repair-v2.yml
+          git add src/free_claude_code/config/settings.py tests/config/test_server_binding_auth.py
+          git commit -m "fix: require auth for non-loopback server binds"
+          git push origin HEAD:fix/offloopback-auth-required
