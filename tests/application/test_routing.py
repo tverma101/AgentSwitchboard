@@ -366,8 +366,7 @@ def test_model_router_routes_gateway_encoded_provider_model_directly(settings):
     assert routed.resolved.provider_id == "nvidia_nim"
     assert routed.resolved.provider_model == "deepseek-ai/deepseek-v4-pro"
     assert (
-        routed.resolved.provider_model_ref
-        == "anthropic/nvidia_nim/deepseek-ai/deepseek-v4-pro"
+        routed.resolved.provider_model_ref == "nvidia_nim/deepseek-ai/deepseek-v4-pro"
     )
 
 
@@ -407,8 +406,7 @@ def test_model_router_routes_ultra_gateway_model_with_ultracode_effort(settings)
     assert routed.resolved.provider_id == "nvidia_nim"
     assert routed.resolved.provider_model == "deepseek-ai/deepseek-v4-pro"
     assert (
-        routed.resolved.provider_model_ref
-        == "claude-3-freecc-ultra/nvidia_nim/deepseek-ai/deepseek-v4-pro"
+        routed.resolved.provider_model_ref == "nvidia_nim/deepseek-ai/deepseek-v4-pro"
     )
     assert routed.resolved.reasoning_preference is ReasoningPreference.ULTRACODE
     assert routed.reasoning.control is ReasoningControl.ON
@@ -601,3 +599,43 @@ def test_parent_route_registry_evicts_oldest_entry() -> None:
 
     assert registry.lookup("first", generation_id=1) is None
     assert registry.lookup("second", generation_id=1) is route
+
+
+def test_model_router_routes_enabled_custom_provider_directly(settings):
+    custom_settings = settings.model_copy(
+        update={
+            "custom_providers_json": (
+                '{"providers":[{"id":"custom-lane","display_name":"Custom Lane",'
+                '"base_url":"http://localhost:9000/v1","local":true,'
+                '"models":["model-x"],"enabled":true}]}'
+            )
+        }
+    )
+    router = ModelRouter(custom_settings)
+
+    direct = router.resolve("custom_lane/model-x")
+    gateway = router.resolve("anthropic/custom_lane/model-x")
+
+    assert direct.provider_id == "custom_lane"
+    assert direct.provider_model == "model-x"
+    assert direct.provider_model_ref == "custom_lane/model-x"
+    assert gateway.provider_id == "custom_lane"
+    assert gateway.provider_model == "model-x"
+    assert gateway.provider_model_ref == "custom_lane/model-x"
+
+
+def test_gateway_model_uses_canonical_manual_context_window(settings):
+    settings = settings.model_copy(
+        update={
+            "model_context_windows": (
+                '{"nvidia_nim/deepseek-ai/deepseek-v4-pro": 777777}'
+            )
+        }
+    )
+
+    resolved = ModelRouter(settings).resolve(
+        "anthropic/nvidia_nim/deepseek-ai/deepseek-v4-pro"
+    )
+
+    assert resolved.provider_model_ref == "nvidia_nim/deepseek-ai/deepseek-v4-pro"
+    assert resolved.virtual_context_window == 777_777
