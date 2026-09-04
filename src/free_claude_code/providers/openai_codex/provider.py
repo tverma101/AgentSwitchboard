@@ -140,6 +140,7 @@ class OpenAICodexProvider(BaseProvider):
         """Discover models visible to the currently connected ChatGPT account."""
 
         async def fetch() -> Any:
+            self._authorize_egress(self._config.base_url)
             access = await self._auth.access()
             response = await self._client.get(
                 "models",
@@ -310,6 +311,7 @@ class OpenAICodexProvider(BaseProvider):
             attempt: ProviderAttempt | None = None
             stream_opened = False
             try:
+                self._authorize_egress(self._config.base_url)
                 access = await self._auth.access()
                 attempt = await self._admission.open_attempt(retry_session)
                 request_headers = {
