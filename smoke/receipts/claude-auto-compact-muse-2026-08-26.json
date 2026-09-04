@@ -1,0 +1,77 @@
+{
+  "schema": "fcc.claude-auto-compact.v1",
+  "receipt": "live-installed-claude-muse-auto-compact",
+  "captured_at": "2026-08-26T20:29:00Z",
+  "evidence": {
+    "kind": "live_installed_claude",
+    "status": "passed",
+    "synthetic": false,
+    "client_executed": true,
+    "gateway": "fcc_loopback_to_opencode_go"
+  },
+  "claude": {
+    "binary": "claude",
+    "version": "2.1.228",
+    "launcher": "fcc_loopback_proxy"
+  },
+  "harness": {
+    "package_version": "4.30.26",
+    "commit_sha": "b16f2450ffbced05e684d1f830960d6e60fbdff9",
+    "active_user_server_touched": false
+  },
+  "context": {
+    "requested_tokens": 50000,
+    "effective_tokens": 50000,
+    "seed_groups": 7,
+    "effective_window_observed_via": "automatic_compact_boundary_metadata",
+    "context_dropped": true
+  },
+  "compaction": {
+    "trigger": "auto",
+    "result": "success",
+    "compact_boundary_observed": true,
+    "compact_metadata_observed": true,
+    "manual_compact_command_sent": false
+  },
+  "post_compaction": {
+    "tool_name": "Bash",
+    "tool_result_completed": true,
+    "resume_invocation_returned": 0,
+    "continuation_marker_seen": true,
+    "client_request_count": 12,
+    "provider_completed_turns": 10,
+    "upstream_attempts_total": 10,
+    "upstream_attempts_per_completed_turn": 1.0,
+    "http_errors": 0,
+    "tool_calls_total": 4
+  },
+  "routing": {
+    "provider_id": "opencode_go",
+    "provider_model": "muse-spark-1.2-contributor",
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses",
+    "provider_ids_observed": ["OPENCODE_GO"],
+    "response_completed_events": 10,
+    "request_shape_hash_count": 10,
+    "stable_prefix_hash_count": 9,
+    "fcc_route_observed": true,
+    "direct_first_party_route_observed": false
+  },
+  "telemetry": {
+    "metadata_only": true,
+    "provider_http_error_count": 0,
+    "upstream_attempts_per_completed_turn": 1.0,
+    "requested_reasoning_effort": "high",
+    "effective_reasoning_effort": "high",
+    "provider_opaque_reasoning": true
+  },
+  "artifacts": {
+    "source": "smoke/prereq/test_cli_prereq_live.py::test_claude_cli_auto_compact_resume_when_requested",
+    "retained_content": "metadata-only receipt; prompts, responses, session ids, credentials, and raw logs omitted"
+  },
+  "unverified_boundaries": [
+    "packet-level network capture was not used; direct_first_party_route_observed is based on the FCC route receipt",
+    "duplicate_tool_call_count was not emitted by this probe"
+  ]
+}
