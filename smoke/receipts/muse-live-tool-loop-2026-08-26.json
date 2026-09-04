@@ -1,0 +1,50 @@
+{
+  "schema": "fcc.muse-live-tool-loop.v1",
+  "receipt": "muse-spark-1.2-live-10-turn-tool-loop",
+  "captured_at": "2026-08-26T15:26:16Z",
+  "evidence": {
+    "kind": "live_provider_smoke",
+    "status": "passed",
+    "synthetic": false,
+    "client_executed": false,
+    "gateway": "fcc_loopback_isolated"
+  },
+  "harness": {
+    "tested_commit_sha": "6d82e8ac9daf0971530d241d3bda3a88257134c1",
+    "isolated_server": "loopback-isolated",
+    "active_user_server_touched": false
+  },
+  "routing": {
+    "provider_id": "opencode_go",
+    "provider_model": "muse-spark-1.2-contributor",
+    "provider_model_ref": "opencode_go/muse-spark-1.2-contributor",
+    "client_wire_api": "messages",
+    "upstream_protocol": "responses",
+    "terminal_event": "response.completed"
+  },
+  "workflow": {
+    "repetitions": 20,
+    "turns_per_repetition": 10,
+    "completed_repetitions": 20,
+    "completed_tool_turns": 200,
+    "expected_tool_calls": 200,
+    "one_tool_call_per_turn": true,
+    "unique_tool_ids_per_repetition": true,
+    "valid_terminal_stream_per_turn": true,
+    "visible_reasoning_text": false
+  },
+  "timing": {
+    "total_wall_seconds": 663.21,
+    "provider_requests": "sequential"
+  },
+  "artifacts": {
+    "source": "manual live probe using ConversationDriver and echo_smoke",
+    "retained_content": "metadata-only receipt; prompts, tool arguments, tool results, IDs, and reasoning payloads omitted"
+  },
+  "unverified_boundaries": [
+    "native OpenCode reference comparison",
+    "25-plus and 100-plus tool-definition workloads",
+    "high-reasoning long-payload workload",
+    "installed Claude Code client execution"
+  ]
+}

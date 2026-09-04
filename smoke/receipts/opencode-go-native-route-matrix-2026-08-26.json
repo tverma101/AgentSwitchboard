@@ -1,0 +1,75 @@
+{
+  "schema": "fcc.opencode-go-native-route-matrix.v1",
+  "receipt": "opencode-go-native-route-matrix",
+  "captured_at": "2026-08-26T15:36:24Z",
+  "evidence": {
+    "kind": "live_provider_smoke",
+    "status": "passed",
+    "synthetic": false,
+    "gateway": "fcc_loopback_isolated_and_direct_native",
+    "documentation_source": "https://dev.opencode.ai/docs/go/"
+  },
+  "harness": {
+    "tested_commit_sha": "81ad3037dd4f9ff564ab6a05db9d83a037f5cc0c",
+    "package_version": "4.30.28",
+    "active_user_server_touched": false
+  },
+  "native_routes": [
+    {
+      "protocol": "responses",
+      "model": "muse-spark-1.2-contributor",
+      "status": 200,
+      "terminal_event": "response.completed",
+      "event_count": 11,
+      "stream_content_type": "text/event-stream"
+    },
+    {
+      "protocol": "messages",
+      "model": "minimax-m2.7",
+      "status": 200,
+      "terminal_event": "message_stop",
+      "event_count": 15,
+      "stream_content_type": "text/event-stream",
+      "authentication": "x-api-key raw value"
+    },
+    {
+      "protocol": "chat/completions",
+      "model": "glm-5.3",
+      "status": 200,
+      "terminal_event": "finish_reason=stop",
+      "json_chunk_count": 114,
+      "stream_content_type": "text/event-stream"
+    }
+  ],
+  "harness_round_trip": [
+    {
+      "protocol": "messages",
+      "model": "opencode_go/minimax-m2.7",
+      "status": 200,
+      "marker_returned": true,
+      "post_terminal_ping_forwarded": false
+    },
+    {
+      "protocol": "chat/completions",
+      "model": "opencode_go/glm-5.3",
+      "status": 200,
+      "marker_returned": true
+    },
+    {
+      "protocol": "responses",
+      "model": "opencode_go/muse-spark-1.2-contributor",
+      "status": 200,
+      "marker_returned": true
+    }
+  ],
+  "safety_boundaries": {
+    "unknown_model_protocol": "rejected locally without a billable protocol probe",
+    "provider_discovery": "GET /models returned 31 IDs; live availability does not override the centralized protocol manifest",
+    "retained_content": "metadata-only receipt; prompts, responses, credentials, and raw event bodies omitted"
+  },
+  "unverified_boundaries": [
+    "all 31 live catalog IDs have not been assigned a protocol without documentation",
+    "native-vs-Harness cache/economic parity",
+    "long multi-turn workflows for the Messages and Chat routes"
+  ]
+}

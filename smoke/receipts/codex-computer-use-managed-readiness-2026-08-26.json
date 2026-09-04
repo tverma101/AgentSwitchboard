@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "kind": "live_codex_computer_use_managed_readiness",
+  "captured_at": "2026-08-26T16:42:15Z",
+  "implementation_commit": "5449bff57c195bb34e9f54cc0c1327f082655253",
+  "host": {
+    "os": "macOS 26.6",
+    "architecture": "arm64",
+    "codex_cli": "0.147.0",
+    "claude_code": "2.1.228"
+  },
+  "authentication": "codex login status reported ChatGPT authentication",
+  "model_execution": {
+    "disabled": true,
+    "model_turn_events_observed": 0,
+    "provider_network_requested": false
+  },
+  "native_contract": {
+    "compatible": true,
+    "tool_count": 10,
+    "schema_sha256": "9219d11eec973a0c6fcb399487f51496b0f0a327a58894e88629646e2dfe0ad9",
+    "official_skill_sha256": "2079334b8e4329bd12eb30719198146f8f844605ca3c354410315d2a39688d4e",
+    "official_skill_size_bytes": 6216,
+    "luna_tool_contract_sha256": "0830d2d4f5021ad640b57d6d2fa0d1019d2be2a6089dec701297663fa1d7b0c1"
+  },
+  "probe": {
+    "operations": [
+      {
+        "operation": "list_apps",
+        "completed": true,
+        "result_shape": "content_and_metadata",
+        "user_app_content_recorded": false
+      },
+      {
+        "operation": "get_app_state",
+        "app": "com.apple.calculator",
+        "completed": true,
+        "approval": "explicit_calculator_only",
+        "result_shape": "text_and_image_and_metadata",
+        "content_types": ["text", "image"],
+        "text_length": 1762,
+        "text_sha256": "3da7519918f240d2f5464901fed91464c5b5102b2b3c77b6b6271bb766b0df87",
+        "accessibility_tree": true,
+        "bundle_id_associated": true,
+        "screenshot_mime_type": "image/jpeg",
+        "screenshot_bytes": 24257,
+        "screenshot_sha256": "ff09b74d08780c87a68c17d07cf5ce9705fafcf504e3bf50627b366f0b326f83",
+        "user_app_content_recorded": false
+      }
+    ],
+    "elicitation": {
+      "count": 1,
+      "message": "Allow ChatGPT to use Calculator?",
+      "mode": "form",
+      "decision": "accept"
+    }
+  },
+  "unverified": [
+    "scroll and drag on the installed Computer Use client",
+    "cancellation/timeout with no duplicate side effects",
+    "native-vs-Harness parity beyond the recorded action matrix",
+    "Luna stable-prefix and cache economics after helper use"
+  ]
+}
