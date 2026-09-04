@@ -62,6 +62,7 @@ class GitHubModelsProvider(OpenAIChatProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return stream/tool-capable GitHub Models catalog ids."""
+        self._authorize_egress(self._catalog_url)
 
         async def request() -> httpx.Response:
             response = await self._model_list_client.get(
