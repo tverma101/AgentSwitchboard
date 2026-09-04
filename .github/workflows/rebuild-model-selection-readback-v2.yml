@@ -1,0 +1,96 @@
+name: rebuild-model-selection-readback-v2
+
+on:
+  push:
+    branches: [fix/model-selection-readback-clean-v2]
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Salvage and validate fallback model persistence read-back
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          git fetch origin main fix/stream-and-model-picker-reliability
+          test "$(git rev-parse origin/main)" = "79daf44f7ad15e4a4c5cb6575de8ed27856a6b94"
+
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str, label: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected one anchor, found {count}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          path = Path("src/free_claude_code/cli/local_admin.py")
+          replace_once(
+              path,
+              'ADMIN_REQUEST_TIMEOUT_SECONDS = 5.0\n',
+              'ADMIN_REQUEST_TIMEOUT_SECONDS = 5.0\n_MODEL_SELECTION_KEYS = frozenset(\n    {"MODEL", "MODEL_CATALOG_MODE", "MODEL_CATALOG_ALLOWLIST"}\n)\n',
+              "model selection keys",
+          )
+          replace_once(
+              path,
+              '''    if validation.get("valid") is not True:\n        return validation | {"applied": False}\n    return _request_json(\n        settings,\n        "/admin/api/config/apply",\n        method="POST",\n        payload=payload,\n    )\n\n\ndef _request_json(\n''',
+              '''    if validation.get("valid") is not True:\n        return validation | {"applied": False}\n    result = _request_json(\n        settings,\n        "/admin/api/config/apply",\n        method="POST",\n        payload=payload,\n    )\n    if result.get("applied") is True and _MODEL_SELECTION_KEYS.intersection(values):\n        _verify_model_selection_round_trip(settings, values)\n    return result\n\n\ndef _verify_model_selection_round_trip(\n    settings: Settings,\n    requested: Mapping[str, Any],\n) -> None:\n    """Fail closed when a model-selection save disagrees with persisted config."""\n\n    config = get_admin_config(settings)\n    fields = config.get("fields")\n    if not isinstance(fields, list):\n        raise LocalAdminError("Admin config could not verify saved model settings")\n    persisted = {\n        field.get("key"): field.get("value")\n        for field in fields\n        if isinstance(field, dict) and isinstance(field.get("key"), str)\n    }\n    for key in _MODEL_SELECTION_KEYS.intersection(requested):\n        expected = requested[key]\n        actual = persisted.get(key)\n        if key == "MODEL_CATALOG_ALLOWLIST":\n            matches = _normalized_model_allowlist(actual) == _normalized_model_allowlist(\n                expected\n            )\n        else:\n            matches = str(actual).strip() == str(expected).strip()\n        if not matches:\n            raise LocalAdminError(\n                "Saved model settings did not match the server's persisted config"\n            )\n\n\ndef _normalized_model_allowlist(value: Any) -> tuple[str, ...]:\n    """Normalize allowlist formatting while preserving exact model references."""\n\n    if not isinstance(value, str):\n        return ()\n    entries = value.replace("\\r", "\\n").replace("\\n", ",").split(",")\n    return tuple(\n        sorted(\n            {entry.strip() for entry in entries if entry.strip()},\n            key=str.casefold,\n        )\n    )\n\n\ndef _request_json(\n''',
+              "apply/readback logic",
+          )
+
+          path = Path("tests/cli/test_local_admin.py")
+          replace_once(
+              path,
+              '''        side_effect=[{"valid": True}, {"applied": True, "valid": True}],\n''',
+              '''        side_effect=[\n            {"valid": True},\n            {"applied": True, "valid": True},\n            {\n                "fields": [\n                    {\n                        "key": "MODEL",\n                        "value": "opencode_go/muse-spark-1.2-contributor",\n                    }\n                ]\n            },\n        ],\n''',
+              "local admin response sequence",
+          )
+          replace_once(
+              path,
+              '''        call(\n            settings,\n            "/admin/api/config/apply",\n            method="POST",\n            payload={"values": values},\n        ),\n    ]\n''',
+              '''        call(\n            settings,\n            "/admin/api/config/apply",\n            method="POST",\n            payload={"values": values},\n        ),\n        call(settings, "/admin/api/config"),\n    ]\n''',
+              "local admin expected readback",
+          )
+          PY
+
+          git show origin/fix/stream-and-model-picker-reliability:tests/cli/test_model_selection_persistence.py > tests/cli/test_model_selection_persistence.py
+
+          uv sync --locked
+          uv run ruff format \
+            src/free_claude_code/cli/local_admin.py \
+            tests/cli/test_local_admin.py \
+            tests/cli/test_model_selection_persistence.py
+          uv run ruff check --fix \
+            src/free_claude_code/cli/local_admin.py \
+            tests/cli/test_local_admin.py \
+            tests/cli/test_model_selection_persistence.py
+          uv run ty check
+          uv run pytest -q -n 0 \
+            tests/cli/test_local_admin.py \
+            tests/cli/test_model_selection_persistence.py \
+            tests/cli/test_terminal_control_center.py \
+            tests/cli/test_terminal_settings.py \
+            tests/test_redundancy_audit.py
+          git diff --check
+
+          git rm .github/workflows/rebuild-model-selection-readback-v2.yml
+          git add \
+            src/free_claude_code/cli/local_admin.py \
+            tests/cli/test_local_admin.py \
+            tests/cli/test_model_selection_persistence.py
+          git commit -m "fix: verify terminal model selection persistence"
+          git push origin HEAD:fix/model-selection-readback-clean-v2
