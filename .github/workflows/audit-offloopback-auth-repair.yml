@@ -57,7 +57,11 @@ jobs:
 
           @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
           def test_loopback_server_may_run_without_proxy_token(host: str) -> None:
-              settings = Settings(HOST=host, ANTHROPIC_AUTH_TOKEN="", voice_note_enabled=False)
+              settings = Settings(
+                  host=host,
+                  anthropic_auth_token="",
+                  voice_note_enabled=False,
+              )
               assert settings.host == host
               assert settings.anthropic_auth_token == ""
 
@@ -65,13 +69,17 @@ jobs:
           @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "proxy.example.test"])
           def test_non_loopback_server_requires_proxy_token(host: str) -> None:
               with pytest.raises(ValidationError, match="ANTHROPIC_AUTH_TOKEN is required"):
-                  Settings(HOST=host, ANTHROPIC_AUTH_TOKEN="", voice_note_enabled=False)
+                  Settings(
+                      host=host,
+                      anthropic_auth_token="",
+                      voice_note_enabled=False,
+                  )
 
 
           def test_non_loopback_server_accepts_explicit_proxy_token() -> None:
               settings = Settings(
-                  HOST="0.0.0.0",
-                  ANTHROPIC_AUTH_TOKEN="test-token",
+                  host="0.0.0.0",
+                  anthropic_auth_token="test-token",
                   voice_note_enabled=False,
               )
               assert settings.host == "0.0.0.0"
