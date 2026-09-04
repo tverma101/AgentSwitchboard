@@ -41,6 +41,10 @@ async def run_local_a3s_search(query: str) -> list[dict[str, str]] | None:
         stdout, _stderr = await asyncio.wait_for(
             _read_process_output(process), timeout=_A3S_PROCESS_TIMEOUT_SECONDS
         )
+    except asyncio.CancelledError:
+        _terminate_process(process)
+        await process.wait()
+        raise
     except TimeoutError:
         _terminate_process(process)
         await process.wait()
@@ -92,22 +96,58 @@ async def run_local_a3s_search(query: str) -> list[dict[str, str]] | None:
 
 
 async def _read_process_output(process: Process[bytes]) -> tuple[bytes, bytes]:
-    """Read bounded child output without allowing a pipe to deadlock the child."""
+    """Read bounded child output while continuously draining both pipes."""
     assert process.stdout is not None
     assert process.stderr is not None
-    stdout_task = asyncio.create_task(process.stdout.read(_A3S_STDOUT_CAP_BYTES + 1))
-    stderr_task = asyncio.create_task(process.stderr.read(_A3S_STDERR_CAP_BYTES))
+    stdout_task = asyncio.create_task(
+        _drain_stream_bounded(
+            process.stdout,
+            _A3S_STDOUT_CAP_BYTES,
+            terminate_process=process,
+        )
+    )
+    stderr_task = asyncio.create_task(
+        _drain_stream_bounded(process.stderr, _A3S_STDERR_CAP_BYTES)
+    )
     try:
-        stdout = await stdout_task
-        if len(stdout) > _A3S_STDOUT_CAP_BYTES:
-            _terminate_process(process)
-        stderr = await stderr_task
+        stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
         await process.wait()
         return stdout, stderr
-    finally:
+    except BaseException:
+        _terminate_process(process)
         for task in (stdout_task, stderr_task):
             if not task.done():
                 task.cancel()
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        await process.wait()
+        raise
+
+
+async def _drain_stream_bounded(
+    stream: asyncio.StreamReader,
+    cap_bytes: int,
+    *,
+    terminate_process: Process[bytes] | None = None,
+) -> bytes:
+    """Capture at most a bounded prefix while draining the stream to EOF."""
+    captured = bytearray()
+    capture_limit = cap_bytes + (1 if terminate_process is not None else 0)
+    terminated = False
+    while True:
+        chunk = await stream.read(64 * 1024)
+        if not chunk:
+            break
+        if len(captured) < capture_limit:
+            remaining = capture_limit - len(captured)
+            captured.extend(chunk[:remaining])
+        if (
+            terminate_process is not None
+            and len(captured) > cap_bytes
+            and not terminated
+        ):
+            _terminate_process(terminate_process)
+            terminated = True
+    return bytes(captured)
 
 
 def _terminate_process(process: Process[bytes]) -> None:
