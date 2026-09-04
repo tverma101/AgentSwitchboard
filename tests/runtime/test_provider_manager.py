@@ -450,7 +450,7 @@ async def test_cancelled_final_lease_release_keeps_owned_cleanup_running() -> No
 
 
 @pytest.mark.asyncio
-async def test_hot_cleanup_failure_keeps_published_replacement() -> None:
+async def test_hot_cleanup_failure_is_retried_on_next_replacement() -> None:
     factory = RuntimeFactory()
     manager = ProviderRuntimeManager(
         _settings("nvidia_nim/one"),
@@ -469,9 +469,15 @@ async def test_hot_cleanup_failure_keeps_published_replacement() -> None:
     assert 1 in manager._retired
 
     factory.runtimes[0].cleanup_error = None
-    await manager.close()
+    generation_id = await manager.replace(
+        _settings("nvidia_nim/three"),
+        commit=lambda: None,
+    )
 
+    assert generation_id == 3
     assert factory.runtimes[0].cleanup_calls == 2
+    assert 1 not in manager._retired
+    await manager.close()
     assert manager._retired == {}
 
 
