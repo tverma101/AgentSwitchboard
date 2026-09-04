@@ -1,0 +1,40 @@
+name: audit-rust-ci-enforcement
+
+on:
+  push:
+    branches: [fix/enforce-rust-ci-parity]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-python: false
+      - name: Apply and validate CI enforcement
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AgentSwitchboard audit repair"
+          git config user.email "audit-repair@users.noreply.github.com"
+          python scripts/apply_ci_rust_enforcement.py
+          uv sync --locked
+          uv run ruff format tests/scripts/test_ci_scripts.py tests/scripts/test_ci_workflow_enforcement.py
+          uv run ruff check --fix tests/scripts/test_ci_scripts.py tests/scripts/test_ci_workflow_enforcement.py
+          uv run ty check
+          sh -n scripts/ci.sh
+          pwsh -NoProfile -Command '$null = [scriptblock]::Create((Get-Content -Raw scripts/ci.ps1))'
+          uv run pytest -q -n 0 tests/scripts/test_ci_scripts.py tests/scripts/test_ci_workflow_enforcement.py
+          git diff --check
+          git rm scripts/apply_ci_rust_enforcement.py .github/workflows/audit-rust-ci-enforcement.yml
+          git add .github/workflows/tests.yml scripts/ci.sh scripts/ci.ps1 tests/scripts/test_ci_scripts.py tests/scripts/test_ci_workflow_enforcement.py
+          git commit -m "ci: make protected pytest gate depend on Rust"
+          git push origin HEAD:fix/enforce-rust-ci-parity
