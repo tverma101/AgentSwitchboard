@@ -314,6 +314,7 @@ class ProviderRuntimeManager:
             if self._closing or self._closed:
                 raise ApplicationUnavailableError("Provider runtime is shutting down.")
             await self._cancel_refresh()
+            await self._retry_retired_cleanup()
             await self._retry_unpublished_cleanup()
             candidate_id = self._next_generation_id
             candidate_runtime: ProviderRuntime | None = None
@@ -381,7 +382,7 @@ class ProviderRuntimeManager:
             )
             generation_results = await asyncio.gather(
                 *(
-                    self._close_generation(generation, forced=False)
+                    self._close_generation(generation, forced=True)
                     for generation in generations
                 )
             )
@@ -492,6 +493,16 @@ class ProviderRuntimeManager:
         all_closed = True
         for runtime in tuple(self._unpublished):
             if not await self._cleanup_unpublished(runtime):
+                all_closed = False
+        return all_closed
+
+    async def _retry_retired_cleanup(self) -> bool:
+        """Retry drained retired generations that previously failed cleanup."""
+        all_closed = True
+        for generation in tuple(self._retired.values()):
+            if generation.active_leases != 0:
+                continue
+            if not await self._close_generation(generation, forced=False):
                 all_closed = False
         return all_closed
 

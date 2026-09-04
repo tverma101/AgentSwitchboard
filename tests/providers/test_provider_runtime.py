@@ -669,8 +669,10 @@ def test_unknown_provider_raises_unknown_provider_type_error():
 
 
 @pytest.mark.asyncio
-async def test_provider_runtime_cleanup_runs_all_even_if_one_fails() -> None:
-    """Successful providers leave the cache while failed providers remain retryable."""
+async def test_provider_runtime_cleanup_runs_all_even_if_one_persistently_fails() -> (
+    None
+):
+    """Successful providers leave the cache while persistent failures remain retryable."""
     p1 = MagicMock()
     p1.cleanup = AsyncMock(side_effect=RuntimeError("first"))
     p2 = MagicMock()
@@ -680,7 +682,7 @@ async def test_provider_runtime_cleanup_runs_all_even_if_one_fails() -> None:
     with pytest.raises(RuntimeError, match="first"):
         await runtime.cleanup()
 
-    p1.cleanup.assert_awaited_once()
+    assert p1.cleanup.await_count == 2
     p2.cleanup.assert_awaited_once()
     assert runtime.is_cached("a")
     assert not runtime.is_cached("b")
@@ -690,6 +692,24 @@ async def test_provider_runtime_cleanup_runs_all_even_if_one_fails() -> None:
 
     p1.cleanup.assert_awaited_once()
     assert not runtime.is_cached("a")
+
+
+@pytest.mark.asyncio
+async def test_provider_runtime_cleanup_retries_only_failed_provider_once() -> None:
+    transient = MagicMock()
+    transient.cleanup = AsyncMock(side_effect=[RuntimeError("transient"), None])
+    healthy = MagicMock()
+    healthy.cleanup = AsyncMock()
+    runtime = ProviderRuntime(
+        _make_settings(), {"transient": transient, "healthy": healthy}
+    )
+
+    await runtime.cleanup()
+
+    assert transient.cleanup.await_count == 2
+    healthy.cleanup.assert_awaited_once()
+    assert not runtime.is_cached("transient")
+    assert not runtime.is_cached("healthy")
 
 
 @pytest.mark.asyncio
