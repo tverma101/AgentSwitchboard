@@ -97,6 +97,7 @@ class CloudflareProvider(OpenAIChatProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return Cloudflare Workers AI metadata from account model search."""
+        self._authorize_egress(self._model_search_url)
 
         async def request() -> httpx.Response:
             response = await self._model_list_client.get(
