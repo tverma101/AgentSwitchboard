@@ -54,33 +54,38 @@ jobs:
           PY
 
           cat > tests/config/test_server_binding_auth.py <<'PY'
+          from unittest.mock import patch
+
           import pytest
           from pydantic import ValidationError
 
           from free_claude_code.config.settings import Settings
 
 
-          @pytest.fixture(autouse=True)
-          def isolate_managed_dotenv(monkeypatch) -> None:
-              monkeypatch.setitem(Settings.model_config, "env_file", ())
-              monkeypatch.delenv("HOST", raising=False)
-              monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
-
-
           @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
           def test_loopback_server_may_run_without_proxy_token(host: str) -> None:
-              settings = Settings(
-                  host=host,
-                  anthropic_auth_token="",
-                  voice_note_enabled=False,
-              )
+              with patch(
+                  "free_claude_code.config.settings.env_file_override",
+                  return_value=None,
+              ):
+                  settings = Settings(
+                      host=host,
+                      anthropic_auth_token="",
+                      voice_note_enabled=False,
+                  )
               assert settings.host == host
               assert settings.anthropic_auth_token == ""
 
 
           @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "proxy.example.test"])
           def test_non_loopback_server_requires_proxy_token(host: str) -> None:
-              with pytest.raises(ValidationError, match="ANTHROPIC_AUTH_TOKEN is required"):
+              with (
+                  patch(
+                      "free_claude_code.config.settings.env_file_override",
+                      return_value=None,
+                  ),
+                  pytest.raises(ValidationError, match="ANTHROPIC_AUTH_TOKEN is required"),
+              ):
                   Settings(
                       host=host,
                       anthropic_auth_token="",
@@ -89,13 +94,45 @@ jobs:
 
 
           def test_non_loopback_server_accepts_explicit_proxy_token() -> None:
-              settings = Settings(
-                  host="0.0.0.0",
-                  anthropic_auth_token="test-token",
-                  voice_note_enabled=False,
-              )
+              with patch(
+                  "free_claude_code.config.settings.env_file_override",
+                  return_value=None,
+              ):
+                  settings = Settings(
+                      host="0.0.0.0",
+                      anthropic_auth_token="test-token",
+                      voice_note_enabled=False,
+                  )
               assert settings.host == "0.0.0.0"
               assert settings.anthropic_auth_token == "test-token"
+
+
+          def test_managed_empty_token_rejects_non_loopback_bind() -> None:
+              with (
+                  patch(
+                      "free_claude_code.config.settings.env_file_override",
+                      return_value="",
+                  ),
+                  pytest.raises(ValidationError, match="ANTHROPIC_AUTH_TOKEN is required"),
+              ):
+                  Settings(
+                      host="0.0.0.0",
+                      anthropic_auth_token="process-token",
+                      voice_note_enabled=False,
+                  )
+
+
+          def test_managed_nonempty_token_allows_non_loopback_bind() -> None:
+              with patch(
+                  "free_claude_code.config.settings.env_file_override",
+                  return_value="managed-token",
+              ):
+                  settings = Settings(
+                      host="0.0.0.0",
+                      anthropic_auth_token="",
+                      voice_note_enabled=False,
+                  )
+              assert settings.anthropic_auth_token == "managed-token"
           PY
 
           uv sync --locked
