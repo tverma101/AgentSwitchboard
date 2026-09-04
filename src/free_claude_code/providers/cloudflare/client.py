@@ -13,11 +13,8 @@ from free_claude_code.config.provider_catalog import CLOUDFLARE_AI_REST_ROOT
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.http import maybe_await_aclose
-from free_claude_code.providers.model_listing import (
-    ModelListResponseError,
-    extract_openai_model_infos,
-)
+from free_claude_code.providers.http import request_model_list_json
+from free_claude_code.providers.model_listing import extract_openai_model_infos
 from free_claude_code.providers.openai_chat import (
     ChatTemplateReasoning,
     OpenAIChatProfile,
@@ -99,30 +96,18 @@ class CloudflareProvider(OpenAIChatProvider):
         """Return Cloudflare Workers AI metadata from account model search."""
         self._authorize_egress(self._model_search_url)
 
-        async def request() -> httpx.Response:
-            response = await self._model_list_client.get(
+        async def request() -> Any:
+            return await request_model_list_json(
+                self._model_list_client,
+                "GET",
                 self._model_search_url,
+                provider_name="CLOUDFLARE",
                 params={"format": "openrouter"},
                 headers=self._model_list_headers(),
             )
-            try:
-                response.raise_for_status()
-            except Exception:
-                await maybe_await_aclose(response)
-                raise
-            return response
 
-        response = await self._admission.run_with_retry(request)
-        try:
-            try:
-                payload = response.json()
-            except ValueError as exc:
-                raise ModelListResponseError(
-                    "CLOUDFLARE model-list response is malformed: invalid JSON"
-                ) from exc
-            return extract_openai_model_infos(payload, provider_name="CLOUDFLARE")
-        finally:
-            await maybe_await_aclose(response)
+        payload = await self._admission.run_with_retry(request)
+        return extract_openai_model_infos(payload, provider_name="CLOUDFLARE")
 
     def _handle_extra_reasoning(
         self, delta: Any, ledger: Any, *, output_reasoning: bool

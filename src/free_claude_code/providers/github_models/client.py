@@ -9,9 +9,10 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.http import maybe_await_aclose
+from free_claude_code.providers.http import request_model_list_json
 from free_claude_code.providers.model_listing import (
     ModelListResponseError,
+    ensure_model_list_record_limit,
     model_infos_from_ids,
 )
 from free_claude_code.providers.openai_chat import (
@@ -64,31 +65,19 @@ class GitHubModelsProvider(OpenAIChatProvider):
         """Return stream/tool-capable GitHub Models catalog ids."""
         self._authorize_egress(self._catalog_url)
 
-        async def request() -> httpx.Response:
-            response = await self._model_list_client.get(
+        async def request() -> Any:
+            return await request_model_list_json(
+                self._model_list_client,
+                "GET",
                 self._catalog_url,
+                provider_name="GITHUB_MODELS",
                 headers=self._model_list_headers(),
             )
-            try:
-                response.raise_for_status()
-            except Exception:
-                await maybe_await_aclose(response)
-                raise
-            return response
 
-        response = await self._admission.run_with_retry(request)
-        try:
-            try:
-                payload = response.json()
-            except ValueError as exc:
-                raise ModelListResponseError(
-                    "GITHUB_MODELS model-list response is malformed: invalid JSON"
-                ) from exc
-            return model_infos_from_ids(
-                _extract_supported_github_model_ids(payload),
-            )
-        finally:
-            await maybe_await_aclose(response)
+        payload = await self._admission.run_with_retry(request)
+        return model_infos_from_ids(
+            _extract_supported_github_model_ids(payload),
+        )
 
     def _model_list_headers(self) -> dict[str, str]:
         return _github_models_api_headers(self._api_key)
@@ -114,6 +103,9 @@ def _extract_supported_github_model_ids(payload: Any) -> frozenset[str]:
         raise ModelListResponseError(
             "GITHUB_MODELS model-list response is malformed: expected top-level array"
         )
+    ensure_model_list_record_limit(
+        payload, provider_name="GITHUB_MODELS", field_name="top-level array"
+    )
 
     model_ids: set[str] = set()
     for item in payload:

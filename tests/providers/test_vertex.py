@@ -410,7 +410,7 @@ async def test_vertex_model_discovery_follows_native_pagination() -> None:
     ]
     with patch.object(
         provider._model_list_client,
-        "get",
+        "send",
         new_callable=AsyncMock,
         side_effect=responses,
     ) as get:
@@ -422,20 +422,14 @@ async def test_vertex_model_discovery_follows_native_pagination() -> None:
             ProviderModelInfo("google/gemini-3.1-pro"),
         }
     )
-    assert get.await_args_list[0].kwargs == {
-        "params": None,
-        "headers": {
-            "Authorization": "Bearer access-token",
-            "x-goog-user-project": _PROJECT_ID,
-        },
-    }
-    assert get.await_args_list[1].kwargs == {
-        "params": {"pageToken": "page-2"},
-        "headers": {
-            "Authorization": "Bearer access-token",
-            "x-goog-user-project": _PROJECT_ID,
-        },
-    }
+    first_request = get.await_args_list[0].args[0]
+    second_request = get.await_args_list[1].args[0]
+    assert first_request.url.params.get("pageToken") is None
+    assert second_request.url.params.get("pageToken") == "page-2"
+    for request in (first_request, second_request):
+        assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.headers["x-goog-user-project"] == _PROJECT_ID
+    assert all(call.kwargs == {"stream": True} for call in get.await_args_list)
     assert all(response.is_closed for response in responses)
 
 
@@ -462,7 +456,7 @@ async def test_vertex_model_discovery_rejects_unusable_success_response(
     with (
         patch.object(
             provider._model_list_client,
-            "get",
+            "send",
             new_callable=AsyncMock,
             return_value=response,
         ),
@@ -491,7 +485,7 @@ async def test_vertex_model_discovery_rejects_repeated_page_token() -> None:
     with (
         patch.object(
             provider._model_list_client,
-            "get",
+            "send",
             new_callable=AsyncMock,
             side_effect=responses,
         ),

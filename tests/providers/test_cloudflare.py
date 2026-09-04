@@ -185,7 +185,7 @@ async def test_lists_models_from_cloudflare_model_search_endpoint(
     )
     with patch.object(
         cloudflare_provider._model_list_client,
-        "get",
+        "send",
         new_callable=AsyncMock,
         return_value=response,
     ) as mock_get:
@@ -196,11 +196,12 @@ async def test_lists_models_from_cloudflare_model_search_endpoint(
             }
         )
 
-    mock_get.assert_awaited_once_with(
-        _MODEL_SEARCH_URL,
-        params={"format": "openrouter"},
-        headers={"Authorization": "Bearer test-cloudflare-token"},
-    )
+    send_call = mock_get.await_args_list[0]
+    request = send_call.args[0]
+    assert str(request.url).startswith(_MODEL_SEARCH_URL)
+    assert request.url.params.get("format") == "openrouter"
+    assert request.headers["Authorization"] == "Bearer test-cloudflare-token"
+    assert send_call.kwargs == {"stream": True}
 
 
 @pytest.mark.asyncio

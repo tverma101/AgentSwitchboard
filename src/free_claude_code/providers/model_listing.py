@@ -15,6 +15,10 @@ from free_claude_code.application.model_metadata import (
     ProviderModelInfo as _ProviderModelInfo,
 )
 
+MAX_MODEL_LIST_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_MODEL_LIST_RECORDS = 10_000
+MAX_MODEL_LIST_PAGES = 32
+
 
 class ModelListResponseError(ValueError):
     """A provider model-list response cannot be parsed safely."""
@@ -157,11 +161,25 @@ def extract_tool_capable_model_infos(
     return frozenset(model_infos)
 
 
+def ensure_model_list_record_limit(
+    items: Sequence[Any], *, provider_name: str, field_name: str
+) -> None:
+    """Reject provider catalogs large enough to become a memory/CPU sink."""
+    if len(items) > MAX_MODEL_LIST_RECORDS:
+        raise _malformed(
+            provider_name,
+            f"{field_name} exceeded maximum records ({MAX_MODEL_LIST_RECORDS})",
+        )
+
+
 def model_list_items(payload: Any, *, provider_name: str) -> tuple[Any, ...]:
-    """Return a validated OpenAI-shaped model-list data array."""
+    """Return a validated and bounded OpenAI-shaped model-list data array."""
     data = _field(payload, "data")
     if not _is_sequence(data):
         raise _malformed(provider_name, "expected top-level data array")
+    ensure_model_list_record_limit(
+        data, provider_name=provider_name, field_name="data array"
+    )
     return tuple(data)
 
 

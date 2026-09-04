@@ -49,6 +49,8 @@ from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
 )
+from free_claude_code.providers.http import request_model_list_json
+from free_claude_code.providers.model_listing import ensure_model_list_record_limit
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryStreamSignal,
@@ -143,20 +145,27 @@ class OpenAICodexProvider(BaseProvider):
 
         async def fetch() -> Any:
             access = await self._auth.access()
-            response = await self._client.get(
-                "models",
-                params={"client_version": FCC_VERSION},
-                headers={**self._client_headers, **_auth_headers(access)},
-            )
-            if response.status_code == 401:
-                access = await self._auth.recover_unauthorized(access.access_token)
-                response = await self._client.get(
+            try:
+                return await request_model_list_json(
+                    self._client,
+                    "GET",
                     "models",
+                    provider_name="OPENAI",
                     params={"client_version": FCC_VERSION},
                     headers={**self._client_headers, **_auth_headers(access)},
                 )
-            response.raise_for_status()
-            return response.json()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 401:
+                    raise
+            access = await self._auth.recover_unauthorized(access.access_token)
+            return await request_model_list_json(
+                self._client,
+                "GET",
+                "models",
+                provider_name="OPENAI",
+                params={"client_version": FCC_VERSION},
+                headers={**self._client_headers, **_auth_headers(access)},
+            )
 
         payload = await self._admission.run_with_retry(fetch)
         return _model_infos(payload)
@@ -730,8 +739,12 @@ def _copy_without_prompt_cache_breakpoint(value: Any) -> Any:
 def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:
     if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
         raise ValueError("OpenAI model-list response is missing the models array.")
+    models = payload["models"]
+    ensure_model_list_record_limit(
+        models, provider_name="OPENAI", field_name="models array"
+    )
     infos: set[ProviderModelInfo] = set()
-    for model in payload["models"]:
+    for model in models:
         if not isinstance(model, dict):
             continue
         model_id = model.get("slug")
