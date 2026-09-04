@@ -3,7 +3,10 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from free_claude_code.providers.model_listing import ModelListResponseError
+from free_claude_code.providers.model_listing import (
+    ModelListResponseError,
+    ensure_model_list_record_limit,
+)
 
 
 def extract_vertex_model_page(payload: Any) -> tuple[frozenset[str], str | None]:
@@ -13,6 +16,9 @@ def extract_vertex_model_page(payload: Any) -> tuple[frozenset[str], str | None]
     models = payload.get("publisherModels")
     if not _is_sequence(models):
         raise _malformed("expected top-level publisherModels array")
+    ensure_model_list_record_limit(
+        models, provider_name="VERTEX", field_name="publisherModels array"
+    )
 
     model_ids: set[str] = set()
     for item in models:

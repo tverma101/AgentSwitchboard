@@ -14,8 +14,10 @@ from free_claude_code.providers.google_openai import (
     VertexReasoningEncoder,
     validate_google_extra_body,
 )
-from free_claude_code.providers.http import maybe_await_aclose
+from free_claude_code.providers.http import request_model_list_json
 from free_claude_code.providers.model_listing import (
+    MAX_MODEL_LIST_PAGES,
+    MAX_MODEL_LIST_RECORDS,
     ModelListResponseError,
     model_infos_from_ids,
 )
@@ -86,10 +88,15 @@ class VertexProvider(GoogleOpenAIProvider):
         model_ids: set[str] = set()
         page_token: str | None = None
         seen_page_tokens: set[str] = set()
-        while True:
+        for _page_number in range(1, MAX_MODEL_LIST_PAGES + 1):
             payload = await self._list_model_page(page_token)
             page_ids, page_token = extract_vertex_model_page(payload)
             model_ids.update(page_ids)
+            if len(model_ids) > MAX_MODEL_LIST_RECORDS:
+                raise ModelListResponseError(
+                    "VERTEX model-list response exceeded maximum records "
+                    f"({MAX_MODEL_LIST_RECORDS})"
+                )
             if page_token is None:
                 break
             if page_token in seen_page_tokens:
@@ -97,6 +104,11 @@ class VertexProvider(GoogleOpenAIProvider):
                     "VERTEX model-list response is malformed: repeated nextPageToken"
                 )
             seen_page_tokens.add(page_token)
+        else:
+            raise ModelListResponseError(
+                "VERTEX model-list response exceeded maximum pages "
+                f"({MAX_MODEL_LIST_PAGES})"
+            )
         if not model_ids:
             raise ModelListResponseError(
                 "VERTEX model-list response is malformed: response did not include "
@@ -105,30 +117,18 @@ class VertexProvider(GoogleOpenAIProvider):
         return model_infos_from_ids(model_ids)
 
     async def _list_model_page(self, page_token: str | None) -> Any:
-        async def request() -> httpx.Response:
+        async def request() -> Any:
             token = await self._access_token_provider()
-            response = await self._model_list_client.get(
+            return await request_model_list_json(
+                self._model_list_client,
+                "GET",
                 self._models_url,
+                provider_name="VERTEX",
                 params={"pageToken": page_token} if page_token else None,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "x-goog-user-project": self._project_id,
                 },
             )
-            try:
-                response.raise_for_status()
-            except Exception:
-                await maybe_await_aclose(response)
-                raise
-            return response
 
-        response = await self._admission.run_with_retry(request)
-        try:
-            try:
-                return response.json()
-            except ValueError as exc:
-                raise ModelListResponseError(
-                    "VERTEX model-list response is malformed: invalid JSON"
-                ) from exc
-        finally:
-            await maybe_await_aclose(response)
+        return await self._admission.run_with_retry(request)
