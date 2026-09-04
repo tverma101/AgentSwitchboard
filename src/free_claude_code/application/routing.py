@@ -8,16 +8,13 @@ from threading import RLock
 from loguru import logger
 
 from free_claude_code.application.errors import UnknownProviderError
+from free_claude_code.config.custom_providers import provider_registry_for_settings
 from free_claude_code.config.model_aliases import parse_model_aliases
 from free_claude_code.config.model_refs import (
     normalize_model_ref,
     parse_model_context_windows,
     parse_model_name,
     parse_provider_type,
-)
-from free_claude_code.config.provider_catalog import (
-    PROVIDER_CATALOG,
-    SUPPORTED_PROVIDER_IDS,
 )
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
@@ -245,6 +242,7 @@ class ModelRouter:
 
     def __init__(self, settings: Settings):
         self._settings = settings
+        self._provider_catalog = provider_registry_for_settings(settings).catalog
         self._model_aliases = parse_model_aliases(
             getattr(settings, "model_aliases", "")
         )
@@ -279,6 +277,7 @@ class ModelRouter:
             force_ultracode,
         ) = self._direct_provider_model(requested_model)
         if direct_provider_id is not None and direct_provider_model is not None:
+            provider_model_ref = f"{direct_provider_id}/{direct_provider_model}"
             if force_ultracode:
                 reasoning_preference = ReasoningPreference.ULTRACODE
             else:
@@ -298,13 +297,13 @@ class ModelRouter:
             )
             if virtual_context_window is None:
                 virtual_context_window = self._model_context_windows.get(
-                    requested_model
+                    provider_model_ref
                 )
             return ResolvedModel(
                 original_model=claude_model_name,
                 provider_id=direct_provider_id,
                 provider_model=direct_provider_model,
-                provider_model_ref=requested_model,
+                provider_model_ref=provider_model_ref,
                 reasoning_preference=reasoning_preference,
                 virtual_context_window=virtual_context_window,
                 route_source=route_source,
@@ -391,17 +390,16 @@ class ModelRouter:
 
         return bool(getattr(self._settings, "subagent_model_inherit", True))
 
-    @staticmethod
-    def _validate_provider_id(provider_id: str) -> None:
-        if provider_id not in PROVIDER_CATALOG:
-            raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
+    def _validate_provider_id(self, provider_id: str) -> None:
+        if provider_id not in self._provider_catalog:
+            raise UnknownProviderError.for_provider(provider_id, self._provider_catalog)
 
     def _direct_provider_model(
         self, model_name: str
     ) -> tuple[str | None, str | None, bool, bool]:
         decoded = decode_gateway_model_id(model_name)
         if decoded is not None:
-            if decoded.provider_id not in SUPPORTED_PROVIDER_IDS:
+            if decoded.provider_id not in self._provider_catalog:
                 return None, None, False, False
             return (
                 decoded.provider_id,
@@ -413,7 +411,7 @@ class ModelRouter:
         provider_id, separator, provider_model = model_name.partition("/")
         if not separator:
             return None, None, False, False
-        if provider_id not in SUPPORTED_PROVIDER_IDS:
+        if provider_id not in self._provider_catalog:
             return None, None, False, False
         if not provider_model:
             return None, None, False, False
