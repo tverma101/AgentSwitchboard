@@ -56,6 +56,7 @@ from free_claude_code.providers.model_listing import (
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
+    RecoveryStreamSignal,
     TruncatedProviderStreamError,
     is_retryable_stream_error,
 )
@@ -478,8 +479,13 @@ class _OpenAIChatStreamRunner:
                     retry_session,
                 )
                 stream_opened = True
+                recovery.restart_holdback_deadline()
                 tool_argument_aliases = self._provider._tool_argument_aliases(body)
-                async for chunk in stream:
+                async for chunk in recovery.iterate_with_holdback_deadline(stream):
+                    if chunk is RecoveryStreamSignal.HOLDBACK_DEADLINE:
+                        for held in recovery.flush():
+                            yield held
+                        continue
                     if not attempt.accepted:
                         await attempt.succeeded()
                     chunk_usage = getattr(chunk, "usage", None)
@@ -605,7 +611,11 @@ class _OpenAIChatStreamRunner:
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as error:
-                if attempt is not None and not attempt.accepted:
+                if (
+                    attempt is not None
+                    and not attempt.accepted
+                    and not recovery.committed
+                ):
                     await attempt.retry(
                         error,
                         provider_failure_override=(

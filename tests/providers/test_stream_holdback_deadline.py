@@ -73,7 +73,9 @@ async def test_after_commit_iteration_has_no_deadline_signal() -> None:
         yield "a"
         yield "b"
 
-    assert [item async for item in recovery.iterate_with_holdback_deadline(source())] == [
+    assert [
+        item async for item in recovery.iterate_with_holdback_deadline(source())
+    ] == [
         "a",
         "b",
     ]

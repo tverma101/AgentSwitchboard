@@ -97,7 +97,9 @@ async def test_openai_chat_releases_message_start_at_wall_clock_deadline() -> No
         }
     )
     attempt = _Attempt()
-    create = AsyncMock(return_value=(_delayed_stream(), {"model": "test-model"}, attempt))
+    create = AsyncMock(
+        return_value=(_delayed_stream(), {"model": "test-model"}, attempt)
+    )
     try:
         with (
             patch.object(provider, "_create_stream", new=create),

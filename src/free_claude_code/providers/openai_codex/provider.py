@@ -49,7 +49,10 @@ from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
 )
-from free_claude_code.providers.stream_recovery import RecoveryController
+from free_claude_code.providers.stream_recovery import (
+    RecoveryController,
+    RecoveryStreamSignal,
+)
 
 from .auth import OpenAIAccess, OpenAIAuthManager, OpenAIReconnectRequired
 from .login import OPENAI_CODEX_ORIGINATOR
@@ -378,8 +381,16 @@ class OpenAICodexProvider(BaseProvider):
                     )
                     raise error
                 stream_opened = True
+                recovery.restart_holdback_deadline()
 
-                async for event_type, payload in _iter_sse(response):
+                async for item in recovery.iterate_with_holdback_deadline(
+                    _iter_sse(response)
+                ):
+                    if item is RecoveryStreamSignal.HOLDBACK_DEADLINE:
+                        for held in recovery.flush():
+                            yield held
+                        continue
+                    event_type, payload = item
                     if not attempt.accepted:
                         await attempt.succeeded()
                     for event in stream.feed(event_type, payload):
@@ -429,7 +440,11 @@ class OpenAICodexProvider(BaseProvider):
                     )
                     continue
                 error = _effective_error(raw_error)
-                if attempt is not None and not attempt.accepted:
+                if (
+                    attempt is not None
+                    and not attempt.accepted
+                    and not recovery.committed
+                ):
                     await attempt.retry(error)
                 retryable = (
                     attempt.failure_retryable

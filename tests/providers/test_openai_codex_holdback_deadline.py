@@ -55,7 +55,9 @@ async def _drain(stream: AsyncIterator[str]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_quiet_codex_stream_commits_deadline_without_poisoning_retry_gate() -> None:
+async def test_quiet_codex_stream_commits_deadline_without_poisoning_retry_gate() -> (
+    None
+):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
