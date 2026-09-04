@@ -65,7 +65,10 @@ from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     OpenAIChatProvider,
 )
-from free_claude_code.providers.stream_recovery import RecoveryController
+from free_claude_code.providers.stream_recovery import (
+    RecoveryController,
+    RecoveryStreamSignal,
+)
 
 _GO_DOCS_SOURCE = "https://dev.opencode.ai/docs/go/"
 _GO_DOCS_DATE = "2026-09-02"
@@ -509,7 +512,19 @@ class OpenCodeGoProvider(BaseProvider):
                             )
                         for ready_event in ready_events:
                             yield ready_event
-                    async for event in upstream:
+                    recovery.restart_holdback_deadline()
+                    async for event in recovery.iterate_with_holdback_deadline(
+                        upstream
+                    ):
+                        if event is RecoveryStreamSignal.HOLDBACK_DEADLINE:
+                            for ready_event in recovery.flush():
+                                evidence.output_committed = True
+                                if evidence.time_to_first_token_ms is None:
+                                    evidence.time_to_first_token_ms = max(
+                                        0, round((monotonic() - started_at) * 1000)
+                                    )
+                                yield ready_event
+                            continue
                         if not attempt.accepted:
                             await attempt.succeeded()
                         payload = event.model_dump(mode="json", exclude_none=True)
@@ -557,7 +572,11 @@ class OpenCodeGoProvider(BaseProvider):
                     return
                 except Exception as error:
                     should_retry = False
-                    if attempt is not None and not attempt.accepted:
+                    if (
+                        attempt is not None
+                        and not attempt.accepted
+                        and not recovery.committed
+                    ):
                         should_retry = await attempt.retry(error)
                     retryable = (
                         attempt.failure_retryable

@@ -1,9 +1,11 @@
 """Provider-owned stream holdback and recovery decisions."""
 
+import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TypeVar
 
 import httpx
 import openai
@@ -15,9 +17,17 @@ from .failure_policy import RetryableProviderProtocolError, retryable_transient_
 EARLY_HOLDBACK_SECONDS = 0.75
 RECOVERY_BUFFER_MAX_BYTES = 65_536
 
+T = TypeVar("T")
+
 
 class TruncatedProviderStreamError(RetryableProviderProtocolError):
     """An upstream stream ended without its required terminal marker."""
+
+
+class RecoveryStreamSignal(StrEnum):
+    """Control signal emitted while a held stream waits for upstream data."""
+
+    HOLDBACK_DEADLINE = "holdback_deadline"
 
 
 class RecoveryFailureAction(StrEnum):
@@ -70,6 +80,19 @@ class RecoveryHoldbackBuffer:
             return self.flush()
         return []
 
+    def restart_deadline(self) -> None:
+        """Start the holdback clock from accepted upstream stream ownership."""
+        if self.committed or not self._events:
+            return
+        self._started_at = self._now()
+
+    def remaining_holdback_seconds(self) -> float | None:
+        """Return wall-clock time left before buffered output must commit."""
+        if self.committed or self._started_at is None:
+            return None
+        elapsed = self._now() - self._started_at
+        return max(0.0, self._holdback_seconds - elapsed)
+
     def flush(self) -> list[str]:
         if self.committed:
             return []
@@ -93,8 +116,31 @@ class RecoveryHoldbackBuffer:
 class RecoveryController:
     """Own commit-boundary holdback for one provider stream lifecycle."""
 
-    def __init__(self) -> None:
-        self._holdback = RecoveryHoldbackBuffer()
+    def __init__(
+        self,
+        *,
+        holdback_seconds: float = EARLY_HOLDBACK_SECONDS,
+        max_bytes: int = RECOVERY_BUFFER_MAX_BYTES,
+        now: Callable[[], float] | None = None,
+    ) -> None:
+        self._holdback_seconds = holdback_seconds
+        self._max_bytes = max_bytes
+        self._now = now
+        self._uses_default_holdback_config = (
+            holdback_seconds == EARLY_HOLDBACK_SECONDS
+            and max_bytes == RECOVERY_BUFFER_MAX_BYTES
+            and now is None
+        )
+        self._holdback = self._new_holdback()
+
+    def _new_holdback(self) -> RecoveryHoldbackBuffer:
+        if self._uses_default_holdback_config:
+            return RecoveryHoldbackBuffer()
+        return RecoveryHoldbackBuffer(
+            holdback_seconds=self._holdback_seconds,
+            max_bytes=self._max_bytes,
+            now=self._now,
+        )
 
     @property
     def committed(self) -> bool:
@@ -106,6 +152,61 @@ class RecoveryController:
 
     def push(self, event: str) -> list[str]:
         return self._holdback.push(event)
+
+    def restart_holdback_deadline(self) -> None:
+        """Restart the holdback clock after upstream accepts the stream."""
+        self._holdback.restart_deadline()
+
+    async def iterate_with_holdback_deadline(
+        self, source: AsyncIterator[T]
+    ) -> AsyncIterator[T | RecoveryStreamSignal]:
+        """Signal the deadline without cancelling the pending upstream read.
+
+        After the caller flushes this controller, the same pending read is
+        awaited to completion. Once committed, later items are forwarded
+        directly without creating one task per token or event.
+        """
+        iterator = source.__aiter__()
+        pending: asyncio.Future[T] | None = None
+        try:
+            while not self.committed:
+                remaining = self._holdback.remaining_holdback_seconds()
+                if remaining is None:
+                    break
+                if pending is None:
+                    pending = asyncio.ensure_future(anext(iterator))
+                done, _ = await asyncio.wait({pending}, timeout=remaining)
+                if not done:
+                    yield RecoveryStreamSignal.HOLDBACK_DEADLINE
+                    if not self.committed:
+                        raise RuntimeError(
+                            "holdback deadline signal must be committed before resuming"
+                        )
+                    try:
+                        yield await pending
+                    except StopAsyncIteration:
+                        return
+                    pending = None
+                    break
+                try:
+                    yield await pending
+                except StopAsyncIteration:
+                    return
+                pending = None
+
+            if pending is not None:
+                try:
+                    yield await pending
+                except StopAsyncIteration:
+                    return
+                pending = None
+            async for item in iterator:
+                yield item
+        finally:
+            if pending is not None:
+                if not pending.done():
+                    pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
 
     def flush(self) -> list[str]:
         return self._holdback.flush()
@@ -147,7 +248,7 @@ class RecoveryController:
             and not reserve_last_attempt_for_recovery
         ):
             self._holdback.discard()
-            self._holdback = RecoveryHoldbackBuffer()
+            self._holdback = self._new_holdback()
             return RecoveryDecision(
                 action=RecoveryFailureAction.EARLY_RETRY,
                 retryable=True,
