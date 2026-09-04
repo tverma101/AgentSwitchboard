@@ -24,6 +24,7 @@ from free_claude_code.core.version import package_version
 from .admin_cache import AdminNoStoreMiddleware, attach_admin_no_store
 from .admin_routes import router as admin_router
 from .ports import ApiServices
+from .request_body import PublicRequestBodyLimitMiddleware
 from .request_errors import ordinary_application_error_response
 from .request_ids import (
     RequestCorrelationMiddleware,
@@ -38,6 +39,9 @@ def create_app(services: ApiServices) -> FastAPI:
     """Create the HTTP adapter around explicitly supplied runtime services."""
     app = FastAPI(title="Claude Code Proxy", version=package_version())
     app.state.services = services
+    # Add the body limiter first so RequestCorrelationMiddleware wraps it and
+    # therefore still owns request-id headers for locally rejected 413s.
+    app.add_middleware(PublicRequestBodyLimitMiddleware)
     app.add_middleware(RequestCorrelationMiddleware)
     app.add_middleware(AdminNoStoreMiddleware)
 
